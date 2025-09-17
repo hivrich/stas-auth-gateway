@@ -37,6 +37,63 @@ const DB = new Pool({
 });
 
 const app = express();
+// --- BEGIN: Lightweight authorize form when user_id is missing ---
+const escapeHtml = (s='') =>
+  String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+app.use(express.urlencoded({ extended: false }));
+
+app.get('/oauth/authorize', (req, res, next) => {
+  const { client_id, redirect_uri, response_type, scope, state, user_id } = req.query;
+
+  // Если user_id уже есть — передаём управление основному обработчику
+  if (user_id) return next();
+
+  // Базовая проверка параметров OAuth
+  if (!client_id || !redirect_uri || response_type !== 'code' || !scope) {
+    return res.status(400).json({ error: 'missing_parameters' });
+  }
+
+  // Простая HTML-форма для ввода реального STAS user_id
+  const html = `<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>STAS · Авторизация</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,sans-serif;margin:0;padding:24px;background:#0b0c10;color:#e8e8e8}
+    .card{max-width:520px;margin:0 auto;background:#14161a;border-radius:16px;padding:20px;box-shadow:0 4px 20px rgba(0,0,0,.35)}
+    h1{font-size:18px;margin:0 0 12px}
+    label{display:block;margin:12px 0 6px}
+    input[type=number]{width:100%;padding:10px 12px;border-radius:12px;border:1px solid #2a2f36;background:#0f1114;color:#e8e8e8}
+    button{margin-top:16px;padding:10px 14px;border:0;border-radius:12px;background:#3b82f6;color:#fff;font-weight:600;cursor:pointer}
+    small{color:#9aa4b2}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Подтвердите ваш STAS ID</h1>
+    <form method="GET" action="/oauth/authorize">
+      <input type="hidden" name="client_id" value="${escapeHtml(client_id)}">
+      <input type="hidden" name="redirect_uri" value="${escapeHtml(redirect_uri)}">
+      <input type="hidden" name="response_type" value="code">
+      <input type="hidden" name="scope" value="${escapeHtml(scope)}">
+      ${state ? `<input type="hidden" name="state" value="${escapeHtml(state)}">` : ''}
+
+      <label for="uid">Ваш STAS user_id</label>
+      <input id="uid" name="user_id" type="number" inputmode="numeric" required autofocus placeholder="например, 95192039">
+
+      <button type="submit">Продолжить</button>
+      <div><small>user_id используется только для выдачи кода авторизации.</small></div>
+    </form>
+  </div>
+</body>
+</html>`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  return res.status(200).send(html);
+});
+// --- END: Lightweight authorize form when user_id is missing ---
 app.disable('x-powered-by');
 app.use(cors());
 app.use(morgan('dev'));
