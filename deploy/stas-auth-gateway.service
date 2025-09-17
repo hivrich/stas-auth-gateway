@@ -1,0 +1,16 @@
+[Unit]
+Description=STAS Auth Gateway
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/stas-auth-gateway/.env
+WorkingDirectory=/opt/stas-auth-gateway
+ExecStart=/usr/bin/node /opt/stas-auth-gateway/app.js
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

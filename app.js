@@ -1,0 +1,305 @@
+/**
+ * STAS Auth Gateway - minimal working scaffold
+ * Env: Node 22+, Express
+ */
+require('dotenv').config();
+const express = require('express');
+const morgan = require('morgan');
+const cors = require('cors');
+const axios = require('axios');
+const jwt = require('jsonwebtoken');
+const { v4: uuidv4 } = require('uuid');
+const { Pool } = require('pg');
+const createError = require('http-errors');
+const bodyParser = require('body-parser');
+const crypto = require('crypto');
+
+const PORT = parseInt(process.env.PORT || "3337", 10);
+const JWT_SECRET = process.env.JWT_SECRET;
+const TOKEN_TTL_SECONDS = parseInt(process.env.TOKEN_TTL_SECONDS || "3600", 10);
+const REFRESH_TTL_SECONDS = parseInt(process.env.REFRESH_TTL_SECONDS || "2592000", 10);
+const REFRESH_PEPPER = process.env.REFRESH_PEPPER || "pepper";
+const SKIP_STAS_VALIDATE = /^true$/i.test(String(process.env.SKIP_STAS_VALIDATE || ""));
+
+const STAS_API_BASE = process.env.STAS_API_BASE;
+const STAS_API_KEY = process.env.STAS_API_KEY;
+
+const MCP_API_BASE = process.env.MCP_API_BASE;
+const MCP_API_KEY = process.env.MCP_API_KEY;
+
+const DB = new Pool({
+  host: process.env.DB_HOST,
+  port: parseInt(process.env.DB_PORT || "5432", 10),
+  database: process.env.DB_NAME,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  ssl: (/^true$/i).test(String(process.env.DB_SSL || "")) ? { rejectUnauthorized: false } : false
+});
+
+const app = express();
+app.disable('x-powered-by');
+app.use(cors());
+app.use(morgan('dev'));
+app.use(bodyParser.json({ limit: '1mb' }));
+app.use(bodyParser.urlencoded({ extended: true }));
+
+// Helpers
+const now = () => new Date();
+const minutesFromNow = (m) => new Date(Date.now() + m*60*1000);
+const secondsFromNow = (s) => new Date(Date.now() + s*1000);
+
+function sha256Hex(s) {
+  return crypto.createHash('sha256').update(s).digest('hex');
+}
+
+async function queryOne(sql, params) {
+  const res = await DB.query(sql, params);
+  return res.rows[0];
+}
+
+// Health
+app.get('/healthz', async (req, res) => {
+  const health = { ok: true, time: new Date().toISOString() };
+  // simple ping to STAS if configured
+  if (STAS_API_BASE && STAS_API_KEY) {
+    try {
+      const r = await axios.get(`${STAS_API_BASE}/gw/healthz`.replace('/gw/','/gw/'), { timeout: 2000 });
+      health.stas = r.status;
+    } catch (e) {
+      health.stas = 'fail';
+    }
+  }
+  res.json(health);
+});
+
+// OAuth authorize
+// Expects: client_id, redirect_uri, scope, user_id
+app.get('/oauth/authorize', async (req, res, next) => {
+  try {
+    const { client_id, redirect_uri, scope = "", user_id } = req.query;
+    if (!client_id || !redirect_uri || !user_id) throw createError(400, 'missing_parameters');
+    // 1) check client
+    const client = await queryOne(
+      `SELECT client_id, allowed_redirects, scopes FROM public.gw_oauth_clients WHERE client_id=$1 AND disabled_at IS NULL`,
+      [client_id]
+    );
+    if (!client) throw createError(400, 'invalid_client');
+    if (!(client.allowed_redirects || []).includes(redirect_uri)) throw createError(400, 'invalid_redirect');
+    const requestedScopes = String(scope).split(/[ ,]+/).filter(Boolean);
+    const allowedScopes = new Set(client.scopes || []);
+    for (const s of requestedScopes) { if (!allowedScopes.has(s)) throw createError(400, 'invalid_scope'); }
+    // 2) validate user via STAS DB bridge (can be skipped in dev)
+    let usum = { ok: true };
+    if (!SKIP_STAS_VALIDATE) {
+      if (!STAS_API_BASE || !STAS_API_KEY) throw createError(500, 'stas_not_configured');
+      usum = await axios.get(`${STAS_API_BASE}/api/db/user_summary`, {
+        params: { user_id },
+        headers: { 'X-API-Key': STAS_API_KEY },
+        timeout: 3000
+      }).then(r => r.data).catch(() => null);
+      if (!usum || !usum.ok) throw createError(400, 'unknown_user');
+    }
+
+    // 3) create code (ttl 5 min)
+    const code = crypto.randomBytes(24).toString('base64url');
+    const expires_at = minutesFromNow(5);
+    await DB.query(
+      `INSERT INTO public.gw_oauth_codes(code, client_id, user_id, redirect_uri, scopes, expires_at) 
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [code, client_id, user_id, redirect_uri, requestedScopes, expires_at.toISOString()]
+    );
+    const loc = new URL(redirect_uri);
+    loc.searchParams.set('code', code);
+    res.status(302).set('Location', loc.toString()).end();
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Basic client auth helper
+function parseBasicAuth(header) {
+  if (!header || !header.startsWith('Basic ')) return null;
+  const decoded = Buffer.from(header.slice(6), 'base64').toString('utf8');
+  const idx = decoded.indexOf(':');
+  if (idx === -1) return null;
+  return { id: decoded.slice(0, idx), secret: decoded.slice(idx+1) };
+}
+
+// /oauth/token
+app.post('/oauth/token', async (req, res, next) => {
+  try {
+    const basic = parseBasicAuth(req.headers.authorization);
+    if (!basic) throw createError(401, 'invalid_client');
+    const { id: client_id, secret: client_secret } = basic;
+
+    const client = await queryOne(`SELECT client_id, client_secret_hash FROM public.gw_oauth_clients WHERE client_id=$1 AND disabled_at IS NULL`, [client_id]);
+    if (!client) throw createError(401, 'invalid_client');
+
+    const bcrypt = require('bcrypt');
+    const ok = await bcrypt.compare(client_secret, client.client_secret_hash);
+    if (!ok) throw createError(401, 'invalid_client');
+
+    const { grant_type } = req.body;
+
+    if (grant_type === 'authorization_code') {
+      const { code, redirect_uri } = req.body;
+      if (!code || !redirect_uri) throw createError(400, 'invalid_request');
+
+      const row = await queryOne(
+        `DELETE FROM public.gw_oauth_codes 
+         WHERE code=$1 AND client_id=$2 AND redirect_uri=$3 
+           AND expires_at > now()
+         RETURNING user_id, scopes`,
+        [code, client_id, redirect_uri]
+      );
+      if (!row) throw createError(400, 'invalid_grant');
+
+      const user_id = row.user_id;
+      const scopes = row.scopes || [];
+      const jti = uuidv4();
+      const access_expires_at = secondsFromNow(TOKEN_TTL_SECONDS);
+      const refresh_expires_at = secondsFromNow(REFRESH_TTL_SECONDS);
+      const payload = { sub: String(user_id), client_id, scope: scopes.join(' '), jti };
+      const access_token = jwt.sign(payload, JWT_SECRET, { algorithm: 'HS256', expiresIn: TOKEN_TTL_SECONDS });
+      const refresh_token = 'rt_' + crypto.randomBytes(32).toString('base64url');
+      const refresh_token_hash = sha256Hex(REFRESH_PEPPER + refresh_token);
+
+      await DB.query(
+        `INSERT INTO public.gw_oauth_tokens(access_token, refresh_token_hash, user_id, scopes, access_expires_at, refresh_expires_at, access_jti, client_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [access_token, refresh_token_hash, user_id, scopes, access_expires_at.toISOString(), refresh_expires_at.toISOString(), jti, client_id]
+      );
+
+      return res.json({
+        token_type: "Bearer",
+        access_token,
+        expires_in: TOKEN_TTL_SECONDS,
+        refresh_token,
+        scope: scopes.join(' ')
+      });
+    }
+
+    if (grant_type === 'refresh_token') {
+      const { refresh_token } = req.body;
+      if (!refresh_token) throw createError(400, 'invalid_request');
+      const hash = sha256Hex(REFRESH_PEPPER + refresh_token);
+      const row = await queryOne(
+        `SELECT user_id, scopes, client_id FROM public.gw_oauth_tokens 
+         WHERE refresh_token_hash=$1 AND refresh_expires_at > now() AND revoked_at IS NULL`,
+        [hash]
+      );
+      if (!row) throw createError(400, 'invalid_grant');
+      const user_id = row.user_id;
+      const scopes = row.scopes || [];
+      const jti = uuidv4();
+      const access_expires_at = secondsFromNow(TOKEN_TTL_SECONDS);
+      const access_token = jwt.sign({ sub: String(user_id), client_id: row.client_id, scope: scopes.join(' '), jti }, JWT_SECRET, { algorithm: 'HS256', expiresIn: TOKEN_TTL_SECONDS });
+      await DB.query(
+        `UPDATE public.gw_oauth_tokens SET access_token=$1, access_expires_at=$2, access_jti=$3 WHERE refresh_token_hash=$4`,
+        [access_token, access_expires_at.toISOString(), jti, hash]
+      );
+      return res.json({ token_type: "Bearer", access_token, expires_in: TOKEN_TTL_SECONDS, refresh_token, scope: scopes.join(' ') });
+    }
+
+    throw createError(400, 'unsupported_grant_type');
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Auth middleware
+async function requireAuth(req, res, next) {
+  try {
+    const hdr = req.headers.authorization || "";
+    const m = hdr.match(/^Bearer\s+(.+)$/i);
+    if (!m) throw createError(401, 'unauthorized');
+    const token = m[1];
+    let payload;
+    try {
+      payload = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
+    } catch {
+      throw createError(401, 'unauthorized');
+    }
+    req.auth = { user_id: payload.sub, scope: new Set(String(payload.scope || '').split(/\s+/).filter(Boolean)) };
+    next();
+  } catch (e) {
+    next(e);
+  }
+}
+
+function needScope(s) {
+  return (req, res, next) => {
+    if (!req.auth || !req.auth.scope.has(s)) return next(createError(403, 'insufficient_scope'));
+    next();
+  };
+}
+
+// /api/me
+app.get('/api/me', requireAuth, async (req, res, next) => {
+  try {
+    // For now respond minimal; athlete_id could be mapped later
+    res.json({ user_id: Number(req.auth.user_id) || null, athlete_id: null });
+  } catch (e) { next(e); }
+});
+
+// (dev mint removed)
+
+// ICU proxy - robust matcher using middleware with path check
+async function icuProxyHandler(req, res, next) {
+  try {
+    console.log('ICU route hit:', req.method, req.originalUrl);
+    const method = req.method.toUpperCase();
+    if (method === 'GET') {
+      if (!req.auth.scope.has('icu')) throw createError(403, 'insufficient_scope');
+    } else if (method === 'POST' || method === 'DELETE') {
+      if (!req.auth.scope.has('workouts:write')) throw createError(403, 'insufficient_scope');
+    }
+    const tail = '/icu' + req.originalUrl.replace(/^\/api\/icu/, '');
+    const url = `${MCP_API_BASE}${tail}`;
+    const headers = { 'X-API-Key': MCP_API_KEY };
+    const ax = await axios({
+      url,
+      method,
+      headers: { ...headers, 'Content-Type': req.headers['content-type'] || 'application/json' },
+      data: method === 'GET' ? undefined : req.body,
+      validateStatus: () => true
+    });
+    res.status(ax.status);
+    for (const [k, v] of Object.entries(ax.headers || {})) {
+      if (k.toLowerCase().startsWith('content-')) res.setHeader(k, v);
+    }
+    res.send(ax.data);
+  } catch (e) { next(e); }
+}
+
+app.use((req, res, next) => {
+  if (req.path === '/api/icu' || req.path.startsWith('/api/icu/')) {
+    return requireAuth(req, res, (err) => {
+      if (err) return next(err);
+      return icuProxyHandler(req, res, next);
+    });
+  }
+  next();
+});
+
+// Errors
+app.use((err, req, res, next) => {
+  const status = err.status || 500;
+  const body = { error: err.message || 'server_error' };
+  if (status >= 500) console.error('ERROR', err);
+  res.status(status).json(body);
+});
+
+app.listen(PORT, () => {
+  console.log(`STAS Auth Gateway listening on :${PORT}`);
+  console.log(`SKIP_STAS_VALIDATE=${SKIP_STAS_VALIDATE}`);
+  // Safe env diagnostics (no secrets printed)
+  console.log('DB cfg:', {
+    host: typeof process.env.DB_HOST === 'string',
+    port: typeof process.env.DB_PORT === 'string',
+    name: typeof process.env.DB_NAME === 'string',
+    user: typeof process.env.DB_USER === 'string',
+    passwordPresent: typeof process.env.DB_PASSWORD === 'string',
+    ssl: String(process.env.DB_SSL || ''),
+  });
+});
