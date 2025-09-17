@@ -7,6 +7,13 @@
 1) Установи Node.js 22 (через nvm)  
 2) Создай `.env` и заполни значения:  
 ```
+
+### Примечания
+
+- Разрешены redirect_uri только на `chat.openai.com` и `chatgpt.com` с путями:
+  - `/aip/api/callback`
+  - `/aip/g-*/oauth/callback` (например, `/aip/g-abc123/oauth/callback`)
+- Параметр `state` из `/oauth/authorize` автоматически прокидывается в редирект.
 PORT=3337
 JWT_SECRET=<set-strong-random>
 REFRESH_PEPPER=<set-strong-random>
@@ -28,6 +35,8 @@ STAS_API_KEY=<stas_key>
 # MCP (Intervals.icu bridge)
 MCP_API_BASE=https://mcp.stravatg.ru/api
 MCP_API_KEY=<mcp_key>
+# Health diagnostics (optional)
+HEALTH_USER_ID=0
 ```
 3) Установи зависимости:
 ```bash
@@ -80,6 +89,21 @@ curl -sS 'http://127.0.0.1:3337/api/icu/activities?days=7' -H "Authorization: Be
 - `POST /oauth/token` (grant_type=authorization_code|refresh_token)
 - `GET /api/me` (Bearer JWT)
 - `ANY /^/api/icu/` (прокси в MCP, требует скоупы: icu для GET, workouts:write для POST/DELETE)
+
+## Health
+
+- `GET /healthz` всегда возвращает единый JSON объект `{ ok, time, stas?, env }`.
+- В блоке `env` присутствуют небезопасные (не секретные) диагностические поля:
+  - `skip_stas_validate` — флаг из `.env` (true/false)
+  - `health_user_id` — значение `HEALTH_USER_ID` из `.env` (число или null)
+
+## Тесты
+
+Запуск минимальных тестов для проверки whitelist редиректов:
+
+```bash
+npm test
+```
 
 ## Деплой (контур)
 

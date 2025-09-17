@@ -20,6 +20,8 @@ const TOKEN_TTL_SECONDS = parseInt(process.env.TOKEN_TTL_SECONDS || "3600", 10);
 const REFRESH_TTL_SECONDS = parseInt(process.env.REFRESH_TTL_SECONDS || "2592000", 10);
 const REFRESH_PEPPER = process.env.REFRESH_PEPPER || "pepper";
 const SKIP_STAS_VALIDATE = /^true$/i.test(String(process.env.SKIP_STAS_VALIDATE || ""));
+const HEALTH_USER_ID = process.env.HEALTH_USER_ID ? Number(process.env.HEALTH_USER_ID) : null;
+const { isAllowedRedirect } = require('./lib/redirect');
 
 const STAS_API_BASE = process.env.STAS_API_BASE;
 const STAS_API_KEY = process.env.STAS_API_KEY;
@@ -109,6 +111,7 @@ function sha256Hex(s) {
   return crypto.createHash('sha256').update(s).digest('hex');
 }
 
+
 async function queryOne(sql, params) {
   const res = await DB.query(sql, params);
   return res.rows[0];
@@ -126,6 +129,11 @@ app.get('/healthz', async (req, res) => {
       health.stas = 'fail';
     }
   }
+  // Always include a consistent env block (non-secret diagnostics)
+  health.env = {
+    skip_stas_validate: SKIP_STAS_VALIDATE,
+    health_user_id: HEALTH_USER_ID ?? null,
+  };
   res.json(health);
 });
 
@@ -133,7 +141,7 @@ app.get('/healthz', async (req, res) => {
 // Expects: client_id, redirect_uri, scope, user_id
 app.get('/oauth/authorize', async (req, res, next) => {
   try {
-    const { client_id, redirect_uri, scope = "", user_id } = req.query;
+    const { client_id, redirect_uri, scope = "", user_id, state } = req.query;
     if (!client_id || !redirect_uri || !user_id) throw createError(400, 'missing_parameters');
     // 1) check client
     const client = await queryOne(
@@ -141,7 +149,8 @@ app.get('/oauth/authorize', async (req, res, next) => {
       [client_id]
     );
     if (!client) throw createError(400, 'invalid_client');
-    if (!(client.allowed_redirects || []).includes(redirect_uri)) throw createError(400, 'invalid_redirect');
+    // Enforce strict redirect whitelist for ChatGPT Actions flows
+    if (!isAllowedRedirect(redirect_uri)) throw createError(400, 'invalid_redirect');
     const requestedScopes = String(scope).split(/[ ,]+/).filter(Boolean);
     const allowedScopes = new Set(client.scopes || []);
     for (const s of requestedScopes) { if (!allowedScopes.has(s)) throw createError(400, 'invalid_scope'); }
@@ -167,6 +176,7 @@ app.get('/oauth/authorize', async (req, res, next) => {
     );
     const loc = new URL(redirect_uri);
     loc.searchParams.set('code', code);
+    if (state) loc.searchParams.set('state', String(state));
     res.status(302).set('Location', loc.toString()).end();
   } catch (e) {
     next(e);
