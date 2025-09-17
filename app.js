@@ -26,6 +26,7 @@ const { isAllowedRedirect } = require('./lib/redirect');
 
 const STAS_API_BASE = process.env.STAS_API_BASE;
 const STAS_API_KEY = process.env.STAS_API_KEY;
+const READ_FROM = String(process.env.READ_FROM || 'STAS').toUpperCase();
 
 const MCP_API_BASE = process.env.MCP_API_BASE;
 const MCP_API_KEY = process.env.MCP_API_KEY;
@@ -148,6 +149,91 @@ const rateLimitAuthorize = makeRateLimiter({ windowMs: 60_000, max: 10 });
 const rateLimitToken = makeRateLimiter({ windowMs: 60_000, max: 10 });
 // Apply limiter for both authorize handlers (form + main)
 app.use('/oauth/authorize', rateLimitAuthorize);
+
+// ---------------- STAS HTTP client (with timeout + retries) ----------------
+function stasBuildUrl(pathname, qs = {}) {
+  const u = new URL(pathname, STAS_API_BASE);
+  for (const [k, v] of Object.entries(qs)) {
+    if (v !== undefined && v !== null) u.searchParams.set(k, String(v));
+  }
+  return u.toString();
+}
+
+async function stasGet(pathname, qs = {}, { timeout = 5000, retries = 2 } = {}) {
+  if (!STAS_API_BASE || !STAS_API_KEY) throw createError(500, 'stas_not_configured');
+  let attempt = 0;
+  let lastErr;
+  while (attempt <= retries) {
+    try {
+      const resp = await axios.get(stasBuildUrl(pathname, qs), {
+        headers: { 'X-API-Key': STAS_API_KEY },
+        timeout,
+        validateStatus: () => true,
+      });
+      if (resp.status >= 200 && resp.status < 300) return resp.data;
+      if (resp.status >= 500) throw Object.assign(new Error(`STAS ${resp.status}`), { status: resp.status, body: String(resp.data).slice(0, 200) });
+      const err = createError(resp.status, 'stas_error');
+      err.details = String(resp.data).slice(0, 200);
+      throw err;
+    } catch (e) {
+      lastErr = e;
+      const retriable = (e && e.status >= 500) || ['ECONNABORTED', 'ETIMEDOUT', 'ECONNRESET'].includes(e && e.code);
+      if (attempt >= retries || !retriable) break;
+      const backoff = Math.min(1200, 300 * Math.pow(2, attempt));
+      await new Promise(r => setTimeout(r, backoff));
+      attempt++;
+    }
+  }
+  // Sanitize error for response
+  const err = createError((lastErr && lastErr.status) || 502, 'bad_gateway');
+  err.details = lastErr && lastErr.body ? lastErr.body : undefined;
+  throw err;
+}
+
+// Mapping STAS activities -> ICU simplified structure
+function parseDurationToSeconds(val) {
+  if (val == null) return undefined;
+  if (typeof val === 'number') return val;
+  const s = String(val).trim();
+  if (!s) return undefined;
+  // Support HH:MM:SS or MM:SS
+  const parts = s.split(':').map(x => x.trim());
+  if (parts.length === 2 || parts.length === 3) {
+    const [h, m, sec] = parts.length === 3 ? parts : ['0', parts[0], parts[1]];
+    const hh = Number(h), mm = Number(m), ss = Number(sec);
+    if ([hh, mm, ss].every(n => Number.isFinite(n))) return hh*3600 + mm*60 + ss;
+  }
+  // Fallback: numeric string seconds
+  const n = Number(s);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function parseDistanceToMeters(val) {
+  if (val == null) return undefined;
+  if (typeof val === 'number') return val;
+  const s = String(val).trim();
+  if (!s) return undefined;
+  // Heuristic: plain decimal means kilometers -> meters
+  const n = Number(s.replace(',', '.'));
+  if (!Number.isFinite(n)) return undefined;
+  // If value seems like kilometers (<= 1000), convert to meters; else assume meters
+  return n <= 1000 ? Math.round(n * 1000) : Math.round(n);
+}
+
+function mapStasToIcu(list = []) {
+  return list.map((a) => {
+    const durationRaw = a.duration_s ?? a.moving_time ?? a.elapsed_time;
+    const distanceRaw = a.distance_m ?? a.distance ?? a.distance_km;
+    return {
+      id: a.id ?? a.activity_id,
+      start_date_local: a.start_time_local ?? a.start_date_local ?? a.start_time ?? a.date,
+      type: a.type ?? a.sport ?? 'UNKNOWN',
+      name: a.name ?? a.title ?? a.workout_name,
+      duration_s: parseDurationToSeconds(durationRaw),
+      distance_m: parseDistanceToMeters(distanceRaw),
+    };
+  });
+}
 
 
 async function queryOne(sql, params) {
@@ -363,15 +449,33 @@ function needScope(s) {
   };
 }
 
-// /api/me
+// /api/me — read user_summary from STAS
 app.get('/api/me', requireAuth, async (req, res, next) => {
   try {
-    // For now respond minimal; athlete_id could be mapped later
-    res.json({ user_id: Number(req.auth.user_id) || null, athlete_id: null });
+    const user_id = Number(req.auth.user_id) || null;
+    if (!user_id) return res.json({ user_id: null, user_summary: null, updated_at: null });
+    const us = await stasGet('/api/db/user_summary', { user_id });
+    res.json({ user_id, user_summary: us && us.user_summary, updated_at: us && us.user_summary_updated_at });
   } catch (e) { next(e); }
 });
 
 // (dev mint removed)
+
+// Explicit ICU read endpoint (STAS) with fallback to MCP proxy
+app.get('/api/icu/activities', requireAuth, needScope('icu'), async (req, res, next) => {
+  try {
+    if (READ_FROM === 'MCP') return next(); // let proxy handle
+    const user_id = Number(req.auth.user_id);
+    const { days, from, to, full } = req.query || {};
+    const payload = await stasGet(full === 'true' ? '/api/db/activities_full' : '/api/db/activities', {
+      user_id,
+      days: days ? Number(days) : undefined,
+      from: from || undefined,
+      to: to || undefined,
+    });
+    res.json(mapStasToIcu(Array.isArray(payload) ? payload : []));
+  } catch (e) { next(e); }
+});
 
 // ICU proxy - robust matcher using middleware with path check
 async function icuProxyHandler(req, res, next) {

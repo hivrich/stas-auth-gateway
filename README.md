@@ -35,6 +35,9 @@ STAS_API_KEY=<stas_key>
 # MCP (Intervals.icu bridge)
 MCP_API_BASE=https://mcp.stravatg.ru/api
 MCP_API_KEY=<mcp_key>
+
+# Чтение данных (STAS|MCP)
+READ_FROM=STAS
 # Health diagnostics (optional)
 HEALTH_USER_ID=0
 ```
@@ -87,8 +90,9 @@ curl -sS 'http://127.0.0.1:3337/api/icu/activities?days=7' -H "Authorization: Be
 - `GET /healthz`
 - `GET /oauth/authorize?client_id&redirect_uri&scope&user_id`
 - `POST /oauth/token` (grant_type=authorization_code|refresh_token)
-- `GET /api/me` (Bearer JWT)
-- `ANY /^/api/icu/` (прокси в MCP, требует скоупы: icu для GET, workouts:write для POST/DELETE)
+- `GET /api/me` — читает `user_summary` из STAS (по JWT.sub)
+- `GET /api/icu/activities?days=7|from=YYYY-MM-DD&to=YYYY-MM-DD` — читает из STAS и адаптирует к упрощённому ICU-формату. Если `READ_FROM=MCP` — проксируется в MCP.
+- `POST /api/icu/events/bulk`, `DELETE /api/icu/events` — без изменений, прокси в MCP (требует скоуп `workouts:write`).
 
 ## Health
 
@@ -144,6 +148,8 @@ curl -sS --http1.1 -X POST https://<your-domain>/oauth/token \
 # 3) Вызвать API
 AT='<access_token>'
 curl -sS https://<your-domain>/api/me -H "Authorization: Bearer $AT" | jq .
+curl -sS 'https://<your-domain>/api/icu/activities?days=7' -H "Authorization: Bearer $AT" | jq '.[0]'
+curl -sS "https://<your-domain>/api/icu/activities?from=2025-09-01&to=2025-09-17" -H "Authorization: Bearer $AT" | jq '.[0]'
 ```
 
 ## Деплой (контур)
@@ -156,3 +162,9 @@ curl -sS https://<your-domain>/api/me -H "Authorization: Bearer $AT" | jq .
 Важное:
 - `proxy_pass http://127.0.0.1:3337/;` с трейлинг‑слешем для `/gw/`.
 - Проверить `/gw/healthz` возвращает 200.
+
+## Дополнительно
+
+- Без токена — `401`.
+- Неверный STAS ключ — шлюз вернёт корректную 5xx/502 без утечки секрета (тело ошибки STAS не логируется, только код и первые ~200 символов в details).
+- Быстрый откат: установить `READ_FROM=MCP` и перезапустить сервис — чтение пойдёт через MCP, запись плана не менялась.
