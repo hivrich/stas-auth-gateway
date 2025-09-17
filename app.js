@@ -4,6 +4,7 @@
  */
 require('dotenv').config();
 const express = require('express');
+const path = require('path');
 const morgan = require('morgan');
 const cors = require('cors');
 const axios = require('axios');
@@ -39,6 +40,8 @@ const DB = new Pool({
 });
 
 const app = express();
+// Serve static OpenAPI under /gw
+app.use('/gw', express.static(path.join(__dirname, 'gw')));
 // --- BEGIN: Lightweight authorize form when user_id is missing ---
 const escapeHtml = (s='') =>
   String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -111,6 +114,41 @@ function sha256Hex(s) {
   return crypto.createHash('sha256').update(s).digest('hex');
 }
 
+// Structured logger
+function log(event = {}) {
+  try { console.log(JSON.stringify({ ts: new Date().toISOString(), ...event })); } catch { /* noop */ }
+}
+
+function maskUserId(id) {
+  if (id === undefined || id === null) return null;
+  const s = String(id);
+  if (s.length <= 2) return '*'.repeat(s.length);
+  return '*'.repeat(Math.max(0, s.length - 2)) + s.slice(-2);
+}
+
+// Simple in-memory rate limiter per IP
+function makeRateLimiter({ windowMs = 60_000, max = 10 } = {}) {
+  const buckets = new Map();
+  return (req, res, next) => {
+    const now = Date.now();
+    const ip = req.ip || (req.connection && req.connection.remoteAddress) || 'unknown';
+    let arr = buckets.get(ip) || [];
+    arr = arr.filter(ts => now - ts < windowMs);
+    if (arr.length >= max) {
+      res.set('Retry-After', String(Math.ceil((windowMs - (now - arr[0])) / 1000)));
+      return next(createError(429, 'rate_limited'));
+    }
+    arr.push(now);
+    buckets.set(ip, arr);
+    next();
+  };
+}
+
+const rateLimitAuthorize = makeRateLimiter({ windowMs: 60_000, max: 10 });
+const rateLimitToken = makeRateLimiter({ windowMs: 60_000, max: 10 });
+// Apply limiter for both authorize handlers (form + main)
+app.use('/oauth/authorize', rateLimitAuthorize);
+
 
 async function queryOne(sql, params) {
   const res = await DB.query(sql, params);
@@ -141,6 +179,7 @@ app.get('/healthz', async (req, res) => {
 // Expects: client_id, redirect_uri, scope, user_id
 app.get('/oauth/authorize', async (req, res, next) => {
   try {
+    const start = Date.now();
     const { client_id, redirect_uri, scope = "", user_id, state } = req.query;
     if (!client_id || !redirect_uri || !user_id) throw createError(400, 'missing_parameters');
     // 1) check client
@@ -178,7 +217,18 @@ app.get('/oauth/authorize', async (req, res, next) => {
     loc.searchParams.set('code', code);
     if (state) loc.searchParams.set('state', String(state));
     res.status(302).set('Location', loc.toString()).end();
+    log({
+      level: 'info', route: '/oauth/authorize', method: 'GET', outcome: 'success',
+      client_id, user_id_masked: maskUserId(user_id), redirect_host: new URL(redirect_uri).hostname,
+      latency_ms: Date.now() - start
+    });
   } catch (e) {
+    try {
+      const { client_id, redirect_uri, user_id } = req.query || {};
+      log({ level: 'error', route: '/oauth/authorize', method: 'GET', outcome: 'error',
+        client_id, user_id_masked: maskUserId(user_id), redirect_host: redirect_uri ? new URL(redirect_uri).hostname : null,
+        error: e && e.message, status: e && e.status });
+    } catch { /* noop */ }
     next(e);
   }
 });
@@ -193,8 +243,9 @@ function parseBasicAuth(header) {
 }
 
 // /oauth/token
-app.post('/oauth/token', async (req, res, next) => {
+app.post('/oauth/token', rateLimitToken, async (req, res, next) => {
   try {
+    const start = Date.now();
     const basic = parseBasicAuth(req.headers.authorization);
     if (!basic) throw createError(401, 'invalid_client');
     const { id: client_id, secret: client_secret } = basic;
@@ -237,13 +288,16 @@ app.post('/oauth/token', async (req, res, next) => {
         [access_token, refresh_token_hash, user_id, scopes, access_expires_at.toISOString(), refresh_expires_at.toISOString(), jti, client_id]
       );
 
-      return res.json({
+      const tokenResponse = {
         token_type: "Bearer",
         access_token,
         expires_in: TOKEN_TTL_SECONDS,
         refresh_token,
         scope: scopes.join(' ')
-      });
+      };
+      res.json(tokenResponse);
+      log({ level: 'info', route: '/oauth/token', method: 'POST', outcome: 'success', grant_type: 'authorization_code', client_id, latency_ms: Date.now() - start });
+      return;
     }
 
     if (grant_type === 'refresh_token') {
@@ -265,11 +319,19 @@ app.post('/oauth/token', async (req, res, next) => {
         `UPDATE public.gw_oauth_tokens SET access_token=$1, access_expires_at=$2, access_jti=$3 WHERE refresh_token_hash=$4`,
         [access_token, access_expires_at.toISOString(), jti, hash]
       );
-      return res.json({ token_type: "Bearer", access_token, expires_in: TOKEN_TTL_SECONDS, refresh_token, scope: scopes.join(' ') });
+      res.json({ token_type: "Bearer", access_token, expires_in: TOKEN_TTL_SECONDS, refresh_token, scope: scopes.join(' ') });
+      log({ level: 'info', route: '/oauth/token', method: 'POST', outcome: 'success', grant_type: 'refresh_token', client_id: row.client_id, latency_ms: Date.now() - start });
+      return;
     }
 
     throw createError(400, 'unsupported_grant_type');
   } catch (e) {
+    try {
+      const basic = parseBasicAuth(req.headers.authorization);
+      const client_id = basic && basic.id;
+      const grant_type = (req.body && req.body.grant_type) || null;
+      log({ level: 'error', route: '/oauth/token', method: 'POST', outcome: 'error', client_id, grant_type, error: e && e.message, status: e && e.status });
+    } catch { /* noop */ }
     next(e);
   }
 });

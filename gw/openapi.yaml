@@ -1,0 +1,117 @@
+openapi: 3.0.3
+info:
+  title: STAS Auth Gateway API
+  version: 0.1.1
+  description: |
+    Minimal spec for ChatGPT Actions integration and smoke validation.
+servers:
+  - url: http://localhost:3337
+paths:
+  /oauth/authorize:
+    get:
+      summary: OAuth Authorization Endpoint
+      description: Issues authorization code via redirect on success.
+      parameters:
+        - in: query
+          name: client_id
+          schema: { type: string }
+          required: true
+        - in: query
+          name: redirect_uri
+          schema: { type: string, format: uri }
+          required: true
+        - in: query
+          name: scope
+          schema: { type: string }
+          required: true
+        - in: query
+          name: user_id
+          schema: { type: integer }
+          required: true
+        - in: query
+          name: state
+          schema: { type: string }
+      responses:
+        '302':
+          description: Redirect with code (and optional state).
+        '400': { description: Invalid request }
+        '401': { description: Unauthorized }
+        '429': { description: Rate limited }
+  /oauth/token:
+    post:
+      summary: OAuth Token Endpoint
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                grant_type:
+                  type: string
+                  enum: [authorization_code, refresh_token]
+                code:
+                  type: string
+                redirect_uri:
+                  type: string
+                  format: uri
+                refresh_token:
+                  type: string
+              required: [grant_type]
+      responses:
+        '200':
+          description: Token response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token: { type: string }
+                  token_type: { type: string, example: Bearer }
+                  expires_in: { type: integer }
+                  refresh_token: { type: string }
+                  scope: { type: string }
+        '400': { description: Invalid request }
+        '401': { description: Invalid client }
+        '429': { description: Rate limited }
+  /api/me:
+    get:
+      summary: Current user info
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id: { type: integer, nullable: true }
+                  athlete_id: { type: integer, nullable: true }
+        '401': { description: Unauthorized }
+  /healthz:
+    get:
+      summary: Service health
+      responses:
+        '200':
+          description: Health JSON
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  time: { type: string }
+                  stas: { oneOf: [{ type: string }, { type: integer }] }
+                  env:
+                    type: object
+                    properties:
+                      skip_stas_validate: { type: boolean }
+                      health_user_id: { type: integer, nullable: true }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
