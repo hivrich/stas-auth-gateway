@@ -105,6 +105,47 @@ curl -sS 'http://127.0.0.1:3337/api/icu/activities?days=7' -H "Authorization: Be
 npm test
 ```
 
+## ChatGPT Actions Setup
+
+1) Открой ChatGPT → Create Action → Import from OpenAPI URL.
+2) Укажи URL на спецификацию:
+
+```
+https://<your-domain>/gw/openapi.yaml
+```
+
+3) Авторизация OAuth:
+   - Authorization URL: `https://<your-domain>/oauth/authorize`
+   - Token URL: `https://<your-domain>/oauth/token`
+   - Scopes: `read:me icu workouts:write`
+
+4) Разрешённые redirect_uri в шлюзе:
+   - `https://chat.openai.com/aip/api/callback`
+   - `https://chatgpt.com/aip/api/callback`
+   - `https://chatgpt.com/aip/g-*/oauth/callback`
+
+### Смоук‑тест (end‑to‑end)
+
+После деплоя и сидирования клиента выполните:
+
+```bash
+# 1) Получить code
+AUTH_URL='https://<your-domain>/oauth/authorize?client_id=chatgpt-actions&redirect_uri=https://chatgpt.com/aip/api/callback&scope=read:me%20icu%20workouts:write&user_id=<USER_ID>'
+REDIR=$(curl -s -D - -o /dev/null "$AUTH_URL" | awk 'BEGIN{IGNORECASE=1} /^Location:/{print $2; exit}' | tr -d '\r')
+CODE=$(printf '%s' "$REDIR" | sed -n 's/.*[?&]code=\([^&]*\).*/\1/p')
+
+# 2) Обменять code на токен
+CLIENT_SECRET='<paste_secret_from_seed>'
+curl -sS --http1.1 -X POST https://<your-domain>/oauth/token \
+  -u "chatgpt-actions:${CLIENT_SECRET}" -H 'Content-Type: application/x-www-form-urlencoded' \
+  --data-urlencode grant_type=authorization_code --data-urlencode code="$CODE" \
+  --data-urlencode redirect_uri=https://chatgpt.com/aip/api/callback | jq .
+
+# 3) Вызвать API
+AT='<access_token>'
+curl -sS https://<your-domain>/api/me -H "Authorization: Bearer $AT" | jq .
+```
+
 ## Деплой (контур)
 
 - Скопировать проект в `/opt/stas-auth-gateway`
