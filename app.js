@@ -79,7 +79,7 @@ app.get('/oauth/authorize', (req, res, next) => {
 <body>
   <div class="card">
     <h1>Подтвердите ваш STAS ID</h1>
-    <form method="GET" action="/oauth/authorize">
+    <form method="GET" action="">
       <input type="hidden" name="client_id" value="${escapeHtml(client_id)}">
       <input type="hidden" name="redirect_uri" value="${escapeHtml(redirect_uri)}">
       <input type="hidden" name="response_type" value="code">
