@@ -332,9 +332,20 @@ function parseBasicAuth(header) {
 app.post('/oauth/token', rateLimitToken, async (req, res, next) => {
   try {
     const start = Date.now();
-    const basic = parseBasicAuth(req.headers.authorization);
-    if (!basic) throw createError(401, 'invalid_client');
-    const { id: client_id, secret: client_secret } = basic;
+    // Support both client_secret_basic (Authorization: Basic) and client_secret_post (body params)
+    let basic = parseBasicAuth(req.headers.authorization);
+    let client_id, client_secret;
+    if (basic) {
+      client_id = basic.id;
+      client_secret = basic.secret;
+    } else {
+      // Fallback to form fields per RFC 6749 (Section 2.3.1)
+      if (req.is('application/x-www-form-urlencoded') || req.is('multipart/form-data') || typeof req.body === 'object') {
+        client_id = req.body.client_id;
+        client_secret = req.body.client_secret;
+      }
+    }
+    if (!client_id || !client_secret) throw createError(401, 'invalid_client');
 
     const client = await queryOne(`SELECT client_id, client_secret_hash FROM public.gw_oauth_clients WHERE client_id=$1 AND disabled_at IS NULL`, [client_id]);
     if (!client) throw createError(401, 'invalid_client');
@@ -413,8 +424,11 @@ app.post('/oauth/token', rateLimitToken, async (req, res, next) => {
     throw createError(400, 'unsupported_grant_type');
   } catch (e) {
     try {
-      const basic = parseBasicAuth(req.headers.authorization);
-      const client_id = basic && basic.id;
+      let client_id = parseBasicAuth(req.headers.authorization) && parseBasicAuth(req.headers.authorization).id;
+      // If Basic is not provided, try to read client_id from the request body (client_secret_post)
+      if (!client_id && req && req.body && typeof req.body === 'object') {
+        client_id = req.body.client_id || null;
+      }
       const grant_type = (req.body && req.body.grant_type) || null;
       log({ level: 'error', route: '/oauth/token', method: 'POST', outcome: 'error', client_id, grant_type, error: e && e.message, status: e && e.status });
     } catch { /* noop */ }

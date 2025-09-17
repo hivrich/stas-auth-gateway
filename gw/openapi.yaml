@@ -1,120 +1,67 @@
-openapi: 3.0.3
+openapi: 3.1.0
 info:
-  title: STAS Auth Gateway API
-  version: 0.1.1
-  description: |
-    Minimal spec for ChatGPT Actions integration and smoke validation.
+  title: STAS Auth Gateway (Actions Minimal)
+  version: 1.0.0
+  description: Read endpoints for STAS data
 servers:
-  - url: http://localhost:3337
+  - url: https://intervals.stas.run/gw
 paths:
-  /oauth/authorize:
-    get:
-      summary: OAuth Authorization Endpoint
-      description: Issues authorization code via redirect on success.
-      parameters:
-        - in: query
-          name: client_id
-          schema: { type: string }
-          required: true
-        - in: query
-          name: redirect_uri
-          schema: { type: string, format: uri }
-          required: true
-        - in: query
-          name: scope
-          schema: { type: string }
-          required: true
-        - in: query
-          name: user_id
-          schema: { type: integer }
-          required: true
-        - in: query
-          name: state
-          schema: { type: string }
-      responses:
-        '302':
-          description: Redirect with code (and optional state).
-        '400': { description: Invalid request }
-        '401': { description: Unauthorized }
-        '429': { description: Rate limited }
-  /oauth/token:
-    post:
-      summary: OAuth Token Endpoint
-      requestBody:
-        required: true
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              type: object
-              properties:
-                grant_type:
-                  type: string
-                  enum: [authorization_code, refresh_token]
-                code:
-                  type: string
-                redirect_uri:
-                  type: string
-                  format: uri
-                refresh_token:
-                  type: string
-              required: [grant_type]
-      responses:
-        '200':
-          description: Token response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  access_token: { type: string }
-                  token_type: { type: string, example: Bearer }
-                  expires_in: { type: integer }
-                  refresh_token: { type: string }
-                  scope: { type: string }
-        '400': { description: Invalid request }
-        '401': { description: Invalid client }
-        '429': { description: Rate limited }
   /api/me:
     get:
-      summary: Current user info
+      operationId: getMe
+      summary: Current user (from STAS)
       security:
         - bearerAuth: []
       responses:
-        '200':
-          description: Current user (user_summary is read from STAS)
+        "200":
+          description: Current user summary
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  user_id: { type: integer, nullable: true }
-                  user_summary: { type: object, nullable: true }
-                  updated_at: { type: string, nullable: true }
-        '401': { description: Unauthorized }
+                  user_id:
+                    type: integer
+                  user_summary:
+                    type: object
+                  updated_at:
+                    type: string
+        "401":
+          description: Unauthorized
   /api/icu/activities:
     get:
-      summary: List recent activities
-      description: |
-        Reads activities from STAS and adapts them to a simplified ICU-like format.
-        If the gateway is configured with READ_FROM=MCP, this path is proxied to MCP unchanged.
+      operationId: getIcuActivities
+      summary: Activities (from STAS, ICU-like format)
       security:
         - bearerAuth: []
       parameters:
         - in: query
           name: days
-          schema: { type: integer, minimum: 1 }
-          description: When provided, fetch last N days.
+          required: false
+          schema:
+            type: integer
+          description: Last N days
         - in: query
           name: from
-          schema: { type: string, pattern: "^\\d{4}-\\d{2}-\\d{2}$" }
-          description: ISO date YYYY-MM-DD
+          required: false
+          schema:
+            type: string
+          description: From date (YYYY-MM-DD)
         - in: query
           name: to
-          schema: { type: string, pattern: "^\\d{4}-\\d{2}-\\d{2}$" }
-          description: ISO date YYYY-MM-DD
+          required: false
+          schema:
+            type: string
+          description: To date (YYYY-MM-DD)
+        - in: query
+          name: full
+          required: false
+          schema:
+            type: boolean
+          description: Return extended fields (debug)
       responses:
-        '200':
-          description: Array of activities
+        "200":
+          description: List of activities
           content:
             application/json:
               schema:
@@ -122,33 +69,16 @@ paths:
                 items:
                   type: object
                   properties:
-                    id: { oneOf: [{ type: string }, { type: integer }], nullable: true }
-                    start_date_local: { type: string, description: ISO datetime }
+                    id: { type: string }
+                    start_date_local: { type: string }
                     type: { type: string }
-                    name: { type: string, nullable: true }
-                    duration_s: { type: number, nullable: true }
-                    distance_m: { type: number, nullable: true }
-        '401': { description: Unauthorized }
-  /healthz:
-    get:
-      summary: Service health
-      responses:
-        '200':
-          description: Health JSON
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok: { type: boolean }
-                  time: { type: string }
-                  stas: { oneOf: [{ type: string }, { type: integer }] }
-                  env:
-                    type: object
-                    properties:
-                      skip_stas_validate: { type: boolean }
-                      health_user_id: { type: integer, nullable: true }
+                    name: { type: string }
+                    duration_s: { type: number }
+                    distance_m: { type: number }
+        "401":
+          description: Unauthorized
 components:
+  schemas: {}
   securitySchemes:
     bearerAuth:
       type: http
