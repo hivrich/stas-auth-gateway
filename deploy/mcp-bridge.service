@@ -1,0 +1,14 @@
+[Unit]
+Description=MCP Bridge (Intervals.icu HTTP proxy)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/mcp-bridge
+EnvironmentFile=/opt/mcp-bridge/.env
+ExecStart=/usr/bin/node /opt/mcp-bridge/app.js
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

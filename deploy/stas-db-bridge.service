@@ -1,0 +1,14 @@
+[Unit]
+Description=STAS DB Bridge
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/stas-db-bridge
+EnvironmentFile=/opt/stas-db-bridge/.env
+ExecStart=/usr/bin/node /opt/stas-db-bridge/app.js
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

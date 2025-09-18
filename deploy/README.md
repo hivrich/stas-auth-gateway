@@ -2,6 +2,50 @@
 
 Deployment artifacts for the STAS Auth Gateway (OAuth2 + API proxy to STAS/ICU).
 
+## Unified deploy scripts (recommended)
+
+This repo includes a `deploy/` toolkit to provision a fresh host and configure all components (gateway + bridges) behind a single domain `intervals.stas.run`.
+
+Files:
+- `deploy/.env.deploy.example` — template to export secrets and connection params.
+- `deploy/init-host.sh` — run on the target host to install base packages and Node.js.
+- `deploy/sync-and-setup.sh` — run locally; connects via SSH, clones repos to `/opt/*`, writes `.env` files, installs systemd units and nginx vhost.
+- `deploy/smoke.sh` — quick smoke tests against the public domain.
+
+### 0) Prepare local environment
+```
+cp deploy/.env.deploy.example deploy/.env.deploy
+edit deploy/.env.deploy
+set -a; source deploy/.env.deploy; set +a
+```
+If you use password auth, install `sshpass` locally (macOS):
+```
+brew install hudochenkov/sshpass/sshpass
+```
+
+### 1) Initialize host (run ON remote as root)
+Copy and execute `init-host.sh` on the server:
+```
+scp deploy/init-host.sh "$SSH_HOST:/root/"
+ssh "$SSH_HOST" 'bash /root/init-host.sh'
+```
+
+### 2) Sync repos and configure services (run LOCALLY)
+```
+bash deploy/sync-and-setup.sh
+```
+What it does:
+- Creates `/opt/{stas-auth-gateway,stas-db-bridge,mcp-bridge,mcp}` and clones or updates repos.
+- Writes `.env` files to each service path using your exported vars.
+- Installs systemd units and enables services.
+- Installs nginx vhost for `${TARGET_DOMAIN}` and reloads nginx.
+
+### 3) Smoke tests (run LOCALLY)
+```
+bash deploy/smoke.sh
+```
+Exports respected: `TARGET_DOMAIN`, `STAS_API_KEY`, `MCP_API_KEY`, `DEFAULT_USER_ID`.
+
 ## Paths on server
 - `/opt/stas-auth-gateway` — working copy
 - `/etc/systemd/system/stas-auth-gateway.service`

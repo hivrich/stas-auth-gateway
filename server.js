@@ -9,6 +9,7 @@ const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
+const fetch = require('node-fetch');
 
 const PORT = Number(process.env.PORT || 3337);
 const NODE_ENV = process.env.NODE_ENV || 'production';
@@ -30,6 +31,10 @@ const DEBUG = /^true$/i.test(process.env.DEBUG || 'false');
 const ACCESS_TTL_SEC = parseInt(process.env.ACCESS_TTL_SEC || '3600', 10);
 const REFRESH_TTL_SEC = parseInt(process.env.REFRESH_TTL_SEC || '2592000', 10); // 30 days
 
+// Service URLs
+const DB_BRIDGE_URL = process.env.DB_BRIDGE_URL || 'http://127.0.0.1:3336';
+const MCP_BRIDGE_URL = process.env.MCP_BRIDGE_URL || 'http://127.0.0.1:3334';
+
 const pool = new Pool({
   host: process.env.PGHOST || '94.241.141.239',
   port: Number(process.env.PGPORT || 5432),
@@ -44,6 +49,28 @@ app.use(express.json());
 app.use(cors({ origin: (origin, cb) => cb(null, true), credentials: true }));
 
 function log(...args) { if (DEBUG) console.log('[GW]', ...args); }
+
+// Middleware for JWT authentication
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+  if (!token) {
+    return res.status(401).json({ error: 'Access token required' });
+  }
+
+  try {
+    const payload = jwt.verify(token, SESSION_SECRET);
+    if (payload.typ !== 'access') {
+      throw new Error('invalid_token_type');
+    }
+    req.user = payload;
+    next();
+  } catch (err) {
+    log('JWT verification failed:', err.message);
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
+}
 
 function wildcardMatch(pattern, str) {
   // Simple wildcard match supporting a single * segment
@@ -151,6 +178,114 @@ app.post('/gw/oauth/token', async (req, res) => {
   }
 });
 
-app.listen(PORT, '127.0.0.1', () => {
-  console.log(`STAS Auth Gateway listening on 127.0.0.1:${PORT} (${NODE_ENV})`);
+// API Routes from OpenAPI spec
+
+// GET /api/db/user_summary - Get user profile and training summary from local DB
+app.get('/api/db/user_summary', authenticateToken, async (req, res) => {
+  const { user_id } = req.query;
+  const userId = parseInt(user_id, 10);
+
+  if (!userId || isNaN(userId)) {
+    return res.status(400).json({ error: 'Invalid user_id parameter' });
+  }
+
+  try {
+    // Query user data from existing 'user' table
+    const sql = `
+      SELECT id, email, user_summary, info, rules, strategy, intervals_connected, 
+             current_vdot, user_summary_updated_at
+      FROM "user"
+      WHERE id = $1
+      LIMIT 1
+    `;
+    const result = await pool.query(sql, [userId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const user = result.rows[0];
+    
+    // Use existing user_summary if available, otherwise construct from other fields
+    let userSummary = user.user_summary;
+    if (!userSummary) {
+      userSummary = {
+        info: user.info || 'No info available',
+        goals: user.rules || 'No goals set',
+        strategy: user.strategy || 'No strategy defined',
+        intervals_connected: user.intervals_connected || false,
+        current_vdot: user.current_vdot || null
+      };
+    }
+
+    res.json({
+      ok: true,
+      user_summary: userSummary
+    });
+  } catch (err) {
+    log('Error fetching user summary:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
+
+// GET /icu/events - Get planned workouts from Intervals.icu
+app.get('/icu/events', authenticateToken, async (req, res) => {
+  const { user_id, oldest } = req.query;
+  const userId = parseInt(user_id, 10);
+
+  if (!userId || isNaN(userId)) {
+    return res.status(400).json({ error: 'Invalid user_id parameter' });
+  }
+
+  try {
+    // Get ICU access token from user_intervals_keys table
+    const tokenSql = 'SELECT intervals_api_key FROM user_intervals_keys WHERE user_id = $1 LIMIT 1';
+    const tokenResult = await pool.query(tokenSql, [userId]);
+
+    if (tokenResult.rows.length === 0) {
+      return res.status(401).json({ error: 'No ICU API key found for user. Please connect Intervals.icu account.' });
+    }
+
+    const icuApiKey = tokenResult.rows[0].intervals_api_key;
+
+    // Build ICU API URL
+    let icuUrl = `${ICU_API_BASE}/athlete/${userId}/events`;
+    const params = new URLSearchParams();
+    if (oldest) params.append('oldest', oldest);
+    if (params.toString()) icuUrl += '?' + params.toString();
+
+    // Proxy request to ICU API
+    const response = await fetch(icuUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${icuApiKey}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      log('ICU API error:', response.status, response.statusText);
+      if (response.status === 401 || response.status === 403) {
+        return res.status(401).json({ error: 'Unauthorized: Invalid or expired ICU API key' });
+      }
+      return res.status(response.status).json({ error: 'Failed to fetch from ICU API' });
+    }
+
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    log('Error fetching planned workouts:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Экспортируем приложение для Netlify Functions
+module.exports = app;
+
+// Start server if run directly (not as module)
+if (require.main === module) {
+  app.listen(PORT, () => {
+    log(`STAS Auth Gateway listening on port ${PORT}`);
+    log(`Health check: http://localhost:${PORT}/gw/healthz`);
+  });
+}
