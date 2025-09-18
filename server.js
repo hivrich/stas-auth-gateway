@@ -11,6 +11,7 @@ const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 const fetch = require('node-fetch');
 const { validateUserId } = require('./user_id_middleware');
+const { setupProxyRoutes } = require('./proxy_routes');
 
 const PORT = Number(process.env.PORT || 3337);
 const NODE_ENV = process.env.NODE_ENV || 'production';
@@ -48,6 +49,9 @@ const pool = new Pool({
 const app = express();
 app.use(express.json());
 app.use(cors({ origin: (origin, cb) => cb(null, true), credentials: true }));
+
+// Setup proxy routes for /api and /icu
+setupProxyRoutes(app);
 
 function log(...args) { if (DEBUG) console.log('[GW]', ...args); }
 
