@@ -1,14 +1,41 @@
 // Финальный прокси с правильным порядком middleware
 const fetch = require('node-fetch');
+const jwt = require('jsonwebtoken');
 
 function setupProxyRoutes(app) {
-  // Прокси /api/* на stas-db-bridge (без аутентификации для совместимости)
-  app.use('/api', async (req, res) => {
+  // Middleware для проверки токена и извлечения user_id
+  function authenticateTokenMiddleware(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) {
+      return res.status(401).json({ error: 'Access token required' });
+    }
+
     try {
+      const payload = jwt.verify(token, process.env.JWT_SECRET || 'your-jwt-secret');
+      req.auth = payload;
+      req.uid = payload.sub; // user_id из токена
+      next();
+    } catch (err) {
+      console.error('Token verification failed:', err.message);
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+  }
+
+  // Прокси /api/* на stas-db-bridge с user_id из токена
+  app.use('/api', authenticateTokenMiddleware, async (req, res) => {
+    try {
+      const uid = req.uid;
       const apiKey = process.env.STAS_API_KEY || '7ca1e3d9d8bb76a1297a9c7d9e39d5eaf4d0d6da249440eea43bb50ff0fddf27';
-      const targetUrl = `http://127.0.0.1:3336${req.originalUrl}`;
       
-      const response = await fetch(targetUrl, {
+      // Добавляем user_id к URL
+      const url = new URL(`http://127.0.0.1:3336${req.originalUrl}`);
+      url.searchParams.set('user_id', String(uid));
+      
+      console.log(`[GW PROXY] STAS: ${req.method} ${url.toString()}`);
+      
+      const response = await fetch(url.toString(), {
         method: req.method,
         headers: {
           'X-API-Key': apiKey,
@@ -19,6 +46,8 @@ function setupProxyRoutes(app) {
       });
 
       const data = await response.text();
+      
+      console.log(`[GW PROXY] STAS Response: ${response.status}`);
       
       res.status(response.status).send(data);
     } catch (error) {
@@ -27,13 +56,19 @@ function setupProxyRoutes(app) {
     }
   });
 
-  // Прокси /icu/* на mcp-bridge (без аутентификации для совместимости)
-  app.use('/icu', async (req, res) => {
+  // Прокси /icu/* на mcp-bridge с user_id из токена
+  app.use('/icu', authenticateTokenMiddleware, async (req, res) => {
     try {
+      const uid = req.uid;
       const apiKey = process.env.MCP_API_KEY || 'e63ad0c93b969a864f5f16addfdad55eaabee376f1641b64';
-      const targetUrl = `http://127.0.0.1:3334${req.originalUrl}`;
       
-      const response = await fetch(targetUrl, {
+      // Добавляем user_id к URL
+      const url = new URL(`http://127.0.0.1:3334${req.originalUrl}`);
+      url.searchParams.set('user_id', String(uid));
+      
+      console.log(`[GW PROXY] ICU: ${req.method} ${url.toString()}`);
+      
+      const response = await fetch(url.toString(), {
         method: req.method,
         headers: {
           'X-API-Key': apiKey,
@@ -44,6 +79,8 @@ function setupProxyRoutes(app) {
       });
 
       const data = await response.text();
+      
+      console.log(`[GW PROXY] ICU Response: ${response.status}`);
       
       res.status(response.status).send(data);
     } catch (error) {
