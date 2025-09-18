@@ -12,6 +12,7 @@ const { Pool } = require('pg');
 const fetch = require('node-fetch');
 const { validateUserId } = require('./user_id_middleware');
 const { setupProxyRoutes } = require('./proxy_routes');
+const { setupGPTTokenEndpoint } = require('./gpt_actions_token');
 
 const PORT = Number(process.env.PORT || 3337);
 const NODE_ENV = process.env.NODE_ENV || 'production';
@@ -52,6 +53,9 @@ app.use(cors({ origin: (origin, cb) => cb(null, true), credentials: true }));
 
 // Setup proxy routes for /api and /icu
 setupProxyRoutes(app);
+
+// Setup GPT Actions token endpoint
+setupGPTTokenEndpoint(app);
 
 function log(...args) { if (DEBUG) console.log('[GW]', ...args); }
 
