@@ -1,235 +1,194 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Intervals Training API",
-    "description": "API for accessing training data and plans from Intervals.icu and local database",
+    "title": "Intervals/STAS Gateway API",
+    "description": "OAuth-protected gateway for STAS DB and Intervals.icu (proxies STAS and ICU; resolves user_id from the access token). Do NOT pass user_id — the gateway injects it server-side.",
     "version": "1.0.0"
   },
   "servers": [
-    {
-      "url": "https://intervals.stas.run"
-    }
+    { "url": "https://intervals.stas.run" }
+  ],
+  "security": [
+    { "oauth2": ["read:me", "icu", "workouts:write"] }
   ],
   "paths": {
-    "/api/db/user_summary": {
+    "/gw/healthz": {
       "get": {
-        "summary": "Get user profile and training summary",
-        "description": "Returns user's profile information, goals, and training preferences from local database",
-        "operationId": "getUserSummary",
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "description": "User ID from the system - must be a valid existing user"
-            },
-            "description": "User ID from the system"
-          }
-        ],
+        "summary": "Gateway health",
+        "operationId": "getHealth",
         "responses": {
           "200": {
-            "description": "User summary data",
+            "description": "Health JSON",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserSummary"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/db/trainings": {
-      "get": {
-        "summary": "Get user's training sessions",
-        "description": "Returns user's completed training sessions from local database",
-        "operationId": "getUserTrainings",
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "description": "User ID from the system - must be a valid existing user"
-            },
-            "description": "User ID from the system"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "List of training sessions",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TrainingList"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/icu/events": {
-      "get": {
-        "summary": "Get planned workouts from Intervals.icu",
-        "description": "Returns user's planned training sessions from Intervals.icu",
-        "operationId": "getPlannedWorkouts",
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "description": "User ID from the system - must be a valid existing user"
-            },
-            "description": "User ID from the system"
-          },
-          {
-            "name": "oldest",
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "format": "date"
-            },
-            "description": "Oldest date to fetch (YYYY-MM-DD)"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "List of planned workouts",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "id": {"type": "string"},
-                      "name": {"type": "string"},
-                      "start_date": {"type": "string"},
-                      "workout_type": {"type": "string"}
-                    }
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "sts": { "type": "string" },
+                    "ts": { "type": "string", "format": "date-time" }
                   }
                 }
               }
             }
           }
-        },
-        "security": [
+        }
+      }
+    },
+    "/api/me": {
+      "get": {
+        "summary": "Resolve current user",
+        "description": "Returns STAS user_id and Intervals athlete_id associated with the access token.",
+        "operationId": "getMe",
+        "responses": {
+          "200": {
+            "description": "Current user mapping",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Me" }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" }
+        }
+      }
+    },
+    "/api/db/user_summary": {
+      "get": {
+        "summary": "User summary (from STAS DB)",
+        "description": "Returns user.user_summary JSON for the current token's user_id. user_id is inferred from the token.",
+        "operationId": "getUserSummary",
+        "responses": {
+          "200": {
+            "description": "User summary data",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/UserSummary" }
+              }
+            }
+          },
+          "404": { "description": "User not found in STAS DB" }
+        }
+      }
+    },
+    "/api/db/trainings": {
+      "get": {
+        "summary": "Completed trainings (from STAS DB)",
+        "description": "Returns completed training sessions for the current user from STAS DB.",
+        "operationId": "getUserTrainings",
+        "parameters": [
           {
-            "bearerAuth": []
+            "name": "days",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 180, "default": 30 },
+            "description": "Number of days back to include (default 30)."
           }
-        ]
+        ],
+        "responses": {
+          "200": {
+            "description": "Training sessions list",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TrainingList" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/icu/events": {
+      "get": {
+        "summary": "Planned workouts (Intervals.icu)",
+        "description": "Returns planned workouts for the current user. Use oldest/newest or days (default 60).",
+        "operationId": "getPlannedWorkouts",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 180, "default": 60 },
+            "description": "Number of days from today (default 60)."
+          },
+          {
+            "name": "oldest",
+            "in": "query",
+            "schema": { "type": "string", "format": "date" },
+            "description": "Oldest date (YYYY-MM-DD)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Planned workouts",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/IcuEventList" }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete events by external_id or prefix",
+        "description": "Deletes Intervals.icu events for the current user. Use dry_run=true to preview.",
+        "operationId": "deleteIcuEvents",
+        "parameters": [
+          {
+            "name": "external_id",
+            "in": "query",
+            "schema": { "type": "string" },
+            "description": "Delete a single event by external_id."
+          },
+          {
+            "name": "external_id_prefix",
+            "in": "query",
+            "schema": { "type": "string" },
+            "description": "Delete all events with this prefix (e.g., plan:)."
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "schema": { "type": "boolean", "default": true },
+            "description": "If true, returns what would be deleted."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Delete result (or dry-run preview)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/IcuDeleteResult" }
+              }
+            }
+          }
+        }
       }
     },
     "/icu/events/bulk": {
       "post": {
-        "summary": "Create new planned workouts in Intervals.icu",
-        "description": "Creates new training plans in Intervals.icu",
+        "summary": "Create/update planned workouts (bulk)",
+        "description": "Bulk create/update Intervals.icu events for the current user. Always set external_id_prefix=plan: for safe re-uploading.",
         "operationId": "createPlannedWorkouts",
         "parameters": [
           {
-            "name": "user_id",
+            "name": "external_id_prefix",
             "in": "query",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "description": "User ID from the system - must be a valid existing user"
-            },
-            "description": "User ID from the system"
+            "schema": { "type": "string", "default": "plan:" },
+            "description": "Prefix to apply to all events' external_id."
           }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "workouts": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "id": {"type": "string"},
-                        "name": {"type": "string"},
-                        "start_date": {"type": "string"},
-                        "description": {"type": "string"}
-                      }
-                    }
-                  }
-                },
-                "required": ["workouts"]
-              }
+              "schema": { "$ref": "#/components/schemas/IcuEventBulkRequest" }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Workouts created successfully",
+            "description": "Bulk write result",
             "content": {
               "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "ok": {"type": "boolean"},
-                    "received": {"type": "integer"}
-                  }
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/healthz": {
-      "get": {
-        "summary": "Get system health status",
-        "description": "Returns aggregated health status of all system components",
-        "operationId": "getHealthStatus",
-        "responses": {
-          "200": {
-            "description": "System health status",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "status": {"type": "string"},
-                    "timestamp": {"type": "string"},
-                    "services": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "name": {"type": "string"},
-                          "status": {"type": "string"},
-                          "code": {"type": "integer"}
-                        }
-                      }
-                    }
-                  }
-                }
+                "schema": { "$ref": "#/components/schemas/IcuBulkWriteResult" }
               }
             }
           }
@@ -239,51 +198,106 @@
   },
   "components": {
     "securitySchemes": {
-      "bearerAuth": {
-        "type": "http",
-        "scheme": "bearer",
-        "bearerFormat": "JWT"
-      }
-    },
-    "schemas": {
-      "UserSummary": {
-        "type": "object",
-        "properties": {
-          "ok": {"type": "boolean"},
-          "user_summary": {
-            "type": "object",
-            "properties": {
-              "info": {"type": "string"},
-              "goals": {"type": "string"}
+      "oauth2": {
+        "type": "oauth2",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://intervals.stas.run/gw/oauth/authorize",
+            "tokenUrl": "https://intervals.stas.run/gw/oauth/token",
+            "scopes": {
+              "read:me": "Read current user mapping",
+              "icu": "Access Intervals.icu proxies",
+              "workouts:write": "Create/update/delete workouts"
             }
           }
         }
+      }
+    },
+    "schemas": {
+      "Me": {
+        "type": "object",
+        "properties": {
+          "user_id": { "type": "integer", "example": 95192039 },
+          "athlete_id": { "type": "string", "example": "i297087" }
+        },
+        "required": ["user_id", "athlete_id"]
+      },
+      "UserSummary": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "user_summary": { "type": "object", "description": "Arbitrary JSON payload from STAS user.user_summary." }
+        },
+        "required": ["ok"]
       },
       "TrainingList": {
         "type": "object",
         "properties": {
-          "ok": {"type": "boolean"},
+          "ok": { "type": "boolean" },
           "trainings": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
-                "id": {"type": "string"},
-                "date": {"type": "string", "format": "date-time"},
-                "workout_type": {"type": "string"},
-                "distance": {"type": "string"},
-                "training_load": {"type": "number"}
+                "id": { "type": "string" },
+                "date": { "type": "string", "format": "date-time" },
+                "workout_type": { "type": "string" },
+                "distance": { "type": "string" },
+                "training_load": { "type": "number" }
               }
             }
           },
-          "count": {"type": "integer"}
-        }
+          "count": { "type": "integer" }
+        },
+        "required": ["ok", "trainings", "count"]
+      },
+      "IcuEvent": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "external_id": { "type": "string", "description": "Should include the chosen prefix" },
+          "category": { "type": "string", "enum": ["WORKOUT", "EVENT", "NOTE"] },
+          "type": { "type": "string", "example": "RUN" },
+          "name": { "type": "string" },
+          "start_date": { "type": "string", "format": "date-time" },
+          "description": { "type": "string" }
+        },
+        "required": ["category", "type", "name", "start_date"]
+      },
+      "IcuEventList": {
+        "type": "array",
+        "items": { "$ref": "#/components/schemas/IcuEvent" }
+      },
+      "IcuEventBulkRequest": {
+        "type": "object",
+        "properties": {
+          "workouts": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/IcuEvent" },
+            "minItems": 1
+          }
+        },
+        "required": ["workouts"]
+      },
+      "IcuBulkWriteResult": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "received": { "type": "integer" },
+          "created": { "type": "integer" },
+          "updated": { "type": "integer" }
+        },
+        "required": ["ok", "received"]
+      },
+      "IcuDeleteResult": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "deleted": { "type": "integer" },
+          "matched": { "type": "integer" }
+        },
+        "required": ["ok"]
       }
     }
-  },
-  "security": [
-    {
-      "bearerAuth": []
-    }
-  ]
+  }
 }
