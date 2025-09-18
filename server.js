@@ -10,6 +10,7 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 const fetch = require('node-fetch');
+const { validateUserId } = require('./user_id_middleware');
 
 const PORT = Number(process.env.PORT || 3337);
 const NODE_ENV = process.env.NODE_ENV || 'production';
@@ -93,9 +94,49 @@ async function getClientById(client_id) {
   return r.rows[0];
 }
 
-// Health check
-app.get('/gw/healthz', (req, res) => {
-  res.json({ ok: true, stas: !!STAS_API_BASE, icu: !!ICU_API_BASE, client: OAUTH_CLIENT_ID });
+// Health check with detailed status
+app.get('/gw/healthz', async (req, res) => {
+  const testUserId = req.query.test_user_id ? parseInt(req.query.test_user_id) : 95192039;
+  
+  try {
+    // Test STAS API
+    let stasStatus = 'unknown';
+    try {
+      const stasResponse = await fetch(`${STAS_API_BASE}/api/db/user_summary?user_id=${testUserId}`, {
+        headers: { 'X-API-Key': STAS_API_KEY }
+      });
+      stasStatus = stasResponse.status === 200 ? 'ok' : 
+                   stasResponse.status === 404 ? 'user_not_found' : 'error';
+    } catch (e) {
+      stasStatus = 'connection_error';
+    }
+
+    // Test ICU API
+    let icuStatus = 'unknown';
+    try {
+      const icuResponse = await fetch(`${ICU_API_BASE}/athlete/${testUserId}/events?oldest=2024-01-01`, {
+        headers: { 'Authorization': `Bearer test` }
+      });
+      icuStatus = icuResponse.status === 200 ? 'ok' : 
+                  icuResponse.status === 401 ? 'unauthorized' : 'error';
+    } catch (e) {
+      icuStatus = 'connection_error';
+    }
+
+    res.json({ 
+      ok: true, 
+      stas: !!STAS_API_BASE, 
+      icu: !!ICU_API_BASE, 
+      client: OAUTH_CLIENT_ID,
+      services: {
+        stas_api: stasStatus,
+        icu_api: icuStatus
+      },
+      test_user_id: testUserId
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Health check failed', details: err.message });
+  }
 });
 
 // OAuth 2.0 Authorization Endpoint (Authorization Code Grant)
@@ -109,7 +150,7 @@ app.get('/gw/oauth/authorize', (req, res) => {
   // Create short-lived authorization code as a signed JWT
   const now = Math.floor(Date.now() / 1000);
   const code = jwt.sign({
-    sub: String(user_id || ''),
+    sub: String(user_id || 'unknown'),
     aud: OAUTH_CLIENT_ID,
     scope: String(scope),
     iat: now,
@@ -181,13 +222,8 @@ app.post('/gw/oauth/token', async (req, res) => {
 // API Routes from OpenAPI spec
 
 // GET /api/db/user_summary - Get user profile and training summary from local DB
-app.get('/api/db/user_summary', authenticateToken, async (req, res) => {
-  const { user_id } = req.query;
-  const userId = parseInt(user_id, 10);
-
-  if (!userId || isNaN(userId)) {
-    return res.status(400).json({ error: 'Invalid user_id parameter' });
-  }
+app.get('/api/db/user_summary', authenticateToken, validateUserId, async (req, res) => {
+  const userId = req.validatedUserId;
 
   try {
     // Query user data from existing 'user' table
@@ -229,13 +265,9 @@ app.get('/api/db/user_summary', authenticateToken, async (req, res) => {
 });
 
 // GET /icu/events - Get planned workouts from Intervals.icu
-app.get('/icu/events', authenticateToken, async (req, res) => {
-  const { user_id, oldest } = req.query;
-  const userId = parseInt(user_id, 10);
-
-  if (!userId || isNaN(userId)) {
-    return res.status(400).json({ error: 'Invalid user_id parameter' });
-  }
+app.get('/icu/events', authenticateToken, validateUserId, async (req, res) => {
+  const { oldest } = req.query;
+  const userId = req.validatedUserId;
 
   try {
     // Get ICU access token from user_intervals_keys table
