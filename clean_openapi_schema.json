@@ -1,0 +1,289 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Intervals Training API",
+    "description": "API for accessing training data and plans from Intervals.icu and local database",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://intervals.stas.run"
+    }
+  ],
+  "paths": {
+    "/api/db/user_summary": {
+      "get": {
+        "summary": "Get user profile and training summary",
+        "description": "Returns user's profile information, goals, and training preferences from local database",
+        "operationId": "getUserSummary",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "User ID from the system - must be a valid existing user"
+            },
+            "description": "User ID from the system"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User summary data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSummary"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/db/trainings": {
+      "get": {
+        "summary": "Get user's training sessions",
+        "description": "Returns user's completed training sessions from local database",
+        "operationId": "getUserTrainings",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "User ID from the system - must be a valid existing user"
+            },
+            "description": "User ID from the system"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of training sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrainingList"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/icu/events": {
+      "get": {
+        "summary": "Get planned workouts from Intervals.icu",
+        "description": "Returns user's planned training sessions from Intervals.icu",
+        "operationId": "getPlannedWorkouts",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "User ID from the system - must be a valid existing user"
+            },
+            "description": "User ID from the system"
+          },
+          {
+            "name": "oldest",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Oldest date to fetch (YYYY-MM-DD)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of planned workouts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {"type": "string"},
+                      "name": {"type": "string"},
+                      "start_date": {"type": "string"},
+                      "workout_type": {"type": "string"}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/icu/events/bulk": {
+      "post": {
+        "summary": "Create new planned workouts in Intervals.icu",
+        "description": "Creates new training plans in Intervals.icu",
+        "operationId": "createPlannedWorkouts",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "User ID from the system - must be a valid existing user"
+            },
+            "description": "User ID from the system"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "workouts": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {"type": "string"},
+                        "name": {"type": "string"},
+                        "start_date": {"type": "string"},
+                        "description": {"type": "string"}
+                      }
+                    }
+                  }
+                },
+                "required": ["workouts"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Workouts created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {"type": "boolean"},
+                    "received": {"type": "integer"}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/healthz": {
+      "get": {
+        "summary": "Get system health status",
+        "description": "Returns aggregated health status of all system components",
+        "operationId": "getHealthStatus",
+        "responses": {
+          "200": {
+            "description": "System health status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {"type": "string"},
+                    "timestamp": {"type": "string"},
+                    "services": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {"type": "string"},
+                          "status": {"type": "string"},
+                          "code": {"type": "integer"}
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "UserSummary": {
+        "type": "object",
+        "properties": {
+          "ok": {"type": "boolean"},
+          "user_summary": {
+            "type": "object",
+            "properties": {
+              "info": {"type": "string"},
+              "goals": {"type": "string"}
+            }
+          }
+        }
+      },
+      "TrainingList": {
+        "type": "object",
+        "properties": {
+          "ok": {"type": "boolean"},
+          "trainings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {"type": "string"},
+                "date": {"type": "string", "format": "date-time"},
+                "workout_type": {"type": "string"},
+                "distance": {"type": "string"},
+                "training_load": {"type": "number"}
+              }
+            }
+          },
+          "count": {"type": "integer"}
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ]
+}
