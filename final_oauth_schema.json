@@ -1,0 +1,144 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Intervals/STAS Gateway API",
+    "description": "OAuth-protected gateway for STAS DB and Intervals.icu (proxies STAS and ICU; resolves user_id from the access token).",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://intervals.stas.run"
+    }
+  ],
+  "security": [
+    {
+      "oauth2": ["read"]
+    }
+  ],
+  "paths": {
+    "/gw/api/me": {
+      "get": {
+        "operationId": "getMe",
+        "summary": "Get current user identity",
+        "responses": {
+          "200": {
+            "description": "User identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "user_id": { "type": "integer" },
+                    "athlete_id": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/db/user_summary": {
+      "get": {
+        "operationId": "getUserSummary",
+        "summary": "Get user summary from STAS DB",
+        "responses": {
+          "200": {
+            "description": "User summary data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "user_summary": { "type": "object" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/db/trainings": {
+      "get": {
+        "operationId": "getUserTrainings", 
+        "summary": "Get user trainings from STAS DB",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "schema": { "type": "integer", "default": 30 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Training sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "trainings": { "type": "array" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/icu/events": {
+      "get": {
+        "operationId": "getPlannedWorkouts",
+        "summary": "Get planned workouts from Intervals.icu",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query", 
+            "schema": { "type": "integer", "default": 60 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Planned workouts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": { "type": "string" },
+                      "name": { "type": "string" },
+                      "start_date": { "type": "string" },
+                      "type": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "oauth2": {
+        "type": "oauth2",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://intervals.stas.run/gw/oauth/authorize",
+            "tokenUrl": "https://intervals.stas.run/gw/oauth/token",
+            "scopes": {
+              "read": "Read access"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {}
+  }
+}
