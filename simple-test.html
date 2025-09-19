@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Простой тест кнопки</title>
+    <style>
+        body { font-family: Arial; padding: 20px; }
+        input, button { padding: 10px; margin: 5px; }
+        #log { background: #f0f0f0; padding: 10px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <h2>Тест кнопки Войти</h2>
+
+    <input type="text" id="stasId" placeholder="STAS ID" value="12345">
+
+    <button id="loginBtn">Войти</button>
+
+    <div id="log"></div>
+
+    <script>
+        console.log('JavaScript loaded successfully');
+
+        function handleLogin() {
+            console.log('Button clicked!');
+
+            var stasId = document.getElementById('stasId').value;
+            console.log('STAS ID entered:', stasId);
+
+            if (!stasId || stasId.trim() === '') {
+                alert('Введите STAS ID!');
+                return;
+            }
+
+            // Простой редирект
+            var redirectUrl = 'https://intervals.stas.run/gw/oauth/token?user_id=' + encodeURIComponent(stasId.trim()) + '&client_id=chatgpt-actions';
+            console.log('Redirecting to:', redirectUrl);
+
+            // Редирект
+            window.location.href = redirectUrl;
+        }
+
+        // Привязка события к кнопке
+        document.getElementById('loginBtn').onclick = handleLogin;
+
+        // Enter в поле ввода
+        document.getElementById('stasId').onkeypress = function(event) {
+            if (event.key === 'Enter') {
+                handleLogin();
+            }
+        };
+
+        console.log('Script execution completed');
+        console.log('Button element:', document.getElementById('loginBtn'));
+        console.log('Input element:', document.getElementById('stasId'));
+    </script>
+</body>
+</html>

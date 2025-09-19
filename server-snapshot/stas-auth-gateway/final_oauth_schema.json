@@ -16,7 +16,7 @@
     }
   ],
   "paths": {
-    "/gw/api/me": {
+    "/api/me": {
       "get": {
         "operationId": "getMe",
         "summary": "Get current user identity from JWT token",
@@ -38,40 +38,20 @@
         }
       }
     },
-    "/gw/api/db/user_summary": {
+    "/api/db/user_summary": {
       "get": {
         "operationId": "getUserSummary",
-        "summary": "Get user summary from STAS DB",
+        "summary": "Get user summary from STAS DB (user_id from JWT token)",
         "responses": {
           "200": {
-            "description": "User summary",
+            "description": "User summary data",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
                     "ok": { "type": "boolean" },
-                    "user_summary": {
-                      "type": "object",
-                      "properties": {
-                        "total_workouts": { "type": "number" },
-                        "total_distance": { "type": "number" },
-                        "total_time": { "type": "number" },
-                        "avg_pace": { "type": "string" },
-                        "avg_distance_per_workout": { "type": "number" },
-                        "longest_run": { "type": "number" },
-                        "fastest_pace": { "type": "string" },
-                        "weekly_average": { "type": "number" },
-                        "monthly_goal": { "type": "number" },
-                        "current_month_progress": { "type": "number" },
-                        "goals": { "type": "string" },
-                        "recent_achievements": {
-                          "type": "array",
-                          "items": { "type": "string" }
-                        }
-                      }
-                    },
-                    "user_summary_updated_at": { "type": "string", "format": "date-time" }
+                    "user_summary": { "type": "object" }
                   }
                 }
               }
@@ -80,48 +60,27 @@
         }
       }
     },
-    "/gw/api/db/trainings": {
+    "/api/db/trainings": {
       "get": {
-        "operationId": "getTrainings",
-        "summary": "Get user trainings",
+        "operationId": "getUserTrainings", 
+        "summary": "Get user trainings from STAS DB (user_id from JWT token)",
         "parameters": [
           {
             "name": "days",
-            "in": "query",
-            "schema": {
-              "type": "integer",
-              "default": 60
-            }
+            "in": "query", 
+            "schema": { "type": "integer", "default": 30 }
           }
         ],
         "responses": {
           "200": {
-            "description": "Trainings list",
+            "description": "Training sessions",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
                     "ok": { "type": "boolean" },
-                    "trainings": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "id": { "type": "number" },
-                          "name": { "type": "string" },
-                          "date": { "type": "string", "format": "date" },
-                          "distance": { "type": "number" },
-                          "duration": { "type": "number" },
-                          "pace": { "type": "string" },
-                          "avg_heart_rate": { "type": "number" },
-                          "max_heart_rate": { "type": "number" },
-                          "calories": { "type": "number" },
-                          "type": { "type": "string" },
-                          "notes": { "type": "string" }
-                        }
-                      }
-                    }
+                    "trainings": { "type": "array" }
                   }
                 }
               }
@@ -130,7 +89,7 @@
         }
       }
     },
-    "/gw/icu/events": {
+    "/icu/events": {
       "get": {
         "operationId": "getPlannedWorkouts",
         "summary": "Get planned workouts from Intervals.icu (athlete_id from JWT token)",

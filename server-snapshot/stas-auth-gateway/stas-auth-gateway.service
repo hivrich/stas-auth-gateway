@@ -1,0 +1,14 @@
+[Unit]
+Description=STAS Auth Gateway
+After=network.target
+
+[Service]
+WorkingDirectory=/root
+ExecStart=/usr/bin/node /root/server.js
+User=root
+Group=root
+NoNewPrivileges=false
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

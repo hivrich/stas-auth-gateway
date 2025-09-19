@@ -1,0 +1,53 @@
+    "/icu/events/bulk": {
+      "post": {
+        "summary": "Create new planned workouts in Intervals.icu",
+        "description": "Creates new training plans in Intervals.icu",
+        "operationId": "createPlannedWorkouts",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "workouts": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {"type": "string"},
+                        "name": {"type": "string"},
+                        "start_date": {"type": "string"},
+                        "description": {"type": "string"}
+                      }
+                    }
+                  }
+                },
+                "required": ["workouts"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Workouts created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {"type": "boolean"},
+                    "received": {"type": "integer"}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },

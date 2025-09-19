@@ -1,0 +1,16 @@
+{
+  "name": "stas-auth-gateway",
+  "version": "1.0.0",
+  "description": "OAuth-protected gateway for STAS DB and Intervals.icu API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": ["oauth", "gateway", "api", "intervals", "stas"],
+  "author": "STAS Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

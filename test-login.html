@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>STAS Авторизация - Тест</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    .test-info { background: #f0f0f0; padding: 10px; margin-bottom: 20px; }
+    .debug { background: #ffe0e0; padding: 10px; margin: 10px 0; font-family: monospace; }
+  </style>
+</head>
+<body>
+  <div class="test-info">
+    <h3>Тест страницы авторизации</h3>
+    <p>URL: <strong>https://intervals.stas.run/gw/oauth/authorize?client_id=chatgpt-actions</strong></p>
+    <p>Инструкции:</p>
+    <ol>
+      <li>Откройте URL выше в браузере</li>
+      <li>Введите любой STAS ID (например: 12345)</li>
+      <li>Откройте консоль браузера (F12 → Console)</li>
+      <li>Нажмите кнопку "Войти"</li>
+      <li>Посмотрите логи в консоли</li>
+    </ol>
+  </div>
+
+  <h2>Что должно происходить:</h2>
+  <div class="debug">
+    При нажатии кнопки в консоли должны появиться логи:<br>
+    handleLogin called<br>
+    STAS ID: [введенный ID]<br>
+    redirectUri: [пусто или значение]<br>
+    Redirecting to: [URL для редиректа]
+  </div>
+
+  <h2>Если кнопка не работает:</h2>
+  <ul>
+    <li>Проверьте, что JavaScript включен в браузере</li>
+    <li>Посмотрите ошибки в консоли браузера (красные сообщения)</li>
+    <li>Попробуйте другой браузер</li>
+    <li>Попробуйте отключить блокировщик рекламы</li>
+  </ul>
+
+  <h2>Альтернативный тест:</h2>
+  <p>Если основная страница не работает, попробуйте:</p>
+  <p><strong>https://intervals.stas.run/gw/oauth/token?user_id=12345&client_id=chatgpt-actions</strong></p>
+  <p>Это должно сразу сделать редирект на chat.openai.com</p>
+</body>
+</html>

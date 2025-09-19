@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Тест JavaScript кнопки</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    input, button { padding: 10px; margin: 5px; }
+    .log { background: #f0f0f0; padding: 10px; margin: 10px 0; }
+  </style>
+</head>
+<body>
+  <h2>Тест кнопки "Войти"</h2>
+
+  <input type="text" id="stasId" placeholder="Введите STAS ID" value="12345">
+
+  <button onclick="handleLogin()">Войти</button>
+
+  <div class="log" id="log"></div>
+
+  <script>
+    function log(message) {
+      const logDiv = document.getElementById('log');
+      logDiv.innerHTML += message + '<br>';
+      console.log(message);
+    }
+
+    function getUrlParameter(name) {
+      name = name.replace(/[\[]/, '\\[').replace(/[\]]/, '\\]');
+      const regex = new RegExp('[\\?&]' + name + '=([^&#]*)');
+      const results = regex.exec(location.search);
+      return results === null ? '' : decodeURIComponent(results[1].replace(/\+/g, ' '));
+    }
+
+    function handleLogin() {
+      log('handleLogin called');
+
+      const stasId = document.getElementById('stasId').value.trim();
+      log('STAS ID: ' + stasId);
+
+      if (!stasId) {
+        alert('Пожалуйста, введите ваш STAS ID');
+        return;
+      }
+
+      // Получаем redirect_uri из URL параметров
+      const redirectUri = getUrlParameter('redirect_uri');
+      const state = getUrlParameter('state');
+      log('redirectUri: ' + redirectUri);
+
+      // Формируем URL для получения токена
+      let tokenUrl = '/gw/oauth/token?user_id=' + encodeURIComponent(stasId) + '&client_id=chatgpt-actions';
+      if (redirectUri) {
+        tokenUrl += '&redirect_uri=' + encodeURIComponent(redirectUri);
+      } else if (getUrlParameter('client_id') === 'chatgpt-actions') {
+        // Для GPT Actions используем дефолтный redirect_uri
+        tokenUrl += '&redirect_uri=https://chat.openai.com';
+      }
+      if (state) {
+        tokenUrl += '&state=' + encodeURIComponent(state);
+      }
+
+      log('Redirecting to: ' + tokenUrl);
+
+      // Перенаправляем на получение токена
+      // window.location.href = tokenUrl;
+
+      log('Редирект ЗАКОММЕНТИРОВАН для теста');
+    }
+
+    // Автофокус на поле ввода
+    document.getElementById('stasId').focus();
+  </script>
+</body>
+</html>
