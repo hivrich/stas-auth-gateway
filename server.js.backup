@@ -1,15 +1,5 @@
 const http = require('http');
 
-// Add new imports for STAS/ICU routes
-let stasRoutes, icuRoutes;
-try {
-  stasRoutes = require('./routes/stas');
-  icuRoutes = require('./routes/icu');
-  console.log('✅ STAS/ICU routes loaded');
-} catch (e) {
-  console.log('⚠️ STAS/ICU routes not available:', e.message);
-}
-
 // JWT decode function
 function decodeJWT(token) {
   try {
@@ -759,20 +749,6 @@ const server = http.createServer((req, res) => {
     return;
   }
   
-  // ---- INTEGRATION: STAS/ICU Routes ----
-  // Add new routes before default response to preserve existing OAuth logic
-  if (stasRoutes && req.url.startsWith('/gw/api')) {
-    console.log('Delegating to STAS routes:', req.url);
-    // Note: This is a simplified integration. Full Express migration needed for proper middleware
-    return;
-  }
-  
-  if (icuRoutes && req.url.startsWith('/gw/icu')) {
-    console.log('Delegating to ICU routes:', req.url);
-    // Note: This is a simplified integration. Full Express migration needed for proper middleware
-    return;
-  }
-
   // Default response
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, url: req.url }));
