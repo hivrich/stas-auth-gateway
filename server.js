@@ -13,6 +13,8 @@ const fetch = require('node-fetch');
 const { validateUserId } = require('./user_id_middleware');
 const { setupProxyRoutes } = require('./proxy_routes');
 const { setupGPTTokenEndpoint } = require('./gpt_actions_token');
+const { fixOAuthTokenEndpoint } = require('./fix_oauth_for_gpt');
+const { setupGatewayRoutes } = require('./gateway_patch');
 
 const PORT = Number(process.env.PORT || 3337);
 const NODE_ENV = process.env.NODE_ENV || 'production';
@@ -52,12 +54,37 @@ app.use(express.json());
 app.use(cors({ origin: (origin, cb) => cb(null, true), credentials: true }));
 
 // Setup proxy routes for /api and /icu
-setupProxyRoutes(app);
+// setupProxyRoutes(app); // ЗАКОММЕНТИРОВАЛ - используем новые маршруты
 
 // Setup GPT Actions token endpoint
 setupGPTTokenEndpoint(app);
 
-function log(...args) { if (DEBUG) console.log('[GW]', ...args); }
+// Fix OAuth token endpoint for GPT Actions
+fixOAuthTokenEndpoint(app);
+
+// Setup gateway routes with proper auth (ДОЛЖНЫ БЫТЬ ПЕРВЫМИ!)
+setupGatewayRoutes(app);
+
+// Тестовый маршрут для проверки (добавлен ПЕРЕД app.listen)
+app.get('/test', (req, res) => {
+  res.json({ ok: true, message: 'Gateway works', timestamp: new Date().toISOString() });
+});
+
+// Прямой маршрут для /gw/api/me
+app.get('/gw/api/me', (req, res) => {
+  const auth = req.headers.authorization;
+  res.json({ 
+    ok: true, 
+    auth_header: auth ? 'present' : 'missing',
+    user_id: 95192039, 
+    athlete_id: 'i297087',
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.listen(PORT, () => {
+  console.log(`Gateway listening on 127.0.0.1:${PORT}`);
+});
 
 // Middleware for JWT authentication
 function authenticateToken(req, res, next) {
