@@ -8,7 +8,10 @@ function setupProxyRoutes(app) {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
 
+    console.log('Auth middleware: checking token', !!token);
+
     if (!token) {
+      console.log('Auth middleware: no token provided');
       return res.status(401).json({ error: 'Access token required' });
     }
 
@@ -16,6 +19,7 @@ function setupProxyRoutes(app) {
       const payload = jwt.verify(token, process.env.JWT_SECRET || 'your-jwt-secret');
       req.auth = payload;
       req.uid = payload.sub; // user_id из токена
+      console.log('Auth middleware: token valid, user_id:', req.uid);
       next();
     } catch (err) {
       console.error('Token verification failed:', err.message);

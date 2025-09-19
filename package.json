@@ -1,16 +1,16 @@
 {
   "name": "stas-auth-gateway",
   "version": "1.0.0",
-  "private": true,
+  "description": "OAuth-protected gateway for STAS DB and Intervals.icu API",
   "main": "server.js",
-  "type": "commonjs",
-  "license": "UNLICENSED",
-  "dependencies": {
-    "express": "^4.19.2",
-    "jsonwebtoken": "^9.0.2",
-    "node-fetch": "^2.7.0",
-    "uuid": "^9.0.1",
-    "cors": "^2.8.5",
-    "pg": "^8.16.3"
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": ["oauth", "gateway", "api", "intervals", "stas"],
+  "author": "STAS Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
