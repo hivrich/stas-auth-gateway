@@ -7,7 +7,7 @@
   },
   "servers": [
     {
-      "url": "https://intervals.stas.run"
+      "url": "https://intervals.stas.run/gw"
     }
   ],
   "security": [
@@ -16,7 +16,7 @@
     }
   ],
   "paths": {
-    "/gw/api/me": {
+    "/api/me": {
       "get": {
         "operationId": "getMe",
         "summary": "Get current user identity from JWT token",
@@ -131,6 +131,64 @@
             }
           }
         }
+      },
+      "post": {
+        "operationId": "createPlannedWorkouts",
+        "summary": "Create planned workouts in Intervals.icu (requires workouts:write scope)",
+        "parameters": [
+          {
+            "name": "dry_run",
+            "in": "query",
+            "schema": { "type": "boolean", "default": true }
+          },
+          {
+            "name": "external_id_prefix",
+            "in": "query",
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "events": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "category": { "type": "string", "enum": ["WORKOUT"] },
+                        "type": { "type": "string", "enum": ["RUN", "BIKE", "SWIM"] },
+                        "name": { "type": "string" },
+                        "start_date_local": { "type": "string", "format": "date-time" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Bulk operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "dry_run": { "type": "boolean" },
+                    "created": { "type": "integer" },
+                    "skipped": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     }
   },
@@ -143,7 +201,9 @@
             "authorizationUrl": "https://intervals.stas.run/gw/oauth/authorize",
             "tokenUrl": "https://intervals.stas.run/gw/oauth/token",
             "scopes": {
-              "read": "Read access"
+              "read": "Read access to user data",
+              "icu": "Access to Intervals.icu data",
+              "workouts:write": "Create and modify workouts"
             }
           }
         }
