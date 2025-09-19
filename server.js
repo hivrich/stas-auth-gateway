@@ -729,47 +729,35 @@ const server = http.createServer((req, res) => {
     return;
   }
   
-  // /gw/api/db/trainings - STAS прокси
-  if (req.url.startsWith('/gw/api/db/trainings')) {
-    const auth = requireAuth(req, res);
-    if (!auth) return;
-    
-    console.log('Trainings request - STAS API not configured yet');
-    
-    // Пока STAS API не подключен - возвращаем пустые данные
-    res.writeHead(200);
-    res.end(JSON.stringify({ 
-      ok: true,
-      trainings: [],
-      message: 'STAS API not configured - showing empty data'
-    }));
-    return;
-  }
+  // /gw/api/db/trainings - REMOVED: now handled by STAS/ICU server
+  // (keeping this comment for reference)
   
-  // /gw/icu/events - ICU прокси
-  if (req.url.startsWith('/gw/icu/events')) {
-    const auth = requireAuth(req, res);
-    if (!auth) return;
-    
-    console.log('Events request - ICU API not configured yet');
-    
-    // Пока ICU API не подключен - возвращаем пустые данные
-    res.writeHead(200);
-    res.end(JSON.stringify([]));
-    return;
-  }
+  // /gw/icu/events - REMOVED: now handled by STAS/ICU server
+  // (keeping this comment for reference)
   
   // ---- INTEGRATION: STAS/ICU Routes ----
-  // Add new routes before default response to preserve existing OAuth logic
-  if (stasRoutes && req.url.startsWith('/gw/api')) {
-    console.log('Delegating to STAS routes:', req.url);
-    // Note: This is a simplified integration. Full Express migration needed for proper middleware
-    return;
-  }
-  
-  if (icuRoutes && req.url.startsWith('/gw/icu')) {
-    console.log('Delegating to ICU routes:', req.url);
-    // Note: This is a simplified integration. Full Express migration needed for proper middleware
+  // Proxy to Express server for new routes
+  if (req.url.startsWith('/gw/api') || req.url.startsWith('/gw/icu')) {
+    console.log('Proxying to STAS/ICU server:', req.url);
+    
+    const proxyReq = http.request({
+      hostname: '127.0.0.1',
+      port: 3339, // Separate port for Express server
+      path: req.url,
+      method: req.method,
+      headers: req.headers
+    }, (proxyRes) => {
+      res.writeHead(proxyRes.statusCode, proxyRes.headers);
+      proxyRes.pipe(res);
+    });
+
+    proxyReq.on('error', (err) => {
+      console.error('Proxy error:', err);
+      res.writeHead(502);
+      res.end(JSON.stringify({ error: 'STAS/ICU service unavailable' }));
+    });
+
+    req.pipe(proxyReq);
     return;
   }
 
