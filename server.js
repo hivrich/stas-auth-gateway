@@ -42,7 +42,7 @@ function requireAuth(req, res) {
   // Для простых токенов (начинающихся с "access_") используем hardcoded данные
   if (token.startsWith('access_')) {
     return { 
-      user_id: '95192039',
+      user_id: null, // Убрал хардкод - user_id должен приходить из токена
       athlete_id: 'i297087',
       api_key: null 
     };

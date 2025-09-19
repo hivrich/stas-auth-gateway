@@ -1,0 +1,144 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Intervals/STAS Gateway API",
+    "version": "1.0.2",
+    "description": "OAuth-protected unified gateway. NO default user_id anywhere; user_id is taken strictly from the access token."
+  },
+  "servers": [
+    { "url": "https://intervals.stas.run/gw" }
+  ],
+  "security": [
+    { "oauth2": ["read:me", "icu", "workouts:write"] }
+  ],
+  "paths": {
+    "/oauth/authorize": {
+      "get": {
+        "summary": "Start OAuth2 (Authorization Code)",
+        "responses": { "302": { "description": "Redirect with ?code=" } }
+      }
+    },
+    "/oauth/token": {
+      "post": {
+        "summary": "Exchange code for token",
+        "responses": { "200": { "description": "Access token JSON" } }
+      }
+    },
+    "/api/db/user_summary": {
+      "get": {
+        "summary": "User summary from STAS (user_id from token)",
+        "security": [{ "oauth2": [] }],
+        "responses": { "200": { "description": "OK" }, "401": { "description": "No user_id in token" } }
+      }
+    },
+    "/api/db/activities": {
+      "get": {
+        "summary": "Activities (STAS, by days/from-to)",
+        "security": [{ "oauth2": [] }],
+        "parameters": [
+          { "name": "days", "in": "query", "schema": { "type": "integer" } },
+          { "name": "from", "in": "query", "schema": { "type": "string", "format": "date" } },
+          { "name": "to",   "in": "query", "schema": { "type": "string", "format": "date" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "401": { "description": "No user_id in token" } }
+      }
+    },
+    "/api/db/trainings": {
+      "get": {
+        "summary": "DEPRECATED: use /api/db/activities",
+        "deprecated": true,
+        "security": [{ "oauth2": [] }],
+        "parameters": [
+          { "name": "days", "in": "query", "schema": { "type": "integer" } },
+          { "name": "from", "in": "query", "schema": { "type": "string", "format": "date" } },
+          { "name": "to",   "in": "query", "schema": { "type": "string", "format": "date" } }
+        ],
+        "responses": {
+          "200": { "description": "OK (alias to /api/db/activities)" },
+          "401": { "description": "No user_id in token" }
+        }
+      }
+    },
+    "/api/db/activities_full": {
+      "get": {
+        "summary": "Activities full details (STAS, by days/from-to)",
+        "security": [{ "oauth2": [] }],
+        "parameters": [
+          { "name": "days", "in": "query", "schema": { "type": "integer" } },
+          { "name": "from", "in": "query", "schema": { "type": "string", "format": "date" } },
+          { "name": "to",   "in": "query", "schema": { "type": "string", "format": "date" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "401": { "description": "No user_id in token" } }
+      }
+    },
+    "/api/db/monthly_summary": {
+      "get": {
+        "summary": "Monthly summary (STAS)",
+        "security": [{ "oauth2": [] }],
+        "parameters": [
+          { "name": "months", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "401": { "description": "No user_id in token" } }
+      }
+    },
+    "/icu/activities": {
+      "get": {
+        "summary": "ICU activities (per-user creds from DB)",
+        "security": [{ "oauth2": [] }],
+        "responses": { "200": { "description": "OK" }, "403": { "description": "No ICU creds for user" }, "401": { "description": "No user_id in token" } }
+      }
+    },
+    "/icu/events": {
+      "get": {
+        "summary": "ICU events (calendar/plan)",
+        "security": [{ "oauth2": [] }],
+        "parameters": [
+          { "name": "oldest", "in": "query", "schema": { "type": "string", "format": "date" } },
+          { "name": "newest", "in": "query", "schema": { "type": "string", "format": "date" } },
+          { "name": "category", "in": "query", "schema": { "type": "string" } },
+          { "name": "external_id_prefix", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "403": { "description": "No ICU creds for user" }, "401": { "description": "No user_id in token" } }
+      },
+      "delete": {
+        "summary": "Delete events (filters)",
+        "security": [{ "oauth2": [] }],
+        "parameters": [
+          { "name": "external_id_prefix", "in": "query", "schema": { "type": "string" } },
+          { "name": "days", "in": "query", "schema": { "type": "integer" } },
+          { "name": "dry_run", "in": "query", "schema": { "type": "boolean" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "403": { "description": "No ICU creds for user" }, "401": { "description": "No user_id in token" } }
+      }
+    },
+    "/icu/events/bulk": {
+      "post": {
+        "summary": "Bulk write plan (dry_run supported)",
+        "security": [{ "oauth2": [] }],
+        "parameters": [
+          { "name": "dry_run", "in": "query", "schema": { "type": "boolean" } },
+          { "name": "external_id_prefix", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "403": { "description": "No ICU creds for user" }, "401": { "description": "No user_id in token" } }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "oauth2": {
+        "type": "oauth2",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://intervals.stas.run/gw/oauth/authorize",
+            "tokenUrl": "https://intervals.stas.run/gw/oauth/token",
+            "scopes": {
+              "read:me": "Read identity",
+              "icu": "Read ICU data",
+              "workouts:write": "Write workouts/events to ICU"
+            }
+          }
+        }
+      }
+    }
+  }
+}
