@@ -737,7 +737,7 @@ const server = http.createServer((req, res) => {
   
   // ---- INTEGRATION: STAS/ICU Routes ----
   // Proxy to Express server for new routes
-  if (req.url.startsWith('/gw/api') || req.url.startsWith('/gw/icu')) {
+  if (req.url.startsWith('/gw/api') || req.url.startsWith('/gw/icu') || req.url === '/.well-known/openapi.json' || req.url === '/openapi.json') {
     console.log('Proxying to STAS/ICU server:', req.url);
     
     const proxyReq = http.request({
