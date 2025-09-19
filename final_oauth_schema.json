@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Intervals/STAS Gateway API",
-    "description": "OAuth-protected gateway for STAS DB and Intervals.icu (proxies STAS and ICU; resolves user_id from the access token).",
+    "description": "OAuth-protected gateway for STAS DB and Intervals.icu. user_id extracted from JWT token, no client-side user_id required.",
     "version": "1.0.0"
   },
   "servers": [
@@ -19,7 +19,7 @@
     "/gw/api/me": {
       "get": {
         "operationId": "getMe",
-        "summary": "Get current user identity",
+        "summary": "Get current user identity from JWT token",
         "responses": {
           "200": {
             "description": "User identity",
@@ -41,7 +41,7 @@
     "/api/db/user_summary": {
       "get": {
         "operationId": "getUserSummary",
-        "summary": "Get user summary from STAS DB",
+        "summary": "Get user summary from STAS DB (user_id from JWT token)",
         "responses": {
           "200": {
             "description": "User summary data",
@@ -63,11 +63,11 @@
     "/api/db/trainings": {
       "get": {
         "operationId": "getUserTrainings", 
-        "summary": "Get user trainings from STAS DB",
+        "summary": "Get user trainings from STAS DB (user_id from JWT token)",
         "parameters": [
           {
             "name": "days",
-            "in": "query",
+            "in": "query", 
             "schema": { "type": "integer", "default": 30 }
           }
         ],
@@ -92,12 +92,22 @@
     "/icu/events": {
       "get": {
         "operationId": "getPlannedWorkouts",
-        "summary": "Get planned workouts from Intervals.icu",
+        "summary": "Get planned workouts from Intervals.icu (athlete_id from JWT token)",
         "parameters": [
           {
             "name": "days",
             "in": "query", 
             "schema": { "type": "integer", "default": 60 }
+          },
+          {
+            "name": "oldest",
+            "in": "query",
+            "schema": { "type": "string", "format": "date" }
+          },
+          {
+            "name": "newest", 
+            "in": "query",
+            "schema": { "type": "string", "format": "date" }
           }
         ],
         "responses": {
