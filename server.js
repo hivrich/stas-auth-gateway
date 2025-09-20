@@ -4,6 +4,7 @@ const express = require('express');
 const path = require('path');
 
 const app = express();
+app.use(/gw/api, require(./routes/stas));
 
 // Middleware
 app.use(express.json({ limit: '10mb' }));
