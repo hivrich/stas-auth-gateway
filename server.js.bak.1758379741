@@ -1,0 +1,57 @@
+const express = require(express);
+const app = express();
+const bodyParser = require('body-parser');
+app.use(bodyParser.json({ limit: '256kb' }));
+
+app.set('trust proxy', 1);
+
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
+
+app.get('/gw/healthz', (req, res) => {
+  res.json({ ok: true, ts: new Date().toISOString() });
+});
+
+app.get('/gw/oauth/authorize', (req, res) => {
+  const { client_id } = req.query;
+  if (client_id !== chatgpt-actions) {
+    return res.status(400).json({ error: invalid_client });
+  }
+  res.redirect('urn:ietf:wg:oauth:2.0:oob?code=' + encodeURIComponent(test_code_ + Date.now()));
+});
+
+app.post('/gw/oauth/token', (req, res) => {
+  try {
+    const { grant_type, client_id } = req.body;
+    if (grant_type !== authorization_code) {
+      return res.status(400).json({ error: unsupported_grant_type });
+    }
+    if (client_id !== chatgpt-actions) {
+      return res.status(400).json({ error: invalid_client });
+    }
+    res.json({
+      access_token: test_token_ + Date.now(),
+      token_type: Bearer,
+      expires_in: 3600,
+      scope: read:workouts read:summary training:read training:write
+    });
+  } catch (error) {
+    res.status(500).json({ error: server_error, error_description: error.message });
+  }
+});
+
+const PORT = 3337;
+app.listen(PORT, () => {
+  console.log(\`Server running on port \${PORT}\`);
+});
+
+
+/** global error handler (anti-502) */
+app.use(function (err, req, res, next) {
+  try { console.error('[ERROR]', err && (err.stack || err)); } catch(e){}
+  if (res.headersSent) return next(err);
+  const code = err && err.status || 400;
+  const msg  = (err && err.message) ? String(err.message) : 'bad_request';
+  res.status(code).json({ error: 'invalid_request', error_description: msg });
+});
