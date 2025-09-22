@@ -1,0 +1,308 @@
+openapi: 3.1.0
+info:
+  title: STAS Auth Gateway
+  version: 0.1.1
+  description: Gateway for STAS DB Bridge and Intervals.icu proxy
+servers:
+- url: https://intervals.stas.run
+  description: Prod
+security:
+- oauth2:
+  - read:me
+  - icu
+  - workouts:write
+paths:
+  /gw/healthz:
+    get:
+      summary: Health check
+      operationId: healthzGet
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthzResponse'
+      security: []
+  /gw/version:
+    get:
+      summary: Gateway version
+      operationId: versionGet
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionResponse'
+      security: []
+  /gw/oauth/authorize:
+    get:
+      summary: OAuth2 authorize (user_id form)
+      operationId: oauthAuthorizeGet
+      parameters:
+      - name: response_type
+        in: query
+        required: true
+        schema:
+          type: string
+          enum:
+          - code
+      - name: client_id
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: redirect_uri
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uri
+      - name: scope
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: state
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: HTML form asking for user_id
+          content:
+            text/html:
+              schema:
+                type: string
+      security: []
+  /gw/oauth/token:
+    post:
+      summary: OAuth2 token (stub/PKCE)
+      operationId: oauthTokenPost
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                grant_type:
+                  type: string
+                  enum:
+                  - authorization_code
+                  - client_credentials
+                  - refresh_token
+                client_id:
+                  type: string
+                redirect_uri:
+                  type: string
+                  format: uri
+                code:
+                  type: string
+                code_verifier:
+                  type: string
+                refresh_token:
+                  type: string
+              required:
+              - grant_type
+      responses:
+        '200':
+          description: Access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthTokenResponse'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security: []
+  /gw/api/db/user_summary:
+    get:
+      summary: Get user summary (user_id inferred from Bearer)
+      operationId: dbUserSummaryGet
+      parameters:
+      - name: user_id
+        in: query
+        required: false
+        schema:
+          type: string
+          pattern: ^[0-9]+$
+        description: If omitted, server infers from Bearer token
+      responses:
+        '200':
+          description: User summary object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSummary'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /gw/api/db/activities:
+    get:
+      summary: List user activities (fallbacks to activities_full/trainings)
+      operationId: dbActivitiesGet
+      parameters:
+      - name: user_id
+        in: query
+        required: false
+        schema:
+          type: string
+          pattern: ^[0-9]+$
+      - name: days
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 365
+      - name: from
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+      responses:
+        '200':
+          description: Array of activities
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /gw/icu/events:
+    get:
+      summary: Intervals.icu events via gateway (user_id inferred from Bearer)
+      operationId: icuEventsGet
+      parameters:
+      - name: user_id
+        in: query
+        required: false
+        schema:
+          type: string
+          pattern: ^[0-9]+$
+      - name: days
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 365
+      - name: oldest
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+      - name: newest
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+      responses:
+        '200':
+          description: Array of events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IcuEventsResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://intervals.stas.run/gw/oauth/authorize
+          tokenUrl: https://intervals.stas.run/gw/oauth/token
+          scopes:
+            read:me: Read profile
+            icu: Access ICU proxy endpoints
+            workouts:write: Write workouts / plans
+  schemas:
+    HealthzResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        ts:
+          type: string
+          format: date-time
+      required:
+      - ok
+      additionalProperties: false
+    VersionResponse:
+      type: object
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+        ts:
+          type: string
+          format: date-time
+      additionalProperties: false
+    OAuthTokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          enum:
+          - Bearer
+        expires_in:
+          type: integer
+        scope:
+          type: string
+      required:
+      - access_token
+      - token_type
+      - expires_in
+      additionalProperties: false
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        error_description:
+          type: string
+        message:
+          type: string
+      additionalProperties: true
+    UserSummary:
+      type: object
+      additionalProperties: true
+    IcuEventsResponse:
+      type: array
+      items:
+        type: object
+        additionalProperties: true

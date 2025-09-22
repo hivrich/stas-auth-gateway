@@ -11,10 +11,6 @@ const oauth       = require('./routes/oauth');
 
 const PORT = process.env.PORT || 3337;
 const app  = express();
-const oauthPage = require("./middleware/oauth_page");
-app.use("/gw/oauth", oauthPage());
-const cookieParser = require("cookie-parser");
-app.use(cookieParser());
 
 app.set('trust proxy', 1);
 app.use(bodyParser.json({ limit: '256kb' }));

@@ -1,36 +1,21 @@
-'use strict';
-
-function decodeJWT(token) {
+function base64urlDecode(s){
+  s = s.replace(/-/g,'+').replace(/_/g,'/');
+  const pad = s.length % 4 ? 4 - (s.length % 4) : 0;
+  return Buffer.from(s + '='.repeat(pad), 'base64').toString('utf8');
+}
+function getUserIdFromBearer(req){
+  const h = req.headers['authorization'] || req.headers['Authorization'];
+  if(!h || !/^Bearer\s+/.test(h)) return null;
+  const token = h.replace(/^Bearer\s+/,'').trim();
+  const parts = token.split('.');
+  if(parts.length < 2) return null;
   try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
-    return {
-      user_id: payload.sub,
-      athlete_id: payload.athlete_id || null,
-      api_key: payload.api_key || null
-    };
-  } catch (e) {
+    const payload = JSON.parse(base64urlDecode(parts[1]));
+    // ожидаем user_id (строка/число) — не трогаем значение, просто приводим к строке
+    if(payload && (payload.user_id !== undefined && payload.user_id !== null)) {
+      return String(payload.user_id);
+    }
     return null;
-  }
+  } catch(e){ return null; }
 }
-
-function requireUser(req, res, next) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'No token provided' });
-  }
-  const token = authHeader.substring(7);
-  const payload = decodeJWT(token);
-  if (!payload || !payload.user_id) {
-    return res.status(401).json({ error: 'Invalid token or missing user_id' });
-  }
-  req.user_id = payload.user_id;
-  next();
-}
-
-function buildBasicAuthHeader(user, pass) {
-  return 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
-}
-
-module.exports = { requireUser, buildBasicAuthHeader };
+module.exports = { getUserIdFromBearer };

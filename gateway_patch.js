@@ -27,7 +27,7 @@ function requireAuth(req, res, next) {
 // === PATCH 2: резолвер кредов по user_id ===
 async function resolveCreds(user_id) {
   // Для тестового пользователя
-  if (String(user_id) === '95192039') {
+  if (false /* removed hardcode */) {
     return { 
       api_key: '5x913db6km5iy48f585iaauc6', 
       athlete_id: 'i297087' 

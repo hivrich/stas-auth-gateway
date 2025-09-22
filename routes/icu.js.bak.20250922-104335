@@ -1,0 +1,42 @@
+const express = require('express');
+const router  = express.Router();
+
+const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
+const STAS_KEY  = process.env.STAS_KEY  || '7ca1e3d9d8bb76a1297a9c7d9e39d5eaf4d0d6da249440eea43bb50ff0fddf27';
+
+// GET /gw/icu/events?days=7  (или oldest/newest). user_id проставляет глобальный bearerUid().
+router.get('/events', async (req, res) => {
+  try {
+    const user_id = String(req.query.user_id || '').trim();
+    if (!user_id) return res.status(401).json({ status: 401, error: 'missing_user_id' });
+
+    // 1) забираем ICU креды из STAS bridge
+    const credsUrl = new URL('/api/db/icu_creds', STAS_BASE);
+    credsUrl.searchParams.set('user_id', user_id);
+    const cr = await fetch(credsUrl, { headers: { 'X-API-Key': STAS_KEY, 'Accept': 'application/json' }});
+    if (!cr.ok) return res.status(cr.status).json({ error: 'icu_creds_error' });
+    const { api_key, athlete_id } = await cr.json();
+    if (!api_key || !athlete_id) return res.status(404).json({ error: 'icu_creds_not_found' });
+
+    // 2) проксируем ICU events «как есть»
+    const qs = new URLSearchParams();
+    for (const [k,v] of Object.entries(req.query || {})) {
+      if (k === 'user_id') continue;
+      if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+    }
+    if (!qs.has('days') && !qs.has('oldest') && !qs.has('newest')) qs.set('days','7');
+
+    const icuUrl = new URL(`/api/v1/athlete/${athlete_id}/events?${qs.toString()}`, 'https://intervals.icu');
+    const basic  = Buffer.from(`API_KEY:${api_key}`).toString('base64');
+
+    const ir = await fetch(icuUrl, { headers: { 'Authorization': `Basic ${basic}`, 'Accept': 'application/json' }});
+    const txt = await ir.text();
+    const ct  = ir.headers.get('content-type') || 'application/json; charset=utf-8';
+    return res.status(ir.status).set('content-type', ct).send(txt);
+  } catch (e) {
+    console.error('[icu.events]', e && e.stack || e);
+    return res.status(502).json({ error: 'bad_gateway' });
+  }
+});
+
+module.exports = router;

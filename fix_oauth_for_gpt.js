@@ -53,8 +53,7 @@ function fixOAuthTokenEndpoint(app) {
 
       // Если user_id не найден - используем тестовый для GPT Actions
       if (!user_id) {
-        console.log('No user_id found, using default for GPT Actions: 95192039');
-        user_id = '95192039'; // Тестовый user_id
+        return res.status(401).json({status:401,error:"missing_user_id"});
       }
 
       console.log('Final user_id for token:', user_id);
@@ -129,8 +128,7 @@ function fixOAuthTokenEndpoint(app) {
 
       // Если user_id не найден - используем тестовый для GPT Actions
       if (!user_id) {
-        console.log('No user_id found, using default for GPT Actions: 95192039');
-        user_id = '95192039'; // Тестовый user_id
+        return res.status(401).json({status:401,error:"missing_user_id"});
       }
 
       console.log('Final user_id for token:', user_id);

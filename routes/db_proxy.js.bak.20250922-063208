@@ -1,0 +1,72 @@
+const express = require('express');
+const router = express.Router();
+
+const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
+const STAS_KEY  = process.env.STAS_KEY  || '7ca1e3d9d8bb76a1297a9c7d9e39d5eaf4d0d6da249440eea43bb50ff0fddf27';
+
+function uidFromBearer(req){
+  const auth = String(req.headers['authorization'] || '');
+  const m = auth.match(/^Bearer\s+t_([A-Za-z0-9\-_]+)$/);
+  if(!m) return null;
+  try{
+    const b64 = m[1].replace(/-/g,'+').replace(/_/g,'/');
+    const json = JSON.parse(Buffer.from(b64,'base64').toString('utf8'));
+    return json && json.uid ? String(json.uid) : null;
+  }catch(_e){ return null; }
+}
+
+router.use(async (req, res) => {
+  const started = Date.now();
+  const originalPath = req.originalUrl || req.url || '';
+
+  // --- 1) Целевой путь к STAS: алиасы activities* → trainings
+  const restRaw = req.path.replace(/^\/+/, ''); // e.g. "activities", "activities_full", "trainings"
+  let rest = restRaw;
+  if (restRaw === 'activities' || restRaw.startsWith('activities?')) rest = restRaw.replace(/^activities/, 'trainings');
+  if (restRaw === 'activities_full' || restRaw.startsWith('activities_full?')) rest = restRaw.replace(/^activities_full/, 'trainings');
+
+  const url  = new URL(`/api/db/${rest}`, STAS_BASE);
+
+  // --- 2) Параметры: подставляем user_id из Bearer при отсутствии
+  const params = new URLSearchParams(req.query || {});
+  if (!params.get('user_id')) {
+    const uid = uidFromBearer(req);
+    if (!uid) return res.status(401).json({ status: 401, error: 'missing_or_invalid_token' });
+    params.set('user_id', uid);
+  }
+  for (const [k,v] of params.entries()) url.searchParams.set(k,v);
+
+  const finalUrl = url.toString();
+  console.log('[db_proxy][REQ]', req.method, originalPath, '→', finalUrl);
+
+  try{
+    const r = await fetch(url, { headers: { 'X-API-Key': STAS_KEY, 'Accept': 'application/json' }});
+    const bodyTxt = await r.text();
+    const ms = Date.now() - started;
+
+    // Диагностика структуры и размеров
+    let info = { bytes: Buffer.byteLength(bodyTxt || '', 'utf8'), kind: 'text' };
+    try{
+      const parsed = JSON.parse(bodyTxt);
+      if (Array.isArray(parsed)) {
+        info = { bytes: info.bytes, kind: 'json_array', count: parsed.length };
+      } else if (parsed && typeof parsed === 'object') {
+        const keys = Object.keys(parsed);
+        info = { bytes: info.bytes, kind: 'json_object', keys: keys.length, keyNames: keys.slice(0,8) };
+      } else {
+        info = { bytes: info.bytes, kind: typeof parsed };
+      }
+    }catch(_e){ /* not json */ }
+
+    console.log('[db_proxy][RES]', r.status, finalUrl, info, ms+'ms');
+
+    res.status(r.status)
+       .set('content-type', r.headers.get('content-type') || 'application/json')
+       .send(bodyTxt);
+  }catch(e){
+    console.log('[db_proxy][ERR]', String(e));
+    res.status(502).json({ error: 'bad_gateway', message: String(e) });
+  }
+});
+
+module.exports = router;

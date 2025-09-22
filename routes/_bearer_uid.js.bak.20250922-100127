@@ -1,0 +1,28 @@
+/**
+ * Global UID middleware for /gw/*
+ * If ?user_id is absent => require Bearer "t_<base64url>{\"uid\":\"...\"}"
+ * Sets req.query.user_id / req.user_id / x-user-id header. Otherwise 401.
+ */
+module.exports = function(req, res, next){
+  try{
+    if (req.query && req.query.user_id) {
+      req.user_id = String(req.query.user_id);
+      req.headers['x-user-id'] = req.user_id;
+      return next();
+    }
+    const auth = String(req.headers['authorization'] || '');
+    const m = auth.match(/^Bearer\s+t_([A-Za-z0-9\-_]+)$/);
+    if (!m) return res.status(401).json({status:401,error:'missing_or_invalid_token'});
+    const b64 = m[1].replace(/-/g,'+').replace(/_/g,'/');
+    const json = JSON.parse(Buffer.from(b64,'base64').toString('utf8'));
+    if (!json || !json.uid) return res.status(401).json({status:401,error:'missing_or_invalid_token'});
+    const uid = String(json.uid);
+    if (!req.query) req.query = {};
+    req.query.user_id = uid;
+    req.user_id = uid;
+    req.headers['x-user-id'] = uid;
+    return next();
+  }catch(_e){
+    return res.status(401).json({status:401,error:'missing_or_invalid_token'});
+  }
+};

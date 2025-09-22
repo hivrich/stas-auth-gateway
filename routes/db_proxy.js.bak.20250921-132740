@@ -1,0 +1,40 @@
+const express = require('express');
+const fetch = require('node-fetch'); // Node 22 ok
+const router = express.Router();
+
+const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
+const STAS_KEY  = process.env.STAS_KEY  || '7ca1e3d9d8bb76a1297a9c7d9e39d5eaf4d0d6da249440eea43bb50ff0fddf27';
+
+function uidFromBearer(req){
+  const auth = String(req.headers['authorization'] || '');
+  const m = auth.match(/^Bearer\s+t_([A-Za-z0-9\-_]+)$/);
+  if(!m) return null;
+  try{
+    const b64 = m[1].replace(/-/g,'+').replace(/_/g,'/');
+    const json = JSON.parse(Buffer.from(b64,'base64').toString('utf8'));
+    return json && json.uid ? String(json.uid) : null;
+  }catch(_e){ return null; }
+}
+
+// Универсальный прокси /gw/api/db/* → STAS /api/db/*
+router.use(async (req, res) => {
+  const rest = req.path.replace(/^\/+/, '');
+  const url  = new URL(`/api/db/${rest}`, STAS_BASE);
+
+  // Копируем query…
+  const q = new URLSearchParams(req.query || {});
+  if (!q.get('user_id')) {
+    const uid = uidFromBearer(req);
+    if (!uid) return res.status(401).json({ status: 401, error: 'missing_or_invalid_token' });
+    q.set('user_id', uid);
+  }
+  for (const [k,v] of q.entries()) url.searchParams.set(k,v);
+
+  const r = await fetch(url, {
+    headers: { 'X-API-Key': STAS_KEY, 'Accept':'application/json' }
+  });
+  const body = await r.text();
+  res.status(r.status).set('content-type', r.headers.get('content-type') || 'application/json').send(body);
+});
+
+module.exports = router;

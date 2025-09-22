@@ -11,10 +11,6 @@ const oauth       = require('./routes/oauth');
 
 const PORT = process.env.PORT || 3337;
 const app  = express();
-const oauthPage = require("./middleware/oauth_page");
-app.use("/gw/oauth", oauthPage());
-const cookieParser = require("cookie-parser");
-app.use(cookieParser());
 
 app.set('trust proxy', 1);
 app.use(bodyParser.json({ limit: '256kb' }));
@@ -36,21 +32,6 @@ app.use('/gw/api/db', dbProxy);
 app.use('/gw/api', stas);
 
 // ICU proxy (уже есть req.query.user_id от bearerUid)
-/* === AUTOPATCH (begin) — attach exact POST /gw/icu/events BEFORE proxy === */
-try {
-  const attachIcuPostExact = require("./lib/icu_post_exact");
-  if (typeof attachIcuPostExact === "function") attachIcuPostExact(app);
-  else console.error("[icu][POST] attach function missing");
-} catch(e) { console.error("[icu][POST] attach failed:", e && e.message); }
-/* === AUTOPATCH (end) === */
-/* === AUTOPATCH DELETE (before proxy) === */
-try { const attachDelete = require("./lib/attach_delete"); if (typeof attachDelete === "function") attachDelete(app); }
-catch(e){ console.error("[icu][DELETE] attach failed:", e && e.message); }
-/* === AUTOPATCH DELETE end === */
-/* === AUTOPATCH POST exact attach BEFORE proxy === */
-try { const attachPost = require("./lib/attach_post"); if (typeof attachPost === "function") attachPost(app); }
-catch(e){ console.error("[icu][POST] attach failed:", e && e.message); }
-/* === AUTOPATCH POST end === */
 app.use('/gw/icu', icu);
 
 // 404/500

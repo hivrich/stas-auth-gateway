@@ -1,0 +1,101 @@
+const http = require('http');
+const https = require('https');
+
+function base64(s) { return Buffer.from(s, 'utf8').toString('base64'); }
+
+function getJSON(url, { headers = {} } = {}) {
+  return new Promise((resolve, reject) => {
+    const lib = url.startsWith('https:') ? https : http;
+    const req = lib.get(url, { headers }, res => {
+      let data = '';
+      res.on('data', c => (data += c));
+      res.on('end', () => {
+        try {
+          const body = data ? JSON.parse(data) : {};
+          if (res.statusCode >= 200 && res.statusCode < 300) return resolve(body);
+          const err = new Error((body && (body.error || body.message)) || `http_${res.statusCode}`);
+          err.status = res.statusCode; err.body = body; return reject(err);
+        } catch {
+          const err = new Error(`bad_json_${res.statusCode}`);
+          err.status = res.statusCode; err.raw = data; return reject(err);
+        }
+      });
+    });
+    req.on('error', reject);
+  });
+}
+
+function requestRaw(url, { method='POST', headers = {}, body='' } = {}) {
+  return new Promise((resolve, reject) => {
+    const lib = url.startsWith('https:') ? https : http;
+    const u = new URL(url);
+    const req = lib.request({
+      method,
+      protocol: u.protocol,
+      hostname: u.hostname,
+      port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname + (u.search || ''),
+      headers
+    }, res => {
+      let data = '';
+      res.on('data', c => (data += c));
+      res.on('end', () => {
+        const status = res.statusCode || 0;
+        if (status >= 200 && status < 300) {
+          // ICU иногда отдаёт пусто; нормализуем
+          try { return resolve(data ? JSON.parse(data) : {}); } catch { return resolve({}); }
+        }
+        // Ошибка
+        try { return reject(Object.assign(new Error((JSON.parse(data).error || 'http_error')), { status, body: JSON.parse(data) })); }
+        catch { return reject(Object.assign(new Error('http_error'), { status, raw: data })); }
+      });
+    });
+    req.on('error', reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+function toCamelEvent(e) {
+  return {
+    startDateLocal: e.start_date_local ?? e.startDateLocal,
+    endDateLocal:   e.end_date_local ?? e.endDateLocal,
+    type:           e.type,
+    name:           e.name,
+    category:       e.category,
+    externalId:     e.external_id ?? e.externalId,
+    description:    e.description
+  };
+}
+
+async function getIcuCredsForUid(uid) {
+  const base = process.env.STAS_BASE || 'http://127.0.0.1:3336';
+  const key  = process.env.STAS_KEY;
+  if (!key) { const e = new Error('missing_stas_key'); e.status = 500; throw e; }
+  const url = `${base.replace(/\/+$/,'')}/api/db/icu_creds?user_id=${encodeURIComponent(uid)}`;
+  const creds = await getJSON(url, { headers: { 'X-API-Key': key } });
+  const apiKey    = creds.icu_api_key    || (creds.ok && creds.api_key)    || creds.api_key;
+  const athleteId = creds.icu_athlete_id || (creds.ok && creds.athlete_id) || creds.athlete_id;
+  if (!apiKey || !athleteId) { const e = new Error('icu_credentials_not_found'); e.status = 404; e.details = creds; throw e; }
+  return { apiKey, athleteId };
+}
+
+async function icuCreateEvents({ apiKey, athleteId, events }) {
+  // ICU /events принимает NDJSON (один JSON-объект на строку)
+  const auth = 'Basic ' + base64(`${apiKey}:${apiKey}`);
+  const url  = `https://intervals.icu/api/v1/athlete/${encodeURIComponent(athleteId)}/events`;
+  const camel = events.map(toCamelEvent);
+  const ndjson = camel.map(obj => JSON.stringify(obj)).join('\n') + '\n';
+  return await requestRaw(url, {
+    method: 'POST',
+    headers: {
+      Authorization: auth,
+      'Content-Type': 'application/x-ndjson',
+      'Accept': 'application/json',
+      'Content-Length': Buffer.byteLength(ndjson)
+    },
+    body: ndjson
+  });
+}
+
+module.exports = { getIcuCredsForUid, icuCreateEvents };

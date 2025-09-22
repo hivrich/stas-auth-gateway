@@ -1,0 +1,358 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "STAS Training Gateway API",
+    "version": "1.0.4",
+    "description": "Gateway for STAS DB and Intervals.icu. User ID is resolved from the Bearer token: Authorization: Bearer t_<base64url>{\"uid\":\"<user_id>\"}."
+  },
+  "servers": [
+    {
+      "url": "https://intervals.stas.run/gw"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "t_<base64url>{\"uid\":\"...\"}"
+      }
+    },
+    "schemas": {
+      "UserSummary": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "user_summary": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "user_summary_updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "ok",
+          "user_summary"
+        ]
+      },
+      "Training": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "date": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "workout_type": {
+            "type": "string"
+          },
+          "distance": {
+            "type": "number"
+          },
+          "user_report": {
+            "type": "string",
+            "nullable": true
+          },
+          "training_load": {
+            "type": "number",
+            "nullable": true
+          },
+          "fitness": {
+            "type": "number",
+            "nullable": true
+          },
+          "fatigue": {
+            "type": "number",
+            "nullable": true
+          },
+          "elevation_gain": {
+            "type": "number",
+            "nullable": true
+          },
+          "intensity": {
+            "type": "number",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "date",
+          "workout_type"
+        ]
+      },
+      "TrainingsResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "trainings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Training"
+            }
+          }
+        },
+        "required": [
+          "ok",
+          "count",
+          "trainings"
+        ]
+      },
+      "IcuEvent": {
+        "type": "object",
+        "properties": {
+          "start_date_local": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "start_date_local",
+          "type",
+          "name"
+        ]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ]
+      }
+    }
+  },
+  "security": [
+    {
+      "bearer": []
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Gateway health",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/db/user_summary": {
+      "get": {
+        "operationId": "getUserSummary",
+        "summary": "Get user summary",
+        "description": "Resolves user_id from Bearer if not provided.",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSummary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/db/trainings": {
+      "get": {
+        "operationId": "listTrainings",
+        "summary": "List trainings with filters",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "required": false
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "required": false
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "required": false
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "required": false
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "required": false,
+            "description": "default 50"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "required": false,
+            "description": "default 0"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrainingsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/icu/events": {
+      "get": {
+        "operationId": "listIcuEvents",
+        "summary": "List ICU events (proxied)",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "required": false
+          },
+          {
+            "name": "oldest",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "required": false
+          },
+          {
+            "name": "newest",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/IcuEvent"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

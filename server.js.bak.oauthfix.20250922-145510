@@ -11,10 +11,6 @@ const oauth       = require('./routes/oauth');
 
 const PORT = process.env.PORT || 3337;
 const app  = express();
-const oauthPage = require("./middleware/oauth_page");
-app.use("/gw/oauth", oauthPage());
-const cookieParser = require("cookie-parser");
-app.use(cookieParser());
 
 app.set('trust proxy', 1);
 app.use(bodyParser.json({ limit: '256kb' }));
@@ -25,6 +21,8 @@ app.get('/gw/healthz', (_req, res) => res.json({ ok: true, ts: new Date().toISOS
 
 // OpenAPI & OAuth stubs
 app.use('/gw', openapi);
+const oauthLogin = require("./middleware/oauth_login");
+app.use(oauthLogin());
 app.use('/gw/oauth', oauth);
 
 // Глобально для всех /gw/* — требуем Bearer и проставляем user_id

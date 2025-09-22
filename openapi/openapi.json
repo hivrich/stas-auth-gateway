@@ -1,0 +1,134 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "STAS Gateway — GPT Actions",
+    "version": "1.4.0",
+    "description": "Gateway for STAS DB Bridge and Intervals.icu. Auth: Bearer t_<base64url>{\"uid\":\"<digits>\"}. user_id derives from Bearer; clients must NOT send ?user_id."
+  },
+  "servers": [{ "url": "https://intervals.stas.run/gw" }],
+  "security": [{ "bearer": [] }],
+  "components": {
+    "securitySchemes": {
+      "bearer": { "type": "http", "scheme": "bearer", "description": "Bearer t_<base64url>{\"uid\":\"<digits>\"}" }
+    },
+    "schemas": {
+      "Error": { "type": "object", "properties": { "error": { "type": "string" }, "status": { "type": "integer", "nullable": true } }, "required": ["error"] },
+      "UserSummary": { "type": "object", "description": "Opaque summary payload from STAS DB.", "properties": {}, "additionalProperties": true },
+      "Training": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "date": { "type": "string", "format": "date-time" },
+          "workout_type": { "type": "string" },
+          "distance": { "type": "number", "nullable": true },
+          "user_report": { "type": "string", "nullable": true },
+          "training_load": { "type": "number", "nullable": true },
+          "fitness": { "type": "number", "nullable": true },
+          "fatigue": { "type": "number", "nullable": true },
+          "elevation_gain": { "type": "number", "nullable": true },
+          "intensity": { "type": "number", "nullable": true }
+        },
+        "required": ["id","date"]
+      },
+      "TrainingsResponse": {
+        "type": "object",
+        "properties": { "ok": { "type": "boolean" }, "count": { "type": "integer" }, "trainings": { "type": "array", "items": { "$ref": "#/components/schemas/Training" } } },
+        "required": ["ok","count","trainings"]
+      },
+      "IcuEvent": {
+        "type": "object",
+        "properties": {
+          "start_date_local": { "type": "string" },
+          "end_date_local": { "type": "string", "nullable": true },
+          "type": { "type": "string" },
+          "name": { "type": "string" },
+          "category": { "type": "string", "nullable": true },
+          "external_id": { "type": "string", "nullable": true },
+          "external_id_prefix": { "type": "string", "nullable": true },
+          "description": { "type": "string", "nullable": true }
+        },
+        "required": ["start_date_local","type","name"]
+      },
+      "IcuEventsResponse": { "type": "array", "items": { "$ref": "#/components/schemas/IcuEvent" } },
+      "IcuCreatePlanRequest": { "type": "object", "properties": { "events": { "type": "array", "items": { "$ref": "#/components/schemas/IcuEvent" }, "minItems": 1 } }, "required": ["events"] }
+    }
+  },
+  "paths": {
+    "/healthz": { "get": { "operationId": "health", "responses": { "200": { "description": "OK" } } } },
+    "/api/db/user_summary": {
+      "get": {
+        "operationId": "getUserSummary",
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UserSummary" } } } },
+          "401": { "description": "Auth error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/db/trainings": {
+      "get": {
+        "operationId": "listTrainings",
+        "parameters": [
+          { "in": "query", "name": "days", "schema": { "type": "integer", "minimum": 1 } },
+          { "in": "query", "name": "from", "schema": { "type": "string" } },
+          { "in": "query", "name": "to", "schema": { "type": "string" } },
+          { "in": "query", "name": "limit", "schema": { "type": "integer", "minimum": 1, "maximum": 200 } },
+          { "in": "query", "name": "offset", "schema": { "type": "integer", "minimum": 0 } }
+        ],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TrainingsResponse" } } } },
+          "401": { "description": "Auth error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/icu/events": {
+      "get": {
+        "operationId": "listIcuEvents",
+        "parameters": [
+          { "in": "query", "name": "days", "schema": { "type": "integer", "minimum": 1 }, "description": "Default 7 if oldest/newest not set" },
+          { "in": "query", "name": "oldest", "schema": { "type": "string" }, "description": "ISO8601 date" },
+          { "in": "query", "name": "newest", "schema": { "type": "string" }, "description": "ISO8601 date" },
+          { "in": "query", "name": "type", "schema": { "type": "string" } },
+          { "in": "query", "name": "external_id", "schema": { "type": "string" } },
+          { "in": "query", "name": "external_id_prefix", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IcuEventsResponse" } } } },
+          "401": { "description": "Auth error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "post": {
+        "operationId": "createIcuEvents",
+        "summary": "Create plan events in Intervals.icu",
+        "parameters": [
+          { "in": "query", "name": "external_id_prefix", "schema": { "type": "string" }, "description": "Default: plan:" },
+          { "in": "query", "name": "dry_run", "schema": { "type": "boolean" }, "description": "Validate only" },
+          { "in": "query", "name": "dedupe", "schema": { "type": "boolean" }, "description": "Default true. Skip events whose external_id already exists in the given window (uses oldest/newest)." },
+          { "in": "query", "name": "oldest", "schema": { "type": "string" }, "description": "Window start for dedupe" },
+          { "in": "query", "name": "newest", "schema": { "type": "string" }, "description": "Window end for dedupe" }
+        ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IcuCreatePlanRequest" } } } },
+        "responses": {
+          "200": { "description": "OK (created). dry_run=false writes to Intervals.icu", "content": { "application/json": { "schema": {} } } },
+          "401": { "description": "Auth error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "502": { "description": "Upstream error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "delete": {
+        "operationId": "deleteIcuEvents",
+        "summary": "Delete plan events in Intervals.icu",
+        "parameters": [
+          { "in": "query", "name": "external_id", "schema": { "type": "string" } },
+          { "in": "query", "name": "external_id_prefix", "schema": { "type": "string" }, "description": "Recommended: plan:" },
+          { "in": "query", "name": "oldest", "schema": { "type": "string" }, "description": "ISO8601 date (YYYY-MM-DD)" },
+          { "in": "query", "name": "newest", "schema": { "type": "string" }, "description": "ISO8601 date (YYYY-MM-DD)" },
+          { "in": "query", "name": "dry_run", "schema": { "type": "boolean" }, "description": "Validate only (no deletions). Default true." }
+        ],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
+          "400": { "description": "Bad request" },
+          "401": { "description": "Auth error" }
+        }
+      }
+    }
+  }
+}

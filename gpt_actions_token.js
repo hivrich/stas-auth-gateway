@@ -1,5 +1,5 @@
 // Специальный endpoint для GPT Actions - выдает токен для конкретного user_id
-// Использование: POST /gpt/token?user_id=95192039&api_key=YOUR_SECRET_KEY
+// Использование: POST /gpt/token?user_id=<user_id>&api_key=YOUR_SECRET_KEY
 
 const jwt = require('jsonwebtoken');
 
