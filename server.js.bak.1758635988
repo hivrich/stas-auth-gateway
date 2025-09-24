@@ -1,0 +1,19 @@
+const express = require('express');
+const morgan  = require('morgan');
+const bearer  = require('./middleware/bearer_uid_oauth');
+
+const app = express();
+app.use(express.json({ limit: '256kb' }));
+app.use(morgan('combined'));
+
+// 1) (опционально) openapi врата → если нужно, добавите позже
+// app.use('/gw', openapi)
+
+app.use('/gw', bearer());              // 2) bearer → user_id
+require('./routes/debug_gw')(app);     // 3) debug (/gw/debug/*)
+require('./routes/icu_post_stub_gw')(app); // 4) ICU stub (/gw/icu/*)
+
+app.get('/gw/healthz', (_req,res)=>res.json({ok:true}));
+
+const PORT = process.env.PORT || 3340;
+app.listen(PORT, ()=> console.log('[v2] Server on', PORT));
