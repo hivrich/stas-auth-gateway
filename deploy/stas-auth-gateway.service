@@ -1,0 +1,18 @@
+[Unit]
+Description=STAS Auth Gateway (OAuth + API proxy)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/stas-auth-gateway
+EnvironmentFile=/opt/stas-auth-gateway/.env
+ExecStart=/usr/bin/node /opt/stas-auth-gateway/server.js
+Restart=always
+RestartSec=3
+User=root
+Group=root
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

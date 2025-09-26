@@ -1,0 +1,63 @@
+const express = require('express');
+const router  = express.Router();
+
+const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
+const STAS_KEY  = process.env.STAS_KEY  || "__SET_IN_ENV__";
+
+function uidFromBearerStrict(req){
+  const auth = String(req.headers['authorization'] || '');
+  const m = auth.match(/^Bearer\s+t_([A-Za-z0-9\-_]+)$/);
+  if (!m) return null;
+  try {
+    const b64 = m[1].replace(/-/g,'+').replace(/_/g,'/');
+    const json = JSON.parse(Buffer.from(b64,'base64').toString('utf8'));
+    const uid  = json && json.uid ? String(json.uid) : null;
+    return /^[0-9]+$/.test(String(uid)) ? uid : null;
+  } catch { return null; }
+}
+
+// GET /gw/icu/events?days=7 (или oldest/newest)
+router.get('/events', async (req, res) => {
+  try {
+    // user_id ТОЛЬКО из Bearer
+    const user_id = uidFromBearerStrict(req);
+    if (!user_id) return res.status(401).json({ status: 401, error: 'missing_or_invalid_token' });
+
+    // 1) creds из STAS bridge
+    const credsUrl = new URL('/api/db/icu_creds', STAS_BASE);
+    credsUrl.searchParams.set('user_id', user_id);
+    const cr = await fetch(credsUrl, { headers: { 'X-API-Key': STAS_KEY, 'Accept': 'application/json' }});
+    if (!cr.ok) return res.status(cr.status).json({ error: 'icu_creds_error' });
+    const { api_key, athlete_id } = await cr.json();
+    if (!api_key || !athlete_id) return res.status(404).json({ error: 'icu_creds_not_found' });
+
+    // 2) Проксируем ICU events «как есть»
+    const qs = new URLSearchParams();
+    for (const [k,v] of Object.entries(req.query || {})) {
+      // никакого user_id из query
+      if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+    }
+    if (!qs.has('days') && !qs.has('oldest') && !qs.has('newest')) qs.set('days','7');
+
+    const icuUrl = new URL(`/api/v1/athlete/${athlete_id}/events?${qs.toString()}`, 'https://intervals.icu');
+  try { console.log("[icu][DBG] GET", icuUrl, { athlete_id, has_key: !!(api_key) }); } catch(e){}
+    const basic  = Buffer.from(`API_KEY:${api_key}`).toString('base64');
+
+    const ir  = await fetch(icuUrl, { headers: { 'Authorization': `Basic ${basic}`, 'Accept': 'application/json' }});
+    const txt = await ir.text();
+    const ct  = ir.headers.get('content-type') || 'application/json; charset=utf-8';
+
+    // если JSON — вернём объект/массив, иначе — сырой текст
+    try {
+      const parsed = JSON.parse(txt);
+      return res.status(ir.status).type('application/json').send(parsed);
+    } catch {
+      return res.status(ir.status).set('content-type', ct).send(txt);
+    }
+  } catch (e) {
+    console.error('[icu.events]', e && e.stack || e);
+    return res.status(502).json({ error: 'bad_gateway' });
+  }
+});
+
+module.exports = router;

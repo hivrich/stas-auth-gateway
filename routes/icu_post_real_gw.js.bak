@@ -1,0 +1,61 @@
+'use strict';
+const { Pool } = require('pg');
+let pool;
+const getPool = () => pool ?? (pool = new Pool({ connectionString: process.env.STAS_PGURL }));
+
+const yes = v => /^(1|true|yes|on)$/i.test((v??'').toString());
+const isDry = q => yes(q?.dry_run);
+const normAthlete = v => (v ? (String(v).trim().startsWith('i') ? String(v).trim() : `i${String(v).trim()}`) : null);
+const b64 = key => `Basic ${Buffer.from(`API_KEY:${key}`).toString('base64')}`;
+
+module.exports = app => {
+  console.log('[v2][load] icu_post_real_gw');
+
+  app.post('/gw/icu/events', async (req, res) => {
+    const hasAuth = /^bearer\s+/i.test(req.get('authorization')||'');
+    const uid = res.locals.user_id || req.query?.user_id || null;
+    const events = Array.isArray(req.body?.events) ? req.body.events : [];
+
+    if (!hasAuth || !uid) return res.status(401).json({ status:401, error:'missing_or_invalid_token' });
+    if (!events.length)   return res.status(400).json({ status:400, error:'no_events' });
+    if (isDry(req.query)) return res.json({ ok:true, dry_run:true, count: events.length });
+
+    try {
+      const sql = 'select "api_key","athlete_id" from "user" where "id"=$1 limit 1';
+      const { rows } = await getPool().query(sql, [uid]);
+      if (!rows?.length) return res.status(400).json({ status:400, error:'icu_creds_not_found' });
+
+      const api_key = rows[0].api_key;
+      const athlete = normAthlete(rows[0].athlete_id);
+      if (!api_key || !athlete) {
+        return res.status(400).json({ status:400, error:'icu_creds_invalid', missing:{ api_key:!api_key, athlete_id:!athlete } });
+      }
+
+      // upsert=true и нормализация externalId -> external_id
+      const base = process.env.ICU_BASE_URL || 'https://intervals.icu/api/v1';
+      const url  = `${base}/athlete/${athlete}/events/bulk?upsert=true`;
+      const payload = events.map(e => {
+        if (e && !e.external_id && e.externalId) {
+          e = { ...e, external_id: e.externalId }; delete e.externalId;
+        }
+        return e;
+      });
+
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { Authorization: b64(api_key), 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const t = await r.text().catch(()=> '');
+      if (!r.ok) {
+        console.error('[icu_real][upstream]', r.status, t.slice(0,300));
+        return res.status(r.status).json({ status:r.status, error:'icu_upstream_error', detail:t });
+      }
+      return res.json({ ok:true, count: events.length, upstream_status: r.status });
+    } catch (e) {
+      console.error('[icu_real][err]', e?.message);
+      return res.status(502).json({ status:502, error:'icu_upstream_error', detail:e?.message });
+    }
+  });
+};

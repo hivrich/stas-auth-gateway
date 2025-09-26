@@ -1,0 +1,54 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "STAS Gateway Test API",
+    "description": "Simple test API for OAuth",
+    "version": "1.0.0"
+  },
+  "servers": [
+    { "url": "https://intervals.stas.run" }
+  ],
+  "security": [
+    { "oauth2": ["read"] }
+  ],
+  "paths": {
+    "/api/db/user_summary": {
+      "get": {
+        "summary": "Get user summary",
+        "operationId": "getUserSummary",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "oauth2": {
+        "type": "oauth2",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://intervals.stas.run/gw/oauth/authorize",
+            "tokenUrl": "https://intervals.stas.run/gw/oauth/token",
+            "scopes": {
+              "read": "Read access"
+            }
+          }
+        }
+      }
+    }
+  }
+}

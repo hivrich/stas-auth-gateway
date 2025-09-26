@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STAS Auth Gateway - Authorization</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+        }
+        .scopes {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .scope-item {
+            margin: 5px 0;
+            padding: 5px 0;
+        }
+        .buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-top: 30px;
+        }
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn-primary {
+            background: #007bff;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #0056b3;
+        }
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+        .btn-secondary:hover {
+            background: #545b62;
+        }
+        .params {
+            background: #e9ecef;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 STAS Auth Gateway</h1>
+        <div class="subtitle">Authorize Application Access</div>
+
+        <div id="error-message" class="error" style="display: none;"></div>
+
+        <div class="params">
+            <strong>Application:</strong> OpenAI ChatGPT<br>
+            <strong>Scopes Requested:</strong>
+            <div class="scopes">
+                <div class="scope-item">✅ read:me - Access your profile information</div>
+                <div class="scope-item">✅ icu - Access Intervals.icu data</div>
+                <div class="scope-item">✅ workouts:write - Create and modify workouts</div>
+            </div>
+            <strong>Redirect URI:</strong> https://chat.openai.com/aip/g-0e683685e67e111ebd51aa7d6b2be34f380bb37f/oauth/callback
+        </div>
+
+        <div class="buttons">
+            <button class="btn btn-primary" onclick="authorize()">✅ Authorize</button>
+            <button class="btn btn-secondary" onclick="deny()">❌ Deny</button>
+        </div>
+
+        <div style="text-align: center; margin-top: 30px; color: #666; font-size: 14px;">
+            <p>You can revoke this authorization at any time in your STAS settings.</p>
+        </div>
+    </div>
+
+    <script>
+        // Get OAuth parameters from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const responseType = urlParams.get('response_type');
+        const clientId = urlParams.get('client_id');
+        const redirectUri = urlParams.get('redirect_uri');
+        const state = urlParams.get('state');
+        const scope = urlParams.get('scope');
+
+        // Show error if parameters are missing
+        if (!responseType || !redirectUri || !state) {
+            document.getElementById('error-message').textContent =
+                'Invalid authorization request. Missing required parameters.';
+            document.getElementById('error-message').style.display = 'block';
+            document.querySelector('.buttons').style.display = 'none';
+        }
+
+        function authorize() {
+            // In a real implementation, this would:
+            // 1. Authenticate the user
+            // 2. Get user consent
+            // 3. Generate authorization code
+            // 4. Redirect to redirect_uri with code and state
+
+            // For now, redirect back with a mock authorization code
+            const authCode = 'mock_auth_code_' + Date.now();
+            const redirectUrl = new URL(redirectUri);
+            redirectUrl.searchParams.set('code', authCode);
+            redirectUrl.searchParams.set('state', state);
+            window.location.href = redirectUrl.toString();
+        }
+
+        function deny() {
+            const redirectUrl = new URL(redirectUri);
+            redirectUrl.searchParams.set('error', 'access_denied');
+            redirectUrl.searchParams.set('error_description', 'User denied the authorization request');
+            redirectUrl.searchParams.set('state', state);
+            window.location.href = redirectUrl.toString();
+        }
+    </script>
+</body>
+</html>

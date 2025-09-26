@@ -1,0 +1,267 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Intervals/STAS Gateway API",
+    "version": "1.0.3",
+    "description": "OAuth-protected unified gateway for STAS DB and Intervals.icu API"
+  },
+  "servers": [
+    {
+      "url": "https://intervals.stas.run/gw"
+    }
+  ],
+  "security": [
+    {
+      "oauth2": ["read:me", "icu", "workouts:write"]
+    }
+  ],
+  "paths": {
+    "/oauth/authorize": {
+      "get": {
+        "summary": "Start OAuth2 authorization flow",
+        "responses": {
+          "302": {
+            "description": "Redirect to authorization page"
+          }
+        }
+      }
+    },
+    "/oauth/token": {
+      "post": {
+        "summary": "Exchange authorization code for access token",
+        "responses": {
+          "200": {
+            "description": "Access token issued successfully"
+          }
+        }
+      }
+    },
+    "/api/db/user_summary": {
+      "get": {
+        "summary": "Get user training summary",
+        "security": [
+          {
+            "oauth2": ["read:me"]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User summary data retrieved"
+          },
+          "401": {
+            "description": "Unauthorized - invalid access token"
+          },
+          "403": {
+            "description": "Forbidden - insufficient permissions"
+          }
+        }
+      }
+    },
+    "/api/db/activities": {
+      "get": {
+        "summary": "Get training activities",
+        "security": [
+          {
+            "oauth2": ["icu"]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "description": "Number of recent days to look back",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 365
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Start date (YYYY-MM-DD)",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "End date (YYYY-MM-DD)",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Training activities retrieved"
+          },
+          "401": {
+            "description": "Unauthorized - invalid access token"
+          },
+          "403": {
+            "description": "Forbidden - insufficient permissions"
+          }
+        }
+      }
+    },
+    "/api/db/activities_full": {
+      "get": {
+        "summary": "Get full training activities with details",
+        "security": [
+          {
+            "oauth2": ["icu"]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Full training activities retrieved"
+          }
+        }
+      }
+    },
+    "/api/db/monthly_summary": {
+      "get": {
+        "summary": "Get monthly training summary",
+        "security": [
+          {
+            "oauth2": ["read:me"]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Monthly summary retrieved"
+          }
+        }
+      }
+    },
+    "/api/db/trainings": {
+      "get": {
+        "summary": "DEPRECATED: Get training activities (use /api/db/activities)",
+        "deprecated": true,
+        "security": [
+          {
+            "oauth2": ["icu"]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Training activities retrieved (deprecated)"
+          }
+        }
+      }
+    },
+    "/icu/activities": {
+      "get": {
+        "summary": "Get ICU training activities (per-user credentials from STAS)",
+        "security": [
+          {
+            "oauth2": ["icu"]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ICU activities retrieved"
+          },
+          "403": {
+            "description": "No ICU credentials found for user"
+          }
+        }
+      }
+    },
+    "/icu/events": {
+      "get": {
+        "summary": "Get ICU training calendar events",
+        "security": [
+          {
+            "oauth2": ["icu"]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "oldest",
+            "in": "query",
+            "description": "Oldest date to include (YYYY-MM-DD)",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "newest",
+            "in": "query",
+            "description": "Newest date to include (YYYY-MM-DD)",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Calendar events retrieved"
+          },
+          "403": {
+            "description": "No ICU credentials found for user"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete ICU calendar events",
+        "security": [
+          {
+            "oauth2": ["workouts:write"]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Events deleted successfully"
+          }
+        }
+      }
+    },
+    "/icu/events/bulk": {
+      "post": {
+        "summary": "Bulk operations on ICU calendar events",
+        "security": [
+          {
+            "oauth2": ["workouts:write"]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bulk operation completed"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "oauth2": {
+        "type": "oauth2",
+        "description": "OAuth 2.0 authorization for accessing training data",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://intervals.stas.run/gw/oauth/authorize",
+            "tokenUrl": "https://intervals.stas.run/gw/oauth/token",
+            "refreshUrl": "https://intervals.stas.run/gw/oauth/token",
+            "scopes": {
+              "read:me": "Read user profile and training summary",
+              "icu": "Read detailed training activities and calendar",
+              "workouts:write": "Create and modify workouts and events"
+            }
+          }
+        }
+      }
+    }
+  }
+}
