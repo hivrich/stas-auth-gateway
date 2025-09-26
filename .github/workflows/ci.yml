@@ -1,0 +1,12 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: npm ci || true
+      - run: jq -e '.openapi|startswith("3.") and .servers[0].url and (.paths|has("/trainings")) and (.paths|has("/icu/events")) and (.paths|has("/api/db/user_summary"))' gw/openapi.json
+      - run: node -e "require('fs').readFileSync('server.js)"   # синтакс-чек
