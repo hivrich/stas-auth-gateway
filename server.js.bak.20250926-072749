@@ -1,0 +1,162 @@
+const express    = require('express');
+const bodyParser = require('body-parser');
+const cookieParser = require('cookie-parser');
+
+const bearerUid   = require('./routes/_bearer_uid');
+const uidInjectDb = require('./routes/_uid_inject_db');
+const dbProxy     = require('./routes/db_proxy');
+const stas        = require('./routes/stas');
+const icu         = require('./routes/icu');
+const openapi     = require('./routes/openapi');
+const oauth       = require('./routes/oauth');
+const oauthPage   = require('./middleware/oauth_page');
+const legacyAliases = require('./routes/legacy_aliases');
+
+const PORT = process.env.PORT || 3338;
+const app  = express();
+
+app.set('trust proxy', 1);
+app.use(cookieParser());
+app.use(bodyParser.json({ limit: '256kb' }));
+app.use(express.urlencoded({ extended: false }));
+
+// Health
+app.get('/gw/healthz', (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
+
+// OpenAPI → OAuth page → OAuth routes
+app.use('/gw/oauth', oauthPage());
+app.use('/gw', oauth);
+
+// Требуем Bearer для всех /gw/* (кроме bypass внутри мидлвары)
+app.use('/gw', bearerUid());
+
+// === adapter: /gw/api/db/activities → DB-Bridge /api/db/trainings ===
+app.get("/gw/api/db/activities", async (req, res) => {
+  try {
+    const { URLSearchParams } = require("node:url");
+    const qs = new URLSearchParams();
+    const uid = (req.bearer && req.bearer.uid) || req.query.user_id;
+    if (uid) qs.set("user_id", String(uid));
+    for (const k of ["days","oldest","newest","limit","offset"]) {
+      if (req.query[k] != null && req.query[k] !== "") qs.set(k, String(req.query[k]));
+    }
+    const url = `http://127.0.0.1:3336/api/db/trainings?${qs.toString()}`;
+    const r = await fetch(url);
+    if (!r.ok) return res.status(r.status).json({ ok:false, status:r.status });
+    const j = await r.json();
+    const arr = Array.isArray(j.trainings) ? j.trainings : [];
+    return res.json({ ok:true, count: arr.length, activities: arr });
+  } catch(e) {
+    return res.status(500).json({ ok:false, error:"adapter_error" });
+  }
+});
+
+
+// === explicit /gw/trainings (DB-Bridge → trainings[]) ===
+app.get("/gw/trainings", async (req, res) => {
+  try {
+    const uid = (req.bearer && req.bearer.uid) || req.query.user_id;
+    if (!uid) return res.json([]);
+    const { URLSearchParams } = require("node:url");
+    const qs = new URLSearchParams();
+    qs.set("user_id", String(uid));
+    for (const k of ["days","oldest","newest","limit","offset"]) {
+      if (req.query[k] != null && req.query[k] !== "") qs.set(k, String(req.query[k]));
+    }
+    // 1) Try direct DB-Bridge with API key
+    let apiKey = process.env.DB_BRIDGE_API_KEY || "";
+    if (!apiKey) {
+      try {
+        const fs = require("fs");
+        const raw = fs.readFileSync("/opt/stas-db-bridge/.env", "utf8");
+        const line = (raw.split(/\r?\n/).find(x => /^API_KEY=/.test(x)) || "").split("=",2)[1] || "";
+        apiKey = String(line).trim();
+      } catch(e) {}
+    }
+    if (apiKey) {
+      const r = await fetch(`http://127.0.0.1:3336/api/db/trainings?${qs.toString()}`, {
+        headers: { "X-API-Key": apiKey }
+      });
+      if (r.ok) {
+        const j = await r.json();
+        if (j && Array.isArray(j.trainings)) return res.json(j.trainings);
+      }
+    }
+    // 2) Fallback: go through gateway proxy path
+    const r2 = await fetch(`http://127.0.0.1:3338/gw/api/db/trainings?${qs.toString()}`);
+    const j2 = await r2.json().catch(() => ({}));
+    if (j2 && Array.isArray(j2.trainings)) return res.json(j2.trainings);
+    // 3) Last resort: return [] to keep schema
+    return res.json([]);
+  } catch(e) {
+    return res.json([]);
+  }
+});
+
+
+// Наш фиксер ICU-плана должен идти ДО legacy и ДО основного icu-прокси
+app.use('/gw', require('./routes/icu_plan_auth'));
+app.use('/gw', require('./routes/icu_plan_fix'));
+
+// Legacy-алиасы (нормализация ответов коннектора)
+app.use('/gw', legacyAliases);
+
+// DB API
+app.use('/gw/api/db', uidInjectDb);
+app.use('/gw/api/db', dbProxy);
+app.use('/gw/api', stas);
+
+// ICU proxy (после того как user_id уже проставлен)
+try {
+  const attachIcuPostExact = require("./lib/icu_post_exact");
+  if (typeof attachIcuPostExact === "function") attachIcuPostExact(app);
+} catch(e) { console.error("[icu][POST] attach failed:", e && e.message); }
+
+try { const attachDelete = require("./lib/attach_delete"); if (typeof attachDelete === "function") attachDelete(app); }
+catch(e){ console.error("[icu][DELETE] attach failed:", e && e.message); }
+
+try { const attachPost = require("./lib/attach_post"); if (typeof attachPost === "function") attachPost(app); }
+catch(e){ console.error("[icu][POST] attach failed:", e && e.message); }
+
+app.use('/gw/icu', icu);
+
+// 404/500
+app.use((req, res) => res.status(404).json({ error: 'not_found', path: req.path }));
+app.use((err, _req, res, _next) => {
+  console.error('[ERR]', err && err.stack || err);
+  res.status(500).json({ error: 'internal_error' });
+});
+
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+try {
+  const attachIcuPostDryRun = require('./lib/icu_post_dryrun');
+  if (typeof attachIcuPostDryRun === 'function') {
+    attachIcuPostDryRun(app);
+    console.log('[icu][POST] /gw/icu/events (dry_run) attached');
+  }
+} catch (e) {
+  console.error('[icu][POST] attach failed:', e && e.message);
+}
+
+
+// === explicit /gw/trainings → /gw/api/db/trainings (via loopback) ===
+const { URLSearchParams } = require("node:url");
+app.get("/gw/trainings", async (req, res) => {
+  try {
+    const uid = (req.bearer && req.bearer.uid) || req.query.user_id;
+    if (!uid) return res.json([]);
+    const qs = new URLSearchParams();
+    qs.set("user_id", String(uid));
+    for (const k of ["days","oldest","newest","limit","offset"]) {
+      if (req.query[k] != null && req.query[k] !== "") qs.set(k, String(req.query[k]));
+    }
+    const r = await fetch(`http://127.0.0.1:3338/gw/api/db/trainings?${qs.toString()}`);
+    const j = await r.json();
+    return res.json(j.trainings || []);
+  } catch (e) {
+    return res.json([]);
+  }
+});
+
+app.use('/gw', openapi);

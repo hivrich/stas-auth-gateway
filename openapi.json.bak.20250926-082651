@@ -1,0 +1,14 @@
+{
+  "openapi": "3.0.2",
+  "info": { "title": "STAS Gateway", "version": "2025-09-26" },
+  "servers": [{ "url": "https://intervals.stas.run/gw", "description": "Prod" }],
+  "components": {
+    "securitySchemes": { "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT" } },
+    "schemas": {}
+  },
+  "paths": {
+    "/healthz": { "get": { "summary": "Health", "responses": { "200": { "description": "ok" } } } },
+    "/oauth/authorize": { "get": { "responses": { "302": { "description": "redirect" } } } },
+    "/oauth/token": { "post": { "responses": { "200": { "description": "ok" } } } }
+  }
+}

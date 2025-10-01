@@ -36,7 +36,7 @@ router.get('/api/db/user_summary', async (req, res) => {
     const uid = (req.user_id) || (req.bearer && req.bearer.uid) || req.query.user_id;
     if (uid) qs.set('user_id', String(uid));
     const env = fs.readFileSync('/opt/stas-db-bridge/.env','utf8');
-    const apikey = (env.split(/\r?\n/).find(x=>/^API_KEY=__SET_IN_ENV__
+    const apikey = (env.split(/\r?\n/).find(x=>/^API_KEY=/.test(x))||'').split('=',2)[1].trim();
     const r = await fetch(`http://127.0.0.1:3336/api/db/user_summary?${qs.toString()}`, { headers: { 'X-API-Key': apikey }});
     if (!r.ok) return res.status(r.status).json({ ok:false, status:r.status });
     const j = await r.json();

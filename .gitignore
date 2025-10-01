@@ -1,7 +1,18 @@
+# runtime
+/tmp/
+/var/log/
+/*.log
+*.pid
+
+# deps
 node_modules/
-.env
-var/
-*.bak.*
-*.tgz
-*.log
+
+# secrets
+.stas_key.current
+*.key
+*.pem
+
+# OS/editor
 .DS_Store
+*.swp
+*.swo

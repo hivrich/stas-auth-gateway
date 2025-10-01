@@ -1,0 +1,100 @@
+openapi: 3.1.0
+info:
+  title: STAS Gateway (Minimal)
+  version: 0.1.1
+servers:
+- url: https://intervals.stas.run
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://intervals.stas.run/gw/oauth/authorize
+          tokenUrl: https://intervals.stas.run/gw/oauth/token
+          scopes:
+            read:me: Read
+            icu: ICU
+            workouts:write: Write
+security:
+- oauth2:
+  - read:me
+  - icu
+  - workouts:write
+paths:
+  /gw/healthz:
+    get:
+      summary: Health
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                required:
+                - ok
+                additionalProperties: false
+      security: []
+  /gw/api/db/user_summary:
+    get:
+      summary: User summary (uid from Bearer)
+      parameters:
+      - name: user_id
+        in: query
+        required: false
+        schema:
+          type: string
+          pattern: ^[0-9]+$
+      responses:
+        '200':
+          description: User summary
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                additionalProperties: true
+  /gw/icu/events:
+    get:
+      summary: ICU events (uid from Bearer)
+      parameters:
+      - name: days
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 365
+      responses:
+        '200':
+          description: Events array
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                additionalProperties: true

@@ -1,0 +1,36 @@
+const express=require('express'); const https=require('https'); const http=require('http'); const {URL}=require('url');
+const {fetchJson}=require('../helpers/fetchJson');
+const STAS_BASE=process.env.STAS_INTERNAL_BASE_URL||'http://127.0.0.1:3336';
+const STAS_KEY =process.env.STAS_API_KEY||'';
+const ICU_BASE =process.env.ICU_API_BASE_URL||'https://intervals.icu/api/v1';
+const router=express.Router();
+
+function proxyIcuGet(pathname, query, token, res){
+  const base=new URL(ICU_BASE); const u=new URL(pathname,base);
+  for(const [k,v] of Object.entries(query||{})) if(v!=null) u.searchParams.set(k,String(v));
+  const cli=u.protocol==='https:'?https:http;
+  const req=cli.request({hostname:u.hostname,port:u.port|| (u.protocol==='https:'?443:80),
+    path:u.pathname+u.search,method:'GET',
+    headers:{Authorization:`Bearer ${token}`,'User-Agent':'stas-auth-gateway'}},
+    (up)=>{ const h={...up.headers}; delete h['transfer-encoding']; delete h['connection']; delete h['content-length'];
+            res.writeHead(up.statusCode||502,h); up.pipe(res); });
+  req.on('error',(e)=>res.status(502).json({error:'bad_gateway',where:'icu',message:e.message})); req.end();
+}
+
+router.get('/events', async (req,res)=>{
+  const {user_id, days='7'} = req.query||{};
+  if(!user_id) return res.status(400).json({error:'invalid_request',message:'user_id required'});
+  const credsUrl=new URL('/api/db/icu_creds', STAS_BASE); credsUrl.searchParams.set('user_id',String(user_id));
+  try{
+    const {status,json}=await fetchJson(credsUrl.toString(), { headers: STAS_KEY?{'X-API-Key':STAS_KEY}:{}} );
+    if(status===404) return res.status(403).json({error:'forbidden',message:'ICU credentials not found for this user'});
+    if(status>=400)  return res.status(502).json({error:'bad_gateway',where:'stas',status,json});
+    const {api_key,athlete_id}=json||{};
+    if(!api_key||!athlete_id) return res.status(403).json({error:'forbidden',message:'ICU credentials incomplete'});
+    return proxyIcuGet(`athlete/${encodeURIComponent(String(athlete_id))}/events`, {days}, api_key, res);
+  }catch(e){
+    return res.status(502).json({error:'bad_gateway',where:'stas_fetch',message:e.message});
+  }
+});
+
+module.exports=router;

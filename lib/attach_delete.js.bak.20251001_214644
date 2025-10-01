@@ -1,0 +1,117 @@
+// window→per-ID DELETE shim for /gw/icu/events
+// • DELETE без id, но с external_id_prefix + oldest + newest
+//   - dry_run: вернём список id
+//   - real: удалим per-ID напрямую в Intervals.icu
+// • uid берём из req.query.user_id ИЛИ из Bearer t_<b64url>{"uid":...}
+// • НОРМАЛИЗУЕМ athlete_id: "i12345" -> "12345" (Intervals ждёт чистое число)
+
+function decodeUidFromBearer(auth){
+  try{
+    if(!auth) return null;
+    const m = String(auth).match(/Bearer\s+t_([A-Za-z0-9_-]+)/i);
+    if(!m) return null;
+    let b64 = m[1].replace(/-/g,'+').replace(/_/g,'/');
+    while(b64.length % 4 !== 0) b64 += '=';
+    const buf = Buffer.from(b64,'base64');
+    const obj = JSON.parse(buf.toString('utf8'));
+    const uid = (obj && (obj.uid||obj.user_id)) ? String(obj.uid||obj.user_id) : null;
+    return uid && /^\d+$/.test(uid) ? uid : null;
+  }catch(_){ return null; }
+}
+
+module.exports = function(app){
+  app.delete('/gw/icu/events', async (req, res, next) => {
+    try{
+      const q = req.query || {};
+      const hasId = !!q.id;
+      const hasPrefix = typeof q.external_id_prefix === 'string' && q.external_id_prefix.length > 0;
+      const hasWindow = !!(q.oldest && q.newest);
+      if (hasId || !hasPrefix || !hasWindow) return next();
+
+      const ua = (req.get && req.get('user-agent')) || req.headers['user-agent'] || '';
+      const clientAskedDry = Object.prototype.hasOwnProperty.call(q, 'dry_run');
+      const isGPT = /ChatGPT-User/i.test(ua);
+      const isDryRun = clientAskedDry ? (String(q.dry_run).toLowerCase() !== 'false') : !isGPT;
+
+      // 1) Собираем ids через локальный GET с тем же Authorization
+      const port = process.env.PORT || '3338';
+      const url = new URL(`http://127.0.0.1:${port}/gw/icu/events`);
+      url.searchParams.set('external_id_prefix', q.external_id_prefix);
+      url.searchParams.set('oldest', q.oldest);
+      url.searchParams.set('newest', q.newest);
+
+      const auth = (req.get && req.get('authorization')) || req.headers['authorization'];
+      const r = await fetch(url, { headers: auth ? { Authorization: auth } : {} });
+      if (!r.ok) return res.status(502).json({ ok:false, error:'events_fetch_failed', status:r.status });
+      const arr = await r.json();
+      const ids = Array.isArray(arr) ? arr.map(e => String(e.id)).filter(Boolean) : [];
+
+      if (isDryRun){
+        return res.json({
+          ok:true, dry_run:true,
+          uid: String(q.user_id || decodeUidFromBearer(auth) || ''),
+          prefix: q.external_id_prefix,
+          window: { oldest:q.oldest, newest:q.newest },
+          to_delete: { count: ids.length, ids }
+        });
+      }
+
+      if (ids.length === 0){
+        return res.json({
+          ok:true, dry_run:false,
+          prefix:q.external_id_prefix,
+          window:{ oldest:q.oldest, newest:q.newest },
+          deleted_count:0, deleted_ids:[], failed:[]
+        });
+      }
+
+      // 2) Реальное удаление в Intervals.icu (пер-ID)
+      const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
+      const STAS_KEY  = process.env.STAS_KEY  || '';
+      const uid = String(q.user_id || decodeUidFromBearer(auth) || '').trim();
+      if (!uid) return res.status(400).json({ ok:false, error:'missing_user_id' });
+
+      const credsUrl = new URL(`${STAS_BASE}/api/db/icu_creds`);
+      credsUrl.searchParams.set('user_id', uid);
+      const cr = await fetch(credsUrl, { headers: STAS_KEY ? { 'X-API-Key': STAS_KEY } : {} });
+      if (!cr.ok) return res.status(502).json({ ok:false, error:'icu_creds_fetch_failed', status:cr.status });
+      const cj = await cr.json();
+      if (!cj || !cj.ok || !cj.athlete_id || !cj.api_key) return res.status(400).json({ ok:false, error:'invalid_icu_creds' });
+
+      // НОРМАЛИЗАЦИЯ athlete_id: "i12345" -> "12345"
+      const athleteRaw = String(cj.athlete_id);
+      const athlete = athleteRaw.replace(/^i/i, '').trim();
+      const apiKey  = String(cj.api_key);
+      const API_BASE = process.env.INTERVALS_API_BASE_URL || 'https://intervals.icu/api/v1';
+
+      const deleted_ids = [];
+      const failed = [];
+      for (const id of ids){
+        try{
+          const delUrl = `${API_BASE}/athlete/${encodeURIComponent(athlete)}/events/${encodeURIComponent(id)}`;
+          const dr = await fetch(delUrl, {
+            method:'DELETE',
+            headers:{
+              'Authorization': `Bearer ${apiKey}`,
+              'Accept': 'application/json'
+            }
+          });
+          if (dr.ok) deleted_ids.push(id);
+          else failed.push({ id, status:dr.status });
+        }catch(e){
+          failed.push({ id, error: String(e && e.message || e) });
+        }
+      }
+      return res.json({
+        ok:true, dry_run:false,
+        prefix:q.external_id_prefix,
+        window:{ oldest:q.oldest, newest:q.newest },
+        deleted_count: deleted_ids.length,
+        deleted_ids, failed
+      });
+    }catch(e){
+      console.error('[icu][DELETE][shim] error:', e && e.stack || e);
+      return res.status(500).json({ ok:false, error:'window_shim_failed' });
+    }
+  });
+};

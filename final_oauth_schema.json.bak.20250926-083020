@@ -1,0 +1,214 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Intervals/STAS Gateway API",
+    "description": "OAuth-protected gateway for STAS DB and Intervals.icu. user_id extracted from JWT token, no client-side user_id required.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://intervals.stas.run/gw"
+    }
+  ],
+  "security": [
+    {
+      "oauth2": ["read"]
+    }
+  ],
+  "paths": {
+    "/api/me": {
+      "get": {
+        "operationId": "getMe",
+        "summary": "Get current user identity from JWT token",
+        "responses": {
+          "200": {
+            "description": "User identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "user_id": { "type": "integer" },
+                    "athlete_id": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/db/user_summary": {
+      "get": {
+        "operationId": "getUserSummary",
+        "summary": "Get user summary from STAS DB (user_id from JWT token)",
+        "responses": {
+          "200": {
+            "description": "User summary data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "user_summary": { "type": "object" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/db/trainings": {
+      "get": {
+        "operationId": "getUserTrainings", 
+        "summary": "Get user trainings from STAS DB (user_id from JWT token)",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query", 
+            "schema": { "type": "integer", "default": 30 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Training sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "trainings": { "type": "array" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/icu/events": {
+      "get": {
+        "operationId": "getPlannedWorkouts",
+        "summary": "Get planned workouts from Intervals.icu (athlete_id from JWT token)",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query", 
+            "schema": { "type": "integer", "default": 60 }
+          },
+          {
+            "name": "oldest",
+            "in": "query",
+            "schema": { "type": "string", "format": "date" }
+          },
+          {
+            "name": "newest", 
+            "in": "query",
+            "schema": { "type": "string", "format": "date" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Planned workouts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": { "type": "string" },
+                      "name": { "type": "string" },
+                      "start_date": { "type": "string" },
+                      "type": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createPlannedWorkouts",
+        "summary": "Create planned workouts in Intervals.icu (requires workouts:write scope)",
+        "parameters": [
+          {
+            "name": "dry_run",
+            "in": "query",
+            "schema": { "type": "boolean", "default": true }
+          },
+          {
+            "name": "external_id_prefix",
+            "in": "query",
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "events": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "category": { "type": "string", "enum": ["WORKOUT"] },
+                        "type": { "type": "string", "enum": ["RUN", "BIKE", "SWIM"] },
+                        "name": { "type": "string" },
+                        "start_date_local": { "type": "string", "format": "date-time" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Bulk operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "dry_run": { "type": "boolean" },
+                    "created": { "type": "integer" },
+                    "skipped": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "oauth2": {
+        "type": "oauth2",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://intervals.stas.run/gw/oauth/authorize",
+            "tokenUrl": "https://intervals.stas.run/gw/oauth/token",
+            "scopes": {
+              "read": "Read access to user data",
+              "icu": "Access to Intervals.icu data",
+              "workouts:write": "Create and modify workouts"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {}
+  }
+}

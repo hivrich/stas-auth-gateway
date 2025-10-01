@@ -3,7 +3,7 @@ const fetch = global.fetch || ((...a)=>import('node-fetch').then(m=>m.default(..
 const router = express.Router();
 
 const STAS_BASE = process.env.STAS_INTERNAL_BASE_URL || 'http://127.0.0.1:3336';
-const STAS_KEY  = process.env.STAS_API_KEY || '7ca1e3d9d8bb76a1297a9c7d9e39d5eaf4d0d6da249440eea43bb50ff0fddf27';
+const STAS_KEY  = process.env.STAS_API_KEY ;
 
 // хелперы
 const iso = (d)=> new Date(d).toISOString().slice(0,10);

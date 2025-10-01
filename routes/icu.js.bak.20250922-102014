@@ -1,0 +1,91 @@
+const express = require('express');
+/* UID-INJECT */
+function uidFromBearer(req){
+  const auth=String(req.headers["authorization"]||"");
+  const m=auth.match(/^Bearer\s+t_([A-Za-z0-9\-_]+)$/);
+  if(!m) return null;
+  try{const b64=m[1].replace(/-/g,"+").replace(/_/g,"/");
+      const json=JSON.parse(Buffer.from(b64,"base64").toString("utf8"));
+      return json&&json.uid? String(json.uid): null; }catch(_e){ return null; }
+}
+/* /UID-INJECT */
+// [dedup] removed duplicate express declaration
+const router = express.Router();
+
+// Node 18+ имеет глобальный fetch. Проверим на всякий случай.
+if (typeof fetch !== 'function') {
+  throw new Error('Global fetch is not available in this Node runtime');
+}
+
+const STAS_KEY = '7ca1e3d9d8bb76a1297a9c7d9e39d5eaf4d0d6da249440eea43bb50ff0fddf27';
+const STAS_URL = 'http://127.0.0.1:3336/api/db/icu_creds';
+const ICU_BASE = 'https://intervals.icu/api/v1';
+
+function b64(s) { return Buffer.from(s, 'utf8').toString('base64'); }
+function mask(s) { return s ? (s.slice(0,6)+'…') : ''; }
+function pick(q, list) {
+  const out = {};
+  for (const k of list) if (q[k] !== undefined) out[k] = q[k];
+  return out;
+}
+function toQs(obj) {
+  const p = new URLSearchParams();
+  for (const [k,v] of Object.entries(obj)) if (v !== undefined && v !== null && v!=='') p.append(k, String(v));
+  const s = p.toString();
+  return s ? ('?'+s) : '';
+}
+
+router.get('/events', async (req, res) => {
+  // Inject user_id from Bearer if absent
+  try {
+    if (!req.query.user_id) {
+      const auth = String(req.headers["authorization"]||"");
+      const m = auth.match(/^Bearer\s+t_([A-Za-z0-9\-_]+)$/);
+      if (m) {
+        const b64 = m[1].replace(/-/g,"+").replace(/_/g,"/");
+        const json = JSON.parse(Buffer.from(b64, "base64").toString("utf8"));
+        if (json && json.uid) req.query.user_id = String(json.uid);
+      }
+    }
+  } catch(e) { /* ignore */ }
+
+  try {
+    const user_id = String(req.query.user_id || '').trim() || '95192039';
+
+    // 1) Забираем ICU creds из STAS bridge
+    const stasResp = await fetch(`${STAS_URL}?user_id=${encodeURIComponent(user_id)}`, {
+      headers: { 'X-API-Key': STAS_KEY }
+    });
+    if (!stasResp.ok) {
+      return res.status(502).json({ status: 502, error: `STAS creds error ${stasResp.status}` });
+    }
+    const creds = await stasResp.json(); // ожидаем { ok:true, api_key, athlete_id }
+    const apiKey = creds.api_key;
+    const athleteId = String(creds.athlete_id || '').trim();
+    if (!apiKey || !athleteId) {
+      return res.status(500).json({ status: 500, error: 'Missing ICU creds for user' });
+    }
+
+    // 2) Формируем ICU запрос
+    const q = pick(req.query, ['oldest','newest','days','type','external_id','external_id_prefix']);
+    const qs = toQs(q);
+    const url = `${ICU_BASE}/athlete/${athleteId}/events${qs}`;
+
+    const auth = 'Basic ' + b64(`API_KEY:${apiKey}`);
+    console.log(`[icu] GET ${url} auth=${mask(apiKey)} uid=${user_id}`);
+
+    const icu = await fetch(url, { headers: { 'Authorization': auth, 'Accept': 'application/json' }});
+    const text = await icu.text();
+    res.status(icu.status);
+    try {
+      res.type('application/json').send(JSON.parse(text));
+    } catch {
+      res.type(icu.headers.get('content-type') || 'application/json').send(text);
+    }
+  } catch (e) {
+    console.error('[icu] error:', e);
+    res.status(500).json({ status: 500, error: 'Gateway ICU error', detail: String(e && e.message || e) });
+  }
+});
+
+module.exports = router;

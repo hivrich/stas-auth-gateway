@@ -1,0 +1,135 @@
+const express = require('express');
+const bodyParser = require('body-parser');
+const jwt = require('jsonwebtoken');
+
+const PORT = process.env.PORT || 3337;
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
+
+const app = express();
+app.set('trust proxy', 1);
+app.use(bodyParser.json({ limit: '256kb' }));
+app.use(express.urlencoded({ extended: false }));
+
+// health
+app.get('/gw/healthz', (_req, res) => {
+  res.json({ ok: true, ts: new Date().toISOString() });
+});
+
+// ===== OAuth (упрощённо для приёмки) =====
+
+// authorize: простая HTML-страница, генерит "code", который несёт user_id и pkce hash
+app.get('/gw/oauth/authorize', (req, res) => {
+  const client_id = String(req.query.client_id || '');
+  const redirect_uri = String(req.query.redirect_uri || 'urn:ietf:wg:oauth:2.0:oob');
+  const scope = String(req.query.scope || '');
+  const code_challenge = String(req.query.code_challenge || '');
+  if (!client_id || !code_challenge) {
+    return res.status(400).type('html').send(`Missing client_id/code_challenge`);
+  }
+  // Попросим пользователя ввести свой user_id в форме — без хардкодов!
+  res
+    .status(200)
+    .type('html')
+    .send(`<!doctype html><html><body>
+      <h3>Authorize (stub)</h3>
+      <form method="post" action="/gw/oauth/authorize/finish">
+        <input type="hidden" name="client_id" value="${client_id}"/>
+        <input type="hidden" name="redirect_uri" value="${redirect_uri}"/>
+        <input type="hidden" name="scope" value="${encodeURIComponent(scope)}"/>
+        <input type="hidden" name="code_challenge" value="${code_challenge}"/>
+        <label>User ID: <input name="user_id" required placeholder="введите ваш user_id"/></label>
+        <button type="submit">Approve</button>
+      </form>
+    </body></html>`);
+});
+
+// завершение авторизации -> выдаём OOB code, несущий user_id и code_challenge
+app.post('/gw/oauth/authorize/finish', (req, res) => {
+  const { client_id, redirect_uri = 'urn:ietf:wg:oauth:2.0:oob', scope = '', code_challenge = '', user_id } = req.body || {};
+  if (!client_id || !user_id || !code_challenge) {
+    return res.status(400).type('html').send('Missing client_id/user_id/code_challenge');
+  }
+  // код несёт в себе user_id и code_challenge (для простоты base64url JSON)
+  const payload = Buffer.from(JSON.stringify({ user_id, cc: code_challenge, t: Date.now() })).toString('base64url');
+  if (redirect_uri === 'urn:ietf:wg:oauth:2.0:oob') {
+    return res
+      .status(200)
+      .type('html')
+      .send(`Copy this CODE into your client:<br/><pre>${payload}</pre>`);
+  }
+  // если будет реальная редирект-URI — редиректим с code
+  const sep = redirect_uri.includes('?') ? '&' : '?';
+  return res.redirect(`${redirect_uri}${sep}code=${encodeURIComponent(payload)}`);
+});
+
+// обмен кода на access_token (authorization_code + PKCE)
+app.post('/gw/oauth/token', (req, res) => {
+  const { grant_type, code = '', code_verifier = '' } = req.body || {};
+  if (!grant_type) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'grant_type required' });
+  }
+  if (grant_type !== 'authorization_code') {
+    return res.status(400).json({ error: 'unsupported_grant_type', error_description: `grant_type=${grant_type}` });
+  }
+  if (!code || !code_verifier) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'code and code_verifier required' });
+  }
+  // восстановим данные из кода
+  let parsed;
+  try {
+    parsed = JSON.parse(Buffer.from(String(code), 'base64url').toString('utf8'));
+  } catch {
+    return res.status(400).json({ error: 'invalid_grant', error_description: 'bad code' });
+  }
+  const { user_id, cc } = parsed || {};
+  if (!user_id || !cc) {
+    return res.status(400).json({ error: 'invalid_grant', error_description: 'code missing user_id/cc' });
+  }
+  // ПРОСТАЯ проверка PKCE: code_verifier -> S256 -> base64url должен равняться cc
+  const crypto = require('crypto');
+  const s256 = crypto.createHash('sha256').update(code_verifier).digest();
+  const ccCalc = Buffer.from(s256).toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+
+  if (cc !== ccCalc) {
+    return res.status(400).json({ error: 'invalid_grant', error_description: 'pkce mismatch' });
+  }
+
+  // выдаём JWT (HS256) на 1 час, без хардкода user_id
+  const now = Math.floor(Date.now()/1000);
+  const access_token = jwt.sign(
+    { sub: String(user_id), scope: 'read:workouts read:summary training:read training:write', iat: now, nbf: now },
+    JWT_SECRET,
+    { algorithm: 'HS256', expiresIn: '3600s' }
+  );
+
+  return res.json({
+    access_token,
+    token_type: 'Bearer',
+    expires_in: 3600,
+    scope: 'read:workouts read:summary training:read training:write'
+  });
+});
+
+// версия
+app.get('/gw/version', (_req, res) => {
+const stas = require("./routes/stas");
+const icu  = require("./routes/icu");
+app.use("/gw/api", stas);
+app.use("/gw/icu",  icu);
+const stas = require("./routes/stas");
+const icu  = require("./routes/icu");
+app.use("/gw/api", stas);
+app.use("/gw/icu",  icu);
+  res.json({ version: 'oauth-ready-1', build_at: new Date().toISOString() });
+});
+
+// 404 JSON
+app.use((req, res) => res.status(404).json({ error: 'not_found', path: req.path }));
+
+// error JSON
+app.use((err, _req, res, _next) => {
+  console.error('[ERR]', err?.stack || err);
+  res.status(500).json({ error: 'internal_error' });
+});
+
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

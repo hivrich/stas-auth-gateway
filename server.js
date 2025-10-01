@@ -27,6 +27,10 @@ app.get('/gw/healthz', (_req, res) => res.json({ ok: true, ts: new Date().toISOS
 
 // OpenAPI & OAuth stubs
 app.use('/gw', bearerUid());
+require("./routes/icu_post_passthru_gw")(app); // inserted passthru before real_gw
+require("./routes/icu_post_real_gw")(app); // exact ICU POST
+require("./routes/icu_delete_exact_gw")(app); // exact ICU DELETE
+require("./routes/icu_post_real_gw")(app); // exact ICU POST mounted after bearerUid
 app.use('/gw', trainingsRouter);
 
 

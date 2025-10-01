@@ -1,0 +1,24 @@
+[Unit]
+Description=STAS Auth Gateway v2 (example)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hivr
+Group=hivr
+Environment=PORT=3338
+Environment=STAS_BASE=http://127.0.0.1:3336
+Environment=STAS_KEY_FILE=/home/hivr/.stas_key.current
+Environment=INTERVALS_API_BASE_URL=https://intervals.icu/api/v1
+ExecStartPre=/usr/bin/test -s ${STAS_KEY_FILE}
+ExecStart=/usr/bin/env STAS_KEY=$(tr -d '\r\n ' < ${STAS_KEY_FILE}) /usr/bin/node /opt/stas-auth-gateway-v2/current/server.js
+Restart=always
+RestartSec=2
+WorkingDirectory=/opt/stas-auth-gateway-v2/current
+StandardOutput=append:/var/log/stas-auth-gateway/gw_3338.log
+StandardError=append:/var/log/stas-auth-gateway/gw_3338.log
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
