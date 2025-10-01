@@ -1,0 +1,84 @@
+const { Router } = require('express');
+const fetch = global.fetch || require('node-fetch');
+const credsDao = require('../credsDao');
+const ICU_BASE = process.env.ICU_API_BASE_URL || 'https://intervals.icu/api/v1';
+
+const r = Router();
+
+function __decodeBearerUid(req){
+  try{
+    const h = String(req.headers && (req.headers.authorization||req.headers.Authorization) || '');
+    const m = h.match(/Bearer\s+t_([A-Za-z0-9_-]+)/);
+    if(!m) return null;
+    const buf = Buffer.from(m[1].replace(/-/g,'+').replace(/_/g,'/'), 'base64');
+    const txt = buf.toString('utf8');
+    const obj = JSON.parse(txt);
+    return (obj && obj.uid) ? String(obj.uid) : null;
+  }catch(_e){ return null; }
+}
+
+
+// Совместимый контракт: GET /gw/icu/plan?oldest&newest → []
+r.get('/icu/plan', async (req, res) => {
+  try { res.set('X-Route','icu_plan_fix'); } catch(_e) {}
+  const q = (req && req.query) || {};
+  const uid_q = (q.user_id? String(q.user_id):'');
+  const uid_r = (req && req.user_id) ? String(req.user_id) : '';
+  const uid_h = String((req && (req.headers['x-user-id']||req.headers['X-User-Id']))||'');
+  let user_id = uid_q || uid_r || uid_h || __decodeBearerUid(req) || '';
+  console.log('[icu_plan_fix][HIT]', {q, uid_q, uid_r, uid_h, user_id});es.set('X-Route','icu_plan_fix'); } catch(_e) {}
+  const q = { ...(req && req.query)||{} };
+  console.log('[icu_plan_fix][HIT]', q);
+console.log('[icu_plan_fix][HIT]', req.query);
+  try {
+    const user_id = String(req.query.user_id || req.user_id || '').trim();
+    const oldest  = String(req.query.oldest || '').trim();
+    const newest  = String(req.query.newest || '').trim();
+    if (!user_id) return res.status(401).json({ error:'missing_or_invalid_token' });
+    if (!oldest || !newest) return res.status(400).json({ error:'invalid_date_range' });
+
+    if(!user_id){ console.log('[icu_plan_fix][NO_UID] early return'); return res.json([]); }
+const creds = await credsDao.getByUserId(user_id);
+console.log('[icu_plan_fix][CREDS]', { have: !!creds, athlete: creds && (creds.athlete_id||creds.icu_athlete_id), api_key_len: creds && String((creds.api_key||creds.icu_api_key)||'').length });
+    const apiKey = creds && (creds.api_key || creds.icu_api_key);
+    const athlete = creds && (creds.athlete_id || creds.icu_athlete_id);
+    if (!apiKey || !athlete) try{res.set('X-Route','icu_plan_fix');}catch(_e){} return res.json([]);
+
+    const url = `${ICU_BASE}/athlete/${encodeURIComponent(athlete)}/calendar?oldest=${encodeURIComponent(oldest)}&newest=${encodeURIComponent(newest)}`;
+    const rr = await fetch(url, { headers: { 'X-API-Key': apiKey }});
+    console.log('[icu_plan_fix][FETCH] status', rr.status, rr.statusText);
+    if (!rr.ok) try{res.set('X-Route','icu_plan_fix');}catch(_e){} return res.json([]);
+    const data = await rr.json().catch((e)=>{ console.error('[icu_plan_fix][JSON_ERR]', e&&e.message||e); return []; });
+    console.log('[icu_plan_fix][DATA] length', Array.isArray(data)?data.length:'n/a');
+    res.set('X-Route','icu_plan_fix');
+    return res.json(Array.isArray(data) ? data : []);
+  } catch (e) {
+    console.error('[icu_plan_fix] error', e && (e.stack || e));
+    try{res.set('X-Route','icu_plan_fix');}catch(_e){} return res.json([]);
+  }
+});
+
+module.exports = r;
+
+
+r.get('/icu/plan/_probe', async (req,res)=>{
+  try{
+    const user_id = String(req.query.user_id || req.user_id || '').trim();
+    const oldest  = String(req.query.oldest || '').trim();
+    const newest  = String(req.query.newest || '').trim();
+    const creds = await require('../credsDao').getByUserId(user_id);
+    const ICU_BASE = process.env.ICU_API_BASE_URL || 'https://intervals.icu/api/v1';
+    const icu_url = (creds && creds.athlete_id) ? `${ICU_BASE}/athlete/${encodeURIComponent(creds.athlete_id)}/calendar?oldest=${encodeURIComponent(oldest)}&newest=${encodeURIComponent(newest)}` : null;
+    res.set('X-Route','icu_plan_fix');
+    res.json({
+      ok:true, user_id, oldest, newest,
+      have_creds: !!(creds && (creds.api_key||creds.icu_api_key) && (creds.athlete_id||creds.icu_athlete_id)),
+      athlete_id: creds && (creds.athlete_id||creds.icu_athlete_id) || null,
+      api_key_len: creds && String((creds.api_key||creds.icu_api_key)||'').length || 0,
+      icu_url
+    });
+  }catch(e){
+    console.error('[icu_plan_fix][_probe] error', e && (e.stack||e));
+    res.status(500).json({ok:false,error:'internal_error'});
+  }
+});

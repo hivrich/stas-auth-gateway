@@ -1,0 +1,104 @@
+const http = require('http');
+const https = require('https');
+
+function base64(s) { return Buffer.from(s, 'utf8').toString('base64'); }
+
+function getJSON(url, { headers = {} } = {}) {
+  return new Promise((resolve, reject) => {
+    const lib = url.startsWith('https:') ? https : http;
+    const req = lib.get(url, { headers }, res => {
+      let data = '';
+      res.on('data', c => (data += c));
+      res.on('end', () => {
+        try {
+          const body = data ? JSON.parse(data) : {};
+          if (res.statusCode >= 200 && res.statusCode < 300) return resolve(body);
+          const err = new Error((body && (body.error || body.message)) || `http_${res.statusCode}`);
+          err.status = res.statusCode; err.body = body; return reject(err);
+        } catch {
+          const err = new Error(`bad_json_${res.statusCode}`);
+          err.status = res.statusCode; err.raw = data; return reject(err);
+        }
+      });
+    });
+    req.on('error', reject);
+  });
+}
+
+function fetchJSON(url, { method='POST', headers = {}, body } = {}) {
+  return new Promise((resolve, reject) => {
+    const lib = url.startsWith('https:') ? https : http;
+    const u = new URL(url);
+    const req = lib.request({
+      method,
+      protocol: u.protocol,
+      hostname: u.hostname,
+      port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname + (u.search || ''),
+      headers
+    }, res => {
+      let data = '';
+      res.on('data', c => (data += c));
+      res.on('end', () => {
+        const sc = res.statusCode || 0;
+        if (sc >= 200 && sc < 300) {
+          try { return resolve(data ? JSON.parse(data) : {}); } catch { return resolve({}); }
+        }
+        try {
+          const j = JSON.parse(data || '{}');
+          const err = new Error(j.error || j.message || `http_${sc}`); err.status = sc; err.body = j; return reject(err);
+        } catch {
+          const err = new Error('http_error'); err.status = sc; err.raw = data; return reject(err);
+        }
+      });
+    });
+    req.on('error', reject);
+    if (body) req.end(typeof body === 'string' ? body : JSON.stringify(body));
+    else req.end();
+  });
+}
+
+function toCamelEvent(e) {
+  return {
+    startDateLocal: e.start_date_local ?? e.startDateLocal,
+    endDateLocal:   e.end_date_local ?? e.endDateLocal,
+    type:           e.type,
+    name:           e.name,
+    category:       e.category,
+    externalId:     e.external_id ?? e.externalId,
+    description:    e.description
+  };
+}
+
+async function getIcuCredsForUid(uid) {
+  const base = process.env.STAS_BASE || 'http://127.0.0.1:3336';
+  const key  = process.env.STAS_KEY;
+  if (!key) { const e = new Error('missing_stas_key'); e.status = 500; throw e; }
+  const url = `${base.replace(/\/+$/,'')}/api/db/icu_creds?user_id=${encodeURIComponent(uid)}`;
+  const creds = await getJSON(url, { headers: { 'X-API-Key': key } });
+  const apiKey    = creds.icu_api_key    || (creds.ok && creds.api_key)    || creds.api_key;
+  const athleteId = creds.icu_athlete_id || (creds.ok && creds.athlete_id) || creds.athlete_id;
+  if (!apiKey || !athleteId) { const e = new Error('icu_credentials_not_found'); e.status = 404; e.details = creds; throw e; }
+  return { apiKey, athleteId };
+}
+
+async function icuCreateEvents({ apiKey, athleteId, events }) {
+  const auth = 'Basic ' + base64(`${apiKey}:${apiKey}`);
+  const url  = `https://intervals.icu/api/v1/athlete/${encodeURIComponent(athleteId)}/events`;
+  const camel = events.map(toCamelEvent);
+  // ICU ожидает application/json с массивом объектов
+  const body = JSON.stringify(camel);
+  return await fetchJSON(url, {
+    method: 'POST',
+    headers: {
+      Authorization: auth,
+      'User-Agent': 'stas-auth-gateway/1.2',
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'Content-Length': Buffer.byteLength(body)
+    },
+    body
+  });
+}
+
+module.exports = { getIcuCredsForUid, icuCreateEvents };

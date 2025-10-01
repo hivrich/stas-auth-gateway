@@ -1,0 +1,95 @@
+const express = require('express');
+
+const bearerUidApi = require('./routes/_bearer_uid');
+const uidInjectDb = require('./routes/_uid_inject_db');
+const dbProxy = require('./routes/db_proxy');
+// === Injected: derive user_id from Bearer token for all /gw/* requests ===
+function bearerUserId(req,res,next){
+  try{
+    if(!req.query.user_id){
+      const auth = String(req.headers['authorization']||'');
+      const m = auth.match(/^Bearer\s+t_([A-Za-z0-9\-_]+)$/);
+      if(m){
+        const b64 = m[1].replace(/-/g,'+').replace(/_/g,'/');
+        const json = JSON.parse(Buffer.from(b64,'base64').toString('utf8'));
+        if(json && json.uid) req.query.user_id = String(json.uid);
+      }
+    }
+  }catch(e){/* ignore */}
+  return next();
+}
+const bodyParser = require('body-parser');
+
+const PORT = process.env.PORT || 3337;
+const app  = express();
+const openapiRouter = require('./routes/openapi');
+app.use('/gw', bearerUserId);
+app.use('/gw', openapiRouter);
+
+const oauthRouter = require('./routes/oauth'); app.use('/gw/oauth', oauthRouter);
+
+app.set('trust proxy', 1);
+app.use(bodyParser.json({ limit: '256kb' }));
+app.use(express.urlencoded({ extended: false }));
+
+// static for .well-known (если нужно)
+app.use('/.well-known', express.static(__dirname + '/public/.well-known', { maxAge: 0 }));
+
+// Health
+app.get('/gw/healthz', (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
+
+// OAuth stubs (чтобы клиенты не падали 502; реальную логику добавим позже)
+
+app.post('/gw/oauth/token', (req, res) => {
+  const { grant_type } = req.body || {};
+  if (!grant_type) return res.status(400).json({ error: 'invalid_request', error_description: 'grant_type required' });
+
+// ---- explicit OAS routes with CORS
+  return res.status(400).json({ error: 'unsupported_grant_type', error_description: `grant_type=${grant_type} not supported in stub` });
+});
+
+// Mount routes (РЕАЛЬНЫЕ API)
+const stas = require('./routes/stas');
+const icu  = require('./routes/icu');
+app.use('/gw/api', bearerUidApi);
+app.use('/gw/api/db', uidInjectDb);
+app.use('/gw/api/db', dbProxy);
+app.use('/gw/api', stas);
+/* UID-INJECT MW */
+function __uidFromBearer(req){
+  const auth=String(req.headers['authorization']||'');
+  const m=auth.match(/^Bearer\s+t_([A-Za-z0-9\-_]+)$/);
+  if(!m) return null;
+  try{
+    const b64=m[1].replace(/-/g,'+').replace(/_/g,'/');
+    const json=JSON.parse(Buffer.from(b64,'base64').toString('utf8'));
+    return json&&json.uid? String(json.uid): null;
+  }catch(_e){ return null; }
+}
+app.use('/gw/icu', (req,res,next)=>{
+  const q = req.query || {};
+  if(!q.user_id){
+    const u = __uidFromBearer(req);
+    if(!u) return res.status(401).json({status:401,error:'missing_or_invalid_token'});
+    q.user_id = String(u);
+    req.query = q;
+  }
+  next();
+});
+/* /UID-INJECT MW */
+
+app.use('/gw/icu', icu);
+
+
+// 404 JSON
+app.use((req, res) => res.status(404).json({ error: 'not_found', path: req.path }));
+
+// 500 JSON
+app.use((err, _req, res, _next) => {
+  console.error('[ERR]', err && err.stack || err);
+  res.status(500).json({ error: 'internal_error' });
+});
+
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+// ---- explicit OAS routes with CORS

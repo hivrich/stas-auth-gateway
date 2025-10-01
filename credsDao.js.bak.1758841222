@@ -1,0 +1,33 @@
+// credsDao.js — ICU креды по user_id (BIGINT id из токена)
+const { Pool } = require('pg');
+const PGURL = process.env.STAS_PGURL || process.env.STAS_DB_URL || process.env.DATABASE_URL;
+if (!PGURL) console.warn('[credsDao] STAS_PGURL/DATABASE_URL не задан');
+const pool = PGURL ? new Pool({ connectionString: PGURL }) : null;
+
+const norm = (r)=> r && (r.api_key||r.icu_api_key) && (r.athlete_id||r.icu_athlete_id)
+  ? { api_key: (r.api_key||r.icu_api_key), athlete_id: (r.athlete_id||r.icu_athlete_id) } : null;
+
+async function fromUser(user_id){
+  if (!pool) return null;
+  const { rows } = await pool.query(
+    `SELECT api_key, athlete_id FROM "user" WHERE id = $1::bigint LIMIT 1`,
+    [String(user_id)]
+  );
+  return norm(rows[0]);
+}
+async function fromGwCreds(user_id){
+  if (!pool) return null;
+  const { rows } = await pool.query(
+    `SELECT icu_api_key AS api_key,
+            icu_athlete_id AS athlete_id
+     FROM gw_user_creds WHERE user_id = $1::text LIMIT 1`,
+    [String(user_id)]
+  );
+  return norm(rows[0]);
+}
+async function getByUserId(user_id){
+  try { const a = await fromUser(user_id); if (a) return a; } catch(e){ console.error('[credsDao][user]', e.message||e); }
+  try { const b = await fromGwCreds(user_id); if (b) return b; } catch(e){ console.error('[credsDao][gw_user_creds]', e.message||e); }
+  return null;
+}
+module.exports = { getByUserId };

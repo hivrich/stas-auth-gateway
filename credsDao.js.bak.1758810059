@@ -1,0 +1,73 @@
+// credsDao.js — единая точка получения ICU-кредов по user_id
+// Поддерживает реальную схему: таблица "user" с колонкой user (JSONB), где user->>'user_id' = $1,
+// а также fallback в gw_user_creds (если используется).
+
+const { Pool } = require('pg');
+
+const PGURL =
+  process.env.STAS_PGURL ||
+  process.env.STAS_DB_URL ||
+  process.env.DATABASE_URL;
+
+if (!PGURL) {
+  console.warn('[credsDao] STAS_PGURL/DATABASE_URL не задан — доступ к БД может не работать');
+}
+
+const pool = PGURL ? new Pool({ connectionString: PGURL }) : null;
+
+// Нормализация объекта с кредами
+function normalize(row) {
+  if (!row) return null;
+  const api_key = row.api_key || row.icu_api_key || null;
+  const athlete_id = row.athlete_id || row.icu_athlete_id || null;
+  if (!api_key || !athlete_id) return null;
+  return { api_key, athlete_id };
+}
+
+async function getFromUserTable(user_id) {
+  if (!pool) return null;
+  // user_id хранится внутри JSONB-колонки "user"
+  const sql = `
+    SELECT api_key, athlete_id
+    FROM "user"
+    WHERE ( "user"->>'user_id' ) = $1
+    LIMIT 1
+  `;
+  const { rows } = await pool.query(sql, [String(user_id)]);
+  return normalize(rows[0]);
+}
+
+async function getFromGwUserCreds(user_id) {
+  if (!pool) return null;
+  // на всякий случай поддержим старые имена колонок
+  const sql = `
+    SELECT
+      COALESCE(api_key, icu_api_key)      AS api_key,
+      COALESCE(athlete_id, icu_athlete_id) AS athlete_id
+    FROM gw_user_creds
+    WHERE user_id = $1
+    LIMIT 1
+  `;
+  const { rows } = await pool.query(sql, [String(user_id)]);
+  return normalize(rows[0]);
+}
+
+async function getByUserId(user_id) {
+  // 1) основное хранилище — таблица "user"
+  try {
+    const a = await getFromUserTable(user_id);
+    if (a) return a;
+  } catch (e) {
+    console.error('[credsDao][user] error:', e.message || e);
+  }
+  // 2) fallback — gw_user_creds
+  try {
+    const b = await getFromGwUserCreds(user_id);
+    if (b) return b;
+  } catch (e) {
+    console.error('[credsDao][gw_user_creds] error:', e.message || e);
+  }
+  return null;
+}
+
+module.exports = { getByUserId };

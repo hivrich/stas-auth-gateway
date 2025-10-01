@@ -1,0 +1,27 @@
+/**
+ * Authorization: Bearer t_<base64url>{"uid":"<user_id>"}  → req.query.user_id, req.user_id, x-user-id
+ * Любой входящий ?user_id игнорируется.
+ */
+module.exports = function () {
+  return function (req, res, next) {
+    try {
+      const auth = String(req.headers['authorization'] || '');
+      if (!auth.startsWith('Bearer ')) return res.status(401).json({status:401,error:'missing_or_invalid_token'});
+      const tok = auth.slice(7).trim();
+      if (!tok.startsWith('t_'))       return res.status(401).json({status:401,error:'missing_or_invalid_token'});
+
+      const b64  = tok.slice(2).replace(/-/g,'+').replace(/_/g,'/');
+      const json = Buffer.from(b64, 'base64').toString('utf8');
+      let uid = null; try { uid = JSON.parse(json).uid; } catch(e) {}
+      if (!uid || !/^[0-9]+$/.test(String(uid))) return res.status(401).json({status:401,error:'missing_or_invalid_token'});
+
+      if (req.query && Object.prototype.hasOwnProperty.call(req.query,'user_id')) delete req.query.user_id;
+      req.query   = Object.assign({}, req.query, { user_id: String(uid) });
+      req.user_id = String(uid);
+      req.headers['x-user-id'] = String(uid);
+      next();
+    } catch (_e) {
+      return res.status(401).json({status:401,error:'missing_or_invalid_token'});
+    }
+  };
+};

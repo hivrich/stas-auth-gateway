@@ -1,0 +1,78 @@
+const express    = require('express');
+const express    = require('express');
+const bodyParser = require('body-parser');
+const cookieParser = require('cookie-parser');
+
+const bearerUid   = require('./routes/_bearer_uid');
+const uidInjectDb = require('./routes/_uid_inject_db');
+const dbProxy     = require('./routes/db_proxy');
+const stas        = require('./routes/stas');
+const icu         = require('./routes/icu');
+const openapi     = require('./routes/openapi');
+const oauth       = require('./routes/oauth');
+const oauthPage   = require('./middleware/oauth_page');
+const legacyAliases = require('./routes/legacy_aliases');
+
+const PORT = process.env.PORT || 3338;
+const app  = express();
+app.use(\x27/gw\x27, require(\x27./routes/icu_probe_open\x27)); console.log(\x27[dbg] icu_probe_open attached (no-auth)\x27)
+
+app.set('trust proxy', 1);
+app.use(cookieParser());
+app.use(bodyParser.json({ limit: '256kb' }));
+app.use(express.urlencoded({ extended: false }));
+
+// Health
+app.get('/gw/healthz', (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
+
+// OpenAPI → OAuth page → OAuth routes
+app.use('/gw', openapi);
+app.use('/gw/oauth', oauthPage());
+app.use('/gw', oauth);
+
+// Требуем Bearer для всех /gw/* (кроме bypass внутри мидлвары)
+app.use('/gw', bearerUid());
+
+// Наш фиксер ICU-плана должен идти ДО legacy и ДО основного icu-прокси
+app.use('/gw', require('./routes/icu_plan_fix'));
+
+// Legacy-алиасы (нормализация ответов коннектора)
+app.use('/gw', legacyAliases);
+
+// DB API
+app.use('/gw/api/db', uidInjectDb);
+app.use('/gw/api/db', dbProxy);
+app.use('/gw/api', stas);
+
+// ICU proxy (после того как user_id уже проставлен)
+try {
+  const attachIcuPostExact = require("./lib/icu_post_exact");
+  if (typeof attachIcuPostExact === "function") attachIcuPostExact(app);
+} catch(e) { console.error("[icu][POST] attach failed:", e && e.message); }
+
+try { const attachDelete = require("./lib/attach_delete"); if (typeof attachDelete === "function") attachDelete(app); }
+catch(e){ console.error("[icu][DELETE] attach failed:", e && e.message); }
+
+try { const attachPost = require("./lib/attach_post"); if (typeof attachPost === "function") attachPost(app); }
+catch(e){ console.error("[icu][POST] attach failed:", e && e.message); }
+
+app.use('/gw/icu', icu);
+
+// 404/500
+app.use((req, res) => res.status(404).json({ error: 'not_found', path: req.path }));
+app.use((err, _req, res, _next) => {
+  console.error('[ERR]', err && err.stack || err);
+  res.status(500).json({ error: 'internal_error' });
+});
+
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+try {
+  const attachIcuPostDryRun = require('./lib/icu_post_dryrun');
+  if (typeof attachIcuPostDryRun === 'function') {
+    attachIcuPostDryRun(app);
+    console.log('[icu][POST] /gw/icu/events (dry_run) attached');
+  }
+} catch (e) {
+  console.error('[icu][POST] attach failed:', e && e.message);
+}

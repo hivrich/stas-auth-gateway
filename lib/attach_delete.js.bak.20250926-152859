@@ -1,0 +1,66 @@
+module.exports = function attachDelete(app){
+  const fetch = global.fetch || require('node:node-fetch'); // node>=18 ок
+  const { URL, URLSearchParams } = require('node:url');
+
+  const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
+  const STAS_KEY  = process.env.STAS_KEY  ;
+
+  function uidFromBearerStrict(req){
+    const m = String(req.headers.authorization||'').match(/^Bearer\s+t_([A-Za-z0-9\-_]+)$/);
+    if(!m) return null;
+    try {
+      const json = JSON.parse(Buffer.from(m[1].replace(/-/g,'+').replace(/_/g,'/'),'base64').toString('utf8'));
+      return /^[0-9]+$/.test(String(json.uid)) ? String(json.uid) : null;
+    } catch { return null; }
+  }
+
+  app.delete('/gw/icu/events', async (req, res) => {
+    try {
+      const uid = uidFromBearerStrict(req);
+      if (!uid) return res.status(401).json({ status:401, error:'missing_or_invalid_token' });
+
+      // 1) creds из DB-bridge
+      const creds = new URL('/api/db/icu_creds', STAS_BASE); creds.searchParams.set('user_id', uid);
+      const cr = await fetch(creds, { headers: { 'X-API-Key': STAS_KEY, 'Accept': 'application/json' }});
+      if (!cr.ok) return res.status(cr.status).json({ error:'icu_creds_error' });
+      const { api_key, athlete_id } = await cr.json();
+      if (!api_key || !athlete_id) return res.status(404).json({ error:'icu_creds_not_found' });
+
+      // 2) параметры окна и префикс
+      const q = new URLSearchParams();
+      const oldest = String(req.query.oldest||'').trim();
+      const newest = String(req.query.newest||'').trim();
+      const prefix = String(req.query.external_id_prefix||'plan:');
+      if (!oldest || !newest) return res.status(400).json({ error:'bad_request', message:'oldest & newest required' });
+      q.set('oldest', oldest); q.set('newest', newest); q.set('external_id_prefix', prefix);
+      if (String(req.query.dry_run||'').toLowerCase()==='true') q.set('dry_run','true');
+
+      // 3) ICU DELETE
+      
+      // Intervals.icu требует category. По умолчанию planned,
+      // но если пришёл ?category=... — прокинем все значения (массивом).
+      {
+        const cats = req.query.category;
+        if (Array.isArray(cats)) {
+          for (const c of cats) q.append('category', String(c));
+        } else if (cats) {
+          q.append('category', String(cats));
+        } else {
+          q.append('category', 'planned');
+        }
+      }
+
+const basic  = Buffer.from(`API_KEY:${api_key}`).toString('base64');
+      const url = new URL(`/api/v1/athlete/${athlete_id}/events?${q.toString()}`, 'https://intervals.icu');
+      const r = await fetch(url, { method:'DELETE', headers:{ 'Authorization':`Basic ${basic}`, 'Accept':'application/json' }});
+      const txt = await r.text();
+      try { return res.status(r.status).json(JSON.parse(txt)); }
+      catch { return res.status(r.status).type(r.headers.get('content-type')||'text/plain').send(txt); }
+    } catch (e) {
+      console.error('[icu.delete]', e && e.stack || e);
+      return res.status(502).json({ error:'bad_gateway' });
+    }
+  });
+
+  console.log("[icu][DELETE] exact /gw/icu/events attached BEFORE proxy");
+};

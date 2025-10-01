@@ -1,0 +1,44 @@
+const express    = require('express');
+const bodyParser = require('body-parser');
+
+const bearerUid   = require('./routes/_bearer_uid');     // из Bearer → req.query.user_id
+const uidInjectDb = require('./routes/_uid_inject_db');  // совместимость для DB-прокси
+const dbProxy     = require('./routes/db_proxy');        // прокси к stas-db-bridge
+const stas        = require('./routes/stas');            // алиасы DB API
+const icu         = require('./routes/icu');             // ICU proxy
+const openapi     = require('./routes/openapi');
+const oauth       = require('./routes/oauth');
+
+const PORT = process.env.PORT || 3337;
+const app  = express();
+
+app.set('trust proxy', 1);
+app.use(bodyParser.json({ limit: '256kb' }));
+app.use(express.urlencoded({ extended: false }));
+
+// Health
+app.get('/gw/healthz', (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
+
+// OpenAPI & OAuth stubs
+app.use('/gw', openapi);
+app.use('/gw/oauth', oauth);
+
+// Глобально для всех /gw/* — требуем Bearer и проставляем user_id
+app.use('/gw', bearerUid());
+
+// DB API
+app.use('/gw/api/db', uidInjectDb);
+app.use('/gw/api/db', dbProxy);
+app.use('/gw/api', stas);
+
+// ICU proxy (уже есть req.query.user_id от bearerUid)
+app.use('/gw/icu', icu);
+
+// 404/500
+app.use((req, res) => res.status(404).json({ error: 'not_found', path: req.path }));
+app.use((err, _req, res, _next) => {
+  console.error('[ERR]', err && err.stack || err);
+  res.status(500).json({ error: 'internal_error' });
+});
+
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

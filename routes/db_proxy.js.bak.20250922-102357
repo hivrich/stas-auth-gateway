@@ -1,0 +1,213 @@
+const express = require('express');
+const router = express.Router();
+
+const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
+const STAS_KEY  = process.env.STAS_KEY  ;
+
+// ===== helpers =====
+function uidFromBearer(req){
+  const auth = String(req.headers['authorization'] || '');
+  const m = auth.match(/^Bearer\s+t_([A-Za-z0-9\-_]+)$/);
+  if(!m) return null;
+  try{
+    const b64 = m[1].replace(/-/g,'+').replace(/_/g,'/');
+    const json = JSON.parse(Buffer.from(b64,'base64').toString('utf8'));
+    return json && json.uid ? String(json.uid) : null;
+  }catch(_e){ return null; }
+}
+function clamp(n, lo, hi){
+  const x = Number(n); if (!Number.isFinite(x)) return lo;
+  return Math.max(lo, Math.min(hi, x));
+}
+function parseDate(s){ const d = new Date(s); return isNaN(d) ? null : d; }
+function asJsonSafe(txt){ try { return JSON.parse(txt); } catch(_e){ return null; } }
+
+// ===== main proxy =====
+router.use(async (req, res) => {
+  // Формируем URL к мосту
+  const rest = req.path.replace(/^\/+/, ''); // e.g. "trainings"
+  const url  = new URL(`/api/db/${rest}`, STAS_BASE);
+
+  const params = new URLSearchParams(req.query || {});
+  // Обязательный user_id: если нет — берем из Bearer
+  if (!params.get('user_id')) {
+    const uid = uidFromBearer(req);
+    if (!uid) return res.status(401).json({ status: 401, error: 'missing_or_invalid_token' });
+    params.set('user_id', uid);
+  }
+  // Прокидываем все query
+  for (const [k,v] of params.entries()) url.searchParams.set(k,v);
+
+  const started = Date.now();
+  console.log(`[db_proxy][REQ] ${req.method} /gw/api/db/${rest}${req.url.includes('?')?req.url.slice(req.url.indexOf('?')):''} → ${url.toString()}`);
+
+  const r = await fetch(url, { headers: { 'X-API-Key': STAS_KEY, 'Accept': 'application/json' }});
+  const bodyText = await r.text();
+  let outStatus = r.status;
+  let outHeaders = { 'content-type': r.headers.get('content-type') || 'application/json' };
+  let outBody = bodyText;
+
+  // === Горячий фикс: ужимаем trainings по окну дат и limit на стороне gateway ===
+  if (r.ok && rest === 'trainings' && outHeaders['content-type'].includes('application/json')) {
+    const src = asJsonSafe(bodyText);
+    if (src && typeof src === 'object') {
+      // ожидаемый формат: { ok, trainings:[...], count? }
+      const arr = Array.isArray(src.trainings) ? src.trainings : Array.isArray(src) ? src : null;
+      if (arr) {
+        const q = Object.fromEntries(params.entries());
+        const now = new Date();
+        const days = q.from || q.to ? null : clamp(q.days || 7, 1, 365);
+        const from = q.from ? parseDate(q.from) : (days ? new Date(now.getTime() - days*24*3600*1000) : null);
+        const to   = q.to   ? parseDate(q.to)   : null;
+        const limit = clamp(q.limit || 100, 1, 200);
+
+        // фильтрация по date (ISO в UTC)
+        let filtered = arr.filter(x => {
+          const d = x && x.date ? new Date(x.date) : null;
+          if (!d || isNaN(d)) return false;
+          if (from && d < from) return false;
+          if (to   && d >= to ) return false;
+          return true;
+        });
+
+        // сортировка по дате DESC (на всякий)
+        filtered.sort((a,b)=> new Date(b.date) - new Date(a.date));
+
+        // обрезаем до лимита
+        const sliced = filtered.slice(0, limit);
+
+        // заменяем payload в «объектном» формате
+        const slim = {
+          ok: src.ok !== false,
+          count: sliced.length,
+          trainings: sliced.map(t => ({
+            id: t.id,
+            date: t.date,
+            workout_type: t.workout_type,
+            distance: t.distance,
+            user_report: t.user_report,
+            training_load: t.training_load,
+            fitness: t.fitness,
+            fatigue: t.fatigue,
+            elevation_gain: t.elevation_gain,
+            intensity: t.intensity
+          }))
+        };
+
+        outBody = JSON.stringify(slim);
+        outHeaders['content-type'] = 'application/json; charset=utf-8';
+        console.log(`[db_proxy][FIX] trainings shrink: in=${arr.length} → out=${sliced.length} (days=${q.days||'-'} from=${q.from||'-'} to=${q.to||'-'} limit=${limit})`);
+      }
+    }
+  }
+
+  console.log(`[db_proxy][RES] ${outStatus} ${url.toString()} {bytes:${outBody.length}} ${Date.now()-started}ms`);
+  res.status(outStatus).set(outHeaders).send(outBody);
+});
+
+module.exports = router;
+
+const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
+const STAS_KEY  = process.env.STAS_KEY  ;
+
+// ===== helpers =====
+function uidFromBearer(req){
+  const auth = String(req.headers['authorization'] || '');
+  const m = auth.match(/^Bearer\s+t_([A-Za-z0-9\-_]+)$/);
+  if(!m) return null;
+  try{
+    const b64 = m[1].replace(/-/g,'+').replace(/_/g,'/');
+    const json = JSON.parse(Buffer.from(b64,'base64').toString('utf8'));
+    return json && json.uid ? String(json.uid) : null;
+  }catch(_e){ return null; }
+}
+function clamp(n, lo, hi){
+  const x = Number(n); if (!Number.isFinite(x)) return lo;
+  return Math.max(lo, Math.min(hi, x));
+}
+function parseDate(s){ const d = new Date(s); return isNaN(d) ? null : d; }
+function asJsonSafe(txt){ try { return JSON.parse(txt); } catch(_e){ return null; } }
+
+// ===== main proxy =====
+router.use(async (req, res) => {
+  // Формируем URL к мосту
+  const rest = req.path.replace(/^\/+/, ''); // e.g. "trainings"
+  const url  = new URL(`/api/db/${rest}`, STAS_BASE);
+
+  const params = new URLSearchParams(req.query || {});
+  // Обязательный user_id: если нет — берем из Bearer
+  if (!params.get('user_id')) {
+    const uid = uidFromBearer(req);
+    if (!uid) return res.status(401).json({ status: 401, error: 'missing_or_invalid_token' });
+    params.set('user_id', uid);
+  }
+  // Прокидываем все query
+  for (const [k,v] of params.entries()) url.searchParams.set(k,v);
+
+  const started = Date.now();
+  console.log(`[db_proxy][REQ] ${req.method} /gw/api/db/${rest}${req.url.includes('?')?req.url.slice(req.url.indexOf('?')):''} → ${url.toString()}`);
+
+  const r = await fetch(url, { headers: { 'X-API-Key': STAS_KEY, 'Accept': 'application/json' }});
+  const bodyText = await r.text();
+  let outStatus = r.status;
+  let outHeaders = { 'content-type': r.headers.get('content-type') || 'application/json' };
+  let outBody = bodyText;
+
+  // === Горячий фикс: ужимаем trainings по окну дат и limit на стороне gateway ===
+  if (r.ok && rest === 'trainings' && outHeaders['content-type'].includes('application/json')) {
+    const src = asJsonSafe(bodyText);
+    if (src && typeof src === 'object') {
+      // ожидаемый формат: { ok, trainings:[...], count? }
+      const arr = Array.isArray(src.trainings) ? src.trainings : Array.isArray(src) ? src : null;
+      if (arr) {
+        const q = Object.fromEntries(params.entries());
+        const now = new Date();
+        const days = q.from || q.to ? null : clamp(q.days || 7, 1, 365);
+        const from = q.from ? parseDate(q.from) : (days ? new Date(now.getTime() - days*24*3600*1000) : null);
+        const to   = q.to   ? parseDate(q.to)   : null;
+        const limit = clamp(q.limit || 100, 1, 200);
+
+        // фильтрация по date (ISO в UTC)
+        let filtered = arr.filter(x => {
+          const d = x && x.date ? new Date(x.date) : null;
+          if (!d || isNaN(d)) return false;
+          if (from && d < from) return false;
+          if (to   && d >= to ) return false;
+          return true;
+        });
+
+        // сортировка по дате DESC (на всякий)
+        filtered.sort((a,b)=> new Date(b.date) - new Date(a.date));
+
+        // обрезаем до лимита
+        const sliced = filtered.slice(0, limit);
+
+        // заменяем payload в «объектном» формате
+        const slim = {
+          ok: src.ok !== false,
+          count: sliced.length,
+          trainings: sliced.map(t => ({
+            id: t.id,
+            date: t.date,
+            workout_type: t.workout_type,
+            distance: t.distance,
+            user_report: t.user_report,
+            training_load: t.training_load,
+            fitness: t.fitness,
+            fatigue: t.fatigue,
+            elevation_gain: t.elevation_gain,
+            intensity: t.intensity
+          }))
+        };
+
+        outBody = JSON.stringify(slim);
+        outHeaders['content-type'] = 'application/json; charset=utf-8';
+        console.log(`[db_proxy][FIX] trainings shrink: in=${arr.length} → out=${sliced.length} (days=${q.days||'-'} from=${q.from||'-'} to=${q.to||'-'} limit=${limit})`);
+      }
+    }
+  }
+
+  console.log(`[db_proxy][RES] ${outStatus} ${url.toString()} {bytes:${outBody.length}} ${Date.now()-started}ms`);
+  res.status(outStatus).set(outHeaders).send(outBody);
+});
+
