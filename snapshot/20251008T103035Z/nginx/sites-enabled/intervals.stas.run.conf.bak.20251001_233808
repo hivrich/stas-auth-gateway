@@ -1,0 +1,15 @@
+server {
+    listen 80;
+    server_name intervals.stas.run 109.172.46.200;
+
+    location ^~ /.well-known/acme-challenge/ {
+        alias /var/www/letsencrypt/.well-known/acme-challenge/;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+
+    # Всё остальное — на HTTPS
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}

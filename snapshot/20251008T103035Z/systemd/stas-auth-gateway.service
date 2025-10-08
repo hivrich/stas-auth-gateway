@@ -1,0 +1,20 @@
+[Unit]
+Description=STAS Auth Gateway
+After=network.target
+
+[Service]
+User=hivr
+Group=hivr
+WorkingDirectory=/opt/stas-auth-gateway
+Environment=PORT=3337
+Environment=JWT_SECRET=dev-secret
+Environment=DEFAULT_USER_ID=95192039
+Environment=STAS_BASE=http://127.0.0.1:3336
+# Хранилище OAuth-кодов:
+Environment=OAUTH_CODES_PATH=/var/lib/stas-auth-gateway/oauth-codes.json
+ExecStart=/usr/bin/node /opt/stas-auth-gateway/server.js
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target

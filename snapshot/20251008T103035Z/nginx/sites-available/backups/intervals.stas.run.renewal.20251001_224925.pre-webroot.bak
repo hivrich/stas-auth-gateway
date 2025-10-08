@@ -1,0 +1,17 @@
+# renew_before_expiry = 30 days
+version = 2.9.0
+archive_dir = /etc/letsencrypt/archive/intervals.stas.run
+cert = /etc/letsencrypt/live/intervals.stas.run/cert.pem
+privkey = /etc/letsencrypt/live/intervals.stas.run/privkey.pem
+chain = /etc/letsencrypt/live/intervals.stas.run/chain.pem
+fullchain = /etc/letsencrypt/live/intervals.stas.run/fullchain.pem
+
+# Options used in the renewal process
+[renewalparams]
+account = 719182af2a17cb052d308dcfff16ea48
+authenticator = webroot
+webroot_path = /var/www/_letsencrypt,
+server = https://acme-v02.api.letsencrypt.org/directory
+key_type = ecdsa
+[[webroot_map]]
+intervals.stas.run = /var/www/_letsencrypt

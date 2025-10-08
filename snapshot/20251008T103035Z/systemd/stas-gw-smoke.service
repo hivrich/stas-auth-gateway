@@ -1,0 +1,6 @@
+[Unit]
+Description=STAS GW hourly smoke (GET + DRY-RUN DELETE)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/stas_gw_smoke.sh

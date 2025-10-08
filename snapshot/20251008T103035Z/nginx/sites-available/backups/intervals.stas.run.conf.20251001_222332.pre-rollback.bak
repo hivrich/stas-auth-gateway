@@ -1,0 +1,62 @@
+upstream gw_local { server 127.0.0.1:3338; keepalive 32; }
+
+map $http_x_canary $gw_upstream {
+  default http://127.0.0.1:3337;
+  1       http://127.0.0.1:3339;
+}
+
+server {
+  listen 80 default_server;
+  server_name intervals.stas.run;
+  return 301 https://$host$request_uri;
+    # GW catch-all (both /gw and /gw/..)
+    location ~* ^/gw(/|$) {
+        proxy_pass http://127.0.0.1:3338;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization $http_authorization;
+        proxy_http_version 1.1;
+    }
+}
+
+server {
+  listen 443 ssl http2 default_server;
+  server_name intervals.stas.run;
+
+  ssl_certificate     /etc/letsencrypt/live/intervals.stas.run/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/intervals.stas.run/privkey.pem;
+
+  # === BEGIN GPT window-delete compat (fixed position) ===
+  # Делает реальным удаление для ChatGPT-User, если клиент НЕ передал dry_run
+  location = /gw/icu/events {
+    set $final_args $args;
+    set $dry_fix 0;
+
+    if ($request_method = DELETE) {
+      if ($http_user_agent ~* "ChatGPT-User") {
+        if ($args !~ "(^|&)dry_run=") { set $dry_fix 1; }
+      }
+    }
+
+    if ($dry_fix = 1) {
+      if ($args = "") { set $final_args "dry_run=false"; }
+      if ($args != "") { set $final_args "$args&dry_run=false"; }
+    }
+
+    proxy_pass http://127.0.0.1:3338/gw/icu/events?$final_args;
+    proxy_set_header Authorization $http_authorization;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+  # === END GPT window-delete compat (fixed position) ===
+  location /gw/ {
+    proxy_pass http://127.0.0.1:3338/gw/;
+    proxy_set_header Authorization $http_authorization;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}

@@ -1,0 +1,26 @@
+[Unit]
+Description=MCP Proxy (stdio -> SSE) for Intervals MCP
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=root
+WorkingDirectory=/opt/mcp
+EnvironmentFile=/opt/mcp/.env
+ExecStart=/root/.local/bin/mcp-proxy \
+  --host 127.0.0.1 \
+  --port 3333 \
+  --allow-origin https://chatgpt.com \
+  --allow-origin https://chat.openai.com \
+  --pass-environment \
+  -e INTERVALS_API_BASE_URL https://intervals.icu/api/v1 \
+  -e INTERVALS_API_KEY 5roswoez0ryi6tmxh42tayk80 \
+  -e INTERVALS_ATHLETE_ID i297087 \
+  -e DEBUG true \
+  node /opt/mcp/dist/index.js
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
