@@ -1,0 +1,18 @@
+[Unit]
+Description=STAS DB Bridge
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/stas-db-bridge
+EnvironmentFile=/opt/stas-db-bridge/.env
+ExecStart=/usr/bin/node /opt/stas-db-bridge/db_bridge.js
+Restart=always
+RestartSec=2
+# Безопасность: слушаем только loopback, наружу не открываем.
+# Ограничения можно включить по мере стабилизации:
+# NoNewPrivileges=true
+# PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
