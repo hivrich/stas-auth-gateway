@@ -16,3 +16,7 @@ node_modules/
 .DS_Store
 *.swp
 *.swo
+.env
+activities/
+*.bak.*
+routes/*.bak.*
