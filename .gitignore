@@ -22,3 +22,4 @@ activities/
 routes/*.bak.*
 /activities/
 /routes/*.local.*
+/activities
