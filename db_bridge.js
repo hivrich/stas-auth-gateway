@@ -1,6 +1,6 @@
 "use strict";
 
-try { require('dotenv').config(); } catch (_) {/* no dotenv; env is provided by systemd EnvironmentFile */ }
+try { require("dotenv").config(); } catch (_) {/* no dotenv; env is provided by systemd EnvironmentFile */ }
 
 const express = require("express");
 const { Pool } = require("pg");
@@ -42,6 +42,17 @@ function parseDateLike(v) {
   if (!s) return null;
   // Ожидаем ISO/дату, Postgres сам распарсит корректные форматы через параметр
   return s;
+}
+
+function validateTextPayload(name, v, { maxBytes } = {}) {
+  if (typeof v !== "string") return { ok: false, error: `${name}_required` };
+  // Запрещаем нулевой байт (Postgres text его не принимает; плюс защита от мусора/бинарщины)
+  if (v.includes("\u0000")) return { ok: false, error: `${name}_invalid_null_byte` };
+
+  const bytes = Buffer.byteLength(v, "utf8");
+  if (maxBytes != null && bytes > maxBytes) return { ok: false, error: `${name}_too_large`, bytes, maxBytes };
+
+  return { ok: true, value: v, bytes };
 }
 
 const app = express();
@@ -166,6 +177,42 @@ app.get("/api/db/user_summary", async (req, res) => {
   } catch (e) {
     // колонка/таблица может отличаться — это не критично для восстановления trainings
     res.status(501).json({ ok: false, error: "not_available", detail: e.message });
+  }
+});
+
+// POST /api/db/strategy
+// Body: { user_id: int, strategy_text: string }
+// ВАЖНО: это внутренний endpoint, user_id сюда отдаёт gateway (внешний клиент до DB-bridge не должен добираться).
+// Пишем ТОЛЬКО public.user.strategy (text). Никаких strategy_json/user_summary и т.п.
+app.post("/api/db/strategy", async (req, res) => {
+  // Явно ожидаем JSON
+  if (!req.is("application/json")) {
+    return res.status(415).json({ error: "content_type_must_be_application_json" });
+  }
+
+  const user_id = asInt(req.body && req.body.user_id, null);
+  if (!user_id) return res.status(400).json({ error: "user_id_required" });
+
+  const v = validateTextPayload("strategy_text", req.body && req.body.strategy_text, { maxBytes: 16 * 1024 });
+  if (!v.ok) return res.status(400).json(v);
+
+  // Логи: только user_id и размер, без контента
+  const ts = new Date().toISOString();
+  console.log(`[strategy] ${ts} user_id=${user_id} bytes=${v.bytes}`);
+
+  const sql = `
+    UPDATE public.user
+    SET strategy = $1
+    WHERE id = $2
+    RETURNING id AS user_id, now() AS updated_at, octet_length(strategy) AS bytes
+  `;
+
+  try {
+    const r = await DB.query(sql, [v.value, user_id]);
+    if (!r.rows.length) return res.status(404).json({ error: "not_found" });
+    res.json({ ok: true, ...r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: "db_error", detail: e.message });
   }
 });
 
