@@ -24,7 +24,7 @@
     }
   ],
   "paths": {
-    "/gw/healthz": {
+    "/healthz": {
       "get": {
         "summary": "Health check",
         "operationId": "healthzGet",
@@ -56,7 +56,7 @@
         "security": []
       }
     },
-    "/gw/version": {
+    "/version": {
       "get": {
         "summary": "Gateway version",
         "operationId": "versionGet",
@@ -88,7 +88,7 @@
         "security": []
       }
     },
-    "/gw/api/db/user_summary": {
+    "/api/db/user_summary": {
       "get": {
         "summary": "Get user summary (user_id inferred from Bearer)",
         "operationId": "dbUserSummaryGet",
@@ -111,78 +111,20 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/gw/api/db/activities": {
-      "get": {
-        "summary": "List user activities",
-        "operationId": "dbActivitiesGet",
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "pattern": "^[0-9]+$"
-            }
-          },
-          {
-            "name": "days",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 365
-            }
-          },
-          {
-            "name": "from",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "date"
-            }
-          },
-          {
-            "name": "to",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "date"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Array of activities",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "additionalProperties": true
+                  "additionalProperties": false,
+                  "required": [
+                    "ok",
+                    "user_summary"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "user_summary": {
+                      "type": "object",
+                      "additionalProperties": true,
+                      "properties": {}
+                    }
                   }
                 }
               }
@@ -194,7 +136,8 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "additionalProperties": true
+                  "additionalProperties": true,
+                  "properties": {}
                 }
               }
             }
@@ -202,7 +145,7 @@
         }
       }
     },
-    "/gw/icu/events": {
+    "/icu/events": {
       "get": {
         "summary": "Intervals.icu events via gateway (user_id inferred from Bearer)",
         "operationId": "icuEventsGet",
@@ -254,7 +197,8 @@
                   "type": "array",
                   "items": {
                     "type": "object",
-                    "additionalProperties": true
+                    "additionalProperties": true,
+                    "properties": {}
                   }
                 }
               }
@@ -266,7 +210,8 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "additionalProperties": true
+                  "additionalProperties": true,
+                  "properties": {}
                 }
               }
             }
@@ -274,7 +219,7 @@
         }
       }
     },
-    "/gw/oauth/authorize": {
+    "/oauth/authorize": {
       "get": {
         "summary": "OAuth2 authorize (stubbed)",
         "operationId": "oauthAuthorizeGet",
@@ -339,7 +284,7 @@
         "security": []
       }
     },
-    "/gw/oauth/token": {
+    "/oauth/token": {
       "post": {
         "summary": "OAuth2 token (stub/PKCE)",
         "operationId": "oauthTokenPost",
@@ -423,13 +368,168 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "additionalProperties": true
+                  "additionalProperties": true,
+                  "properties": {}
                 }
               }
             }
           }
         },
         "security": []
+      }
+    },
+    "/strategy": {
+      "post": {
+        "summary": "Update user strategy text",
+        "operationId": "gwPostStrategy",
+        "description": "Updates public.user.strategy for the authenticated user (uid comes only from Bearer token; user_id in query/body is forbidden).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "strategy_text": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "strategy_text"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "user_id": {
+                      "type": "integer"
+                    },
+                    "updated_at": {
+                      "type": "string"
+                    },
+                    "length": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "415": {
+            "description": "Unsupported Media Type"
+          }
+        }
+      }
+    },
+    "/trainings": {
+      "get": {
+        "summary": "Load trainings (runs) for a date window",
+        "operationId": "trainingsGet",
+        "description": "Returns an array of trainings for the authenticated user. Use oldest/newest for non-overlapping windows. Use full=1 to request detailed payload.",
+        "parameters": [
+          {
+            "name": "oldest",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "description": "Start date (inclusive), YYYY-MM-DD"
+          },
+          {
+            "name": "newest",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "description": "End date (exclusive), YYYY-MM-DD"
+          },
+          {
+            "name": "full",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "enum": [
+                    0,
+                    1
+                  ]
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            },
+            "description": "If true/1 -> detailed payload"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "description": "Max items to return (server may cap)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
       }
     }
   }
