@@ -35,12 +35,18 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "ok": {"type": "boolean"},
+                    "ok": {
+                      "type": "boolean"
+                    },
                     "user_summary": {
                       "type": "object",
                       "properties": {
-                        "info": {"type": "string"},
-                        "goals": {"type": "string"}
+                        "info": {
+                          "type": "string"
+                        },
+                        "goals": {
+                          "type": "string"
+                        }
                       }
                     }
                   }
@@ -80,22 +86,39 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "ok": {"type": "boolean"},
+                    "ok": {
+                      "type": "boolean"
+                    },
                     "trainings": {
                       "type": "array",
                       "items": {
                         "type": "object",
                         "properties": {
-                          "id": {"type": "string"},
-                          "date": {"type": "string", "format": "date-time"},
-                          "workout_type": {"type": "string"},
-                          "distance": {"type": "string"},
-                          "training_load": {"type": "number"},
-                          "intensity": {"type": "string"}
+                          "id": {
+                            "type": "string"
+                          },
+                          "date": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "workout_type": {
+                            "type": "string"
+                          },
+                          "distance": {
+                            "type": "string"
+                          },
+                          "training_load": {
+                            "type": "number"
+                          },
+                          "intensity": {
+                            "type": "string"
+                          }
                         }
                       }
                     },
-                    "count": {"type": "integer"}
+                    "count": {
+                      "type": "integer"
+                    }
                   }
                 }
               }
@@ -144,10 +167,18 @@
                   "items": {
                     "type": "object",
                     "properties": {
-                      "id": {"type": "string"},
-                      "name": {"type": "string"},
-                      "start_date": {"type": "string"},
-                      "workout_type": {"type": "string"}
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "start_date": {
+                        "type": "string"
+                      },
+                      "workout_type": {
+                        "type": "string"
+                      }
                     }
                   }
                 }
@@ -176,10 +207,18 @@
                 "items": {
                   "type": "object",
                   "properties": {
-                    "id": {"type": "string"},
-                    "name": {"type": "string"},
-                    "start_date": {"type": "string"},
-                    "description": {"type": "string"}
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "start_date": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    }
                   }
                 }
               }
@@ -194,8 +233,12 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "ok": {"type": "boolean"},
-                    "received": {"type": "integer"}
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "received": {
+                      "type": "integer"
+                    }
                   }
                 }
               }
@@ -222,16 +265,26 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "status": {"type": "string"},
-                    "timestamp": {"type": "string"},
+                    "status": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    },
                     "services": {
                       "type": "array",
                       "items": {
                         "type": "object",
                         "properties": {
-                          "name": {"type": "string"},
-                          "status": {"type": "string"},
-                          "code": {"type": "integer"}
+                          "name": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "code": {
+                            "type": "integer"
+                          }
                         }
                       }
                     }
@@ -241,6 +294,188 @@
             }
           }
         }
+      }
+    },
+    "/api/db/activities_full": {
+      "get": {
+        "summary": "Get user trainings (full payload)",
+        "description": "Returns completed training sessions from local database including large jsonb fields (activity_plan, hr_zone_times, interval_summary, splits_km).",
+        "operationId": "getUserTrainingsFull",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "User ID from the system"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "description": "Max items (default 30, max 200)"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Offset (default 0)"
+          },
+          {
+            "name": "oldest",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Oldest date (YYYY-MM-DD)"
+          },
+          {
+            "name": "newest",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Newest date (YYYY-MM-DD)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of training sessions (full payload)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "trainings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "date": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "workout_type": {
+                            "type": "string"
+                          },
+                          "distance": {
+                            "type": "string"
+                          },
+                          "user_report": {
+                            "type": "string"
+                          },
+                          "ai_comment": {
+                            "type": "string"
+                          },
+                          "training_load": {
+                            "type": "number"
+                          },
+                          "fitness": {
+                            "type": "number"
+                          },
+                          "fatigue": {
+                            "type": "number"
+                          },
+                          "elevation_gain": {
+                            "type": "number"
+                          },
+                          "intensity": {
+                            "type": "string"
+                          },
+                          "icu_hr_zones": {
+                            "type": "string"
+                          },
+                          "avg_heartrate": {
+                            "type": "number"
+                          },
+                          "max_heartrate": {
+                            "type": "number"
+                          },
+                          "lactate_threshold_hr": {
+                            "type": "number"
+                          },
+                          "moving_time": {
+                            "type": "string"
+                          },
+                          "form": {
+                            "type": "string"
+                          },
+                          "user_id": {
+                            "type": "integer"
+                          },
+                          "pace": {
+                            "type": "string"
+                          },
+                          "activity_name": {
+                            "type": "string"
+                          },
+                          "activity_plan": {
+                            "type": [
+                              "object",
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "hr_zone_times": {
+                            "type": [
+                              "array",
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "interval_summary": {
+                            "type": [
+                              "array",
+                              "null"
+                            ]
+                          },
+                          "splits_km": {
+                            "type": [
+                              "array",
+                              "null"
+                            ]
+                          },
+                          "session_type": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "count": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     }
   },

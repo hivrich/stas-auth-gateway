@@ -76,8 +76,10 @@ app.get("/api/db/trainings", async (req, res) => {
   const user_id = asInt(req.query.user_id, null);
   if (!user_id) return res.status(400).json({ error: "user_id_required" });
 
-  const limit = asInt(req.query.limit, 30, { min: 1, max: 500 });
-  const offset = asInt(req.query.offset, 0, { min: 0, max: 100000 });
+  const wants_full = String(req.query.full || "") === "1";
+
+  const limit  = asInt(req.query.limit, 30, { min: 1, max: wants_full ? 200 : 500 });
+  const offset = asInt(req.query.offset, 0,  { min: 0, max: 100000 });
 
   const oldest = parseDateLike(req.query.oldest);
   const newest = parseDateLike(req.query.newest);
@@ -89,8 +91,19 @@ app.get("/api/db/trainings", async (req, res) => {
   if (oldest) { where.push(`date >= $${p++}`); params.push(oldest); }
   if (newest) { where.push(`date <= $${p++}`); params.push(newest); }
 
-  // slim-версия (без больших jsonb полей)
-  const sql = `
+  const sql = wants_full ? `
+    SELECT
+      id, date, workout_type, distance, user_report, ai_comment,
+      training_load, fitness, fatigue, elevation_gain, intensity,
+      icu_hr_zones, avg_heartrate, max_heartrate, lactate_threshold_hr,
+      moving_time, form, user_id, pace, activity_name, activity_plan,
+      hr_zone_times, interval_summary, splits_km,
+      session_type
+    FROM public.training
+    WHERE ${where.join(" AND ")}
+    ORDER BY date DESC, id DESC
+    LIMIT $${p++} OFFSET $${p++}
+  ` : `
     SELECT
       id, date, workout_type, distance, user_report, ai_comment,
       training_load, fitness, fatigue, elevation_gain, intensity,
