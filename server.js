@@ -1,7 +1,10 @@
 const express    = require('express');
 const bodyParser = require('body-parser');
 
-const bearerUid   = require('./routes/_bearer_uid');     // из Bearer → req.query.user_id
+const bearerUid   = require('./routes/_bearer_uid');     const legacyAliases = require('./routes/legacy_aliases');
+const trainingsRouter = require('./routes/trainings');
+const strategyRouter = require('./routes/strategy');
+// из Bearer → req.query.user_id
 const uidInjectDb = require('./routes/_uid_inject_db');  // совместимость для DB-прокси
 const dbProxy     = require('./routes/db_proxy');        // прокси к stas-db-bridge
 const stas        = require('./routes/stas');            // алиасы DB API
@@ -12,6 +15,22 @@ const oauth       = require('./routes/oauth');
 const PORT = process.env.PORT || 3337;
 const app  = express();
 const oauthPage = require("./middleware/oauth_page");
+// === compat: /gw/api/db/trainings -> 3336 /gw/trainings ===
+app.get("/gw/api/db/trainings", async (req, res) => {
+  try {
+    const qs = req.originalUrl.split("?",2)[1] || "";
+    const url = "http://127.0.0.1:3336/gw/trainings" + (qs ? ("?"+qs) : "");
+    const r = await fetch(url, { headers: { "Authorization": req.headers["authorization"] || "" } });
+    if (!r.ok) return res.status(r.status).json({ ok:false, status:r.status });
+    const j = await r.json();
+    // contract: object with trainings[]
+    return res.json({ trainings: Array.isArray(j) ? j : (Array.isArray(j.trainings) ? j.trainings : []) });
+  } catch (e) {
+    return res.status(500).json({ ok:false, error:"proxy_failed" });
+  }
+});
+
+
 app.use("/gw/oauth", oauthPage());
 const cookieParser = require("cookie-parser");
 app.use(cookieParser());
@@ -24,11 +43,19 @@ app.use(express.urlencoded({ extended: false }));
 app.get('/gw/healthz', (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
 
 // OpenAPI & OAuth stubs
-app.use('/gw', openapi);
-app.use('/gw/oauth', oauth);
+app.use('/gw', bearerUid());
+require("./routes/icu_post_passthru_gw")(app); // inserted passthru before real_gw
+require("./routes/icu_post_real_gw")(app); // exact ICU POST
+require("./routes/icu_delete_exact_gw")(app); // exact ICU DELETE
+require("./routes/icu_post_real_gw")(app); // exact ICU POST mounted after bearerUid
+app.use('/gw', trainingsRouter);
+app.use('/gw', strategyRouter);
+
+
+app.use('/gw', oauth);
 
 // Глобально для всех /gw/* — требуем Bearer и проставляем user_id
-app.use('/gw', bearerUid());
+app.use('/gw', legacyAliases);
 
 // DB API
 app.use('/gw/api/db', uidInjectDb);
@@ -54,6 +81,8 @@ catch(e){ console.error("[icu][POST] attach failed:", e && e.message); }
 app.use('/gw/icu', icu);
 
 // 404/500
+
+app.use('/gw', openapi);
 app.use((req, res) => res.status(404).json({ error: 'not_found', path: req.path }));
 app.use((err, _req, res, _next) => {
   console.error('[ERR]', err && err.stack || err);

@@ -1,0 +1,87 @@
+'use strict';
+const express = require('express');
+const r = express.Router();
+
+const enc = o => Buffer.from(JSON.stringify(o)).toString('base64url');
+const dec = b => { try { return JSON.parse(Buffer.from(b,'base64url').toString('utf8')); } catch { return null; } };
+const isUid = s => /^\d{3,}$/.test(String(s||'').trim());
+const safe = v => { try { return decodeURIComponent(String(v||'')); } catch { return String(v||''); } };
+
+function renderLoginHTML(qstr, err){
+  return [
+    '<!doctype html><html><head><meta charset="utf-8"><title>Authorize</title>',
+    '<meta name="viewport" content="width=device-width,initial-scale=1"/>',
+    '<style>body{font-family:system-ui,Segoe UI,Roboto,Arial;margin:2rem} .card{max-width:560px;border:1px solid #ddd;border-radius:12px;padding:20px} input,button{padding:10px;font-size:16px;width:100%} .row{margin:10px 0} .err{color:#b91c1c}</style>',
+    '</head><body><div class="card"><h2>STAS Auth — Connect</h2>',
+    '<form method="POST" action="/gw/oauth/authorize?', qstr, '">',
+    '<div class="row"><input name="uid" inputmode="numeric" placeholder="например, 95192039" required></div>',
+    err?'<div class="row err">ID должен содержать только цифры и быть не короче 3 символов</div>':'',
+    '<div class="row"><button type="submit">Войти</button></div>',
+    '</form></div></body></html>'
+  ].join('');
+}
+
+// принять form-urlencoded в POST-е этого роутера
+r.use(express.urlencoded({extended:false}));
+
+// GET /gw/oauth/authorize → если есть uid+redirect_uri — отдать 302 с ?code=...
+r.get('/oauth/authorize', (req,res)=>{
+  const redirect_raw = String(req.query.redirect_uri||'');
+  const redirect_uri = safe(redirect_raw);
+  const state = String(req.query.state||'');
+  const uid = String(req.query.uid||'').trim();
+
+  if (redirect_uri && isUid(uid)) {
+    const code = 'c_' + enc({ uid, ts: Date.now() });
+    const base = redirect_uri.split('#')[0].trim();
+    const sep  = base.includes('?') ? '&' : '?';
+    const loc  = base + sep + 'code=' + encodeURIComponent(code) + (state ? '&state=' + encodeURIComponent(state) : '');
+    console.log('[oauth][302]', loc);
+    return res.status(302).set('Location', loc).end();
+  }
+
+  const qstr = new URLSearchParams({
+    response_type: String(req.query.response_type||'code'),
+    client_id: String(req.query.client_id||''),
+    redirect_uri: redirect_raw, // оставляем encoded
+    scope: String(req.query.scope||''),
+    state
+  }).toString();
+
+  return res.type('html').send(renderLoginHTML(qstr, !!req.query.err));
+});
+
+// POST /gw/oauth/authorize → uid в body, redirect_uri в query → 302
+r.post('/oauth/authorize', (req,res)=>{
+  const redirect_raw = String(req.query.redirect_uri||'');
+  const redirect_uri = safe(redirect_raw);
+  const state = String(req.query.state||'');
+  const uid = String(req.body.uid||'').trim();
+
+  if (!redirect_uri) return res.status(400).json({ status:400, error:'invalid_redirect_uri' });
+  if (!isUid(uid))   return res.redirect('/gw/oauth/authorize?' + new URLSearchParams({ ...req.query, err:'1' }).toString());
+
+  const code = 'c_' + enc({ uid, ts: Date.now() });
+  const base = redirect_uri.split('#')[0].trim();
+  const sep  = base.includes('?') ? '&' : '?';
+  const loc  = base + sep + 'code=' + encodeURIComponent(code) + (state ? '&state=' + encodeURIComponent(state) : '');
+  console.log('[oauth][302]', loc);
+  return res.status(302).set('Location', loc).end();
+});
+
+// POST /gw/oauth/token → обмен кода на t_<...>
+r.post('/oauth/token', (req,res)=>{
+  const gt = String(req.body.grant_type||'');
+  const code = String(req.body.code||'');
+  if (gt !== 'authorization_code' || !code.startsWith('c_')) {
+    return res.status(400).json({ error:'invalid_request', error_description:'unsupported_grant_or_code' });
+  }
+  const obj = dec(code.slice(2));
+  if (!obj || !isUid(obj.uid)) {
+    return res.status(400).json({ error:'invalid_grant', error_description:'code not found' });
+  }
+  const access_token = 't_' + enc({ uid: String(obj.uid) });
+  return res.json({ access_token, token_type:'Bearer', expires_in: 315360000 });
+});
+
+module.exports = r;

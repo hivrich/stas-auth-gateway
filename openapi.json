@@ -1,146 +1,639 @@
 {
   "openapi": "3.1.0",
-  "info": { "title": "STAS Auth Gateway", "version": "0.1.1", "description": "Gateway for STAS DB Bridge and Intervals.icu proxy" },
-  "servers": [ { "url": "https://intervals.stas.run", "description": "Prod" } ],
-  "security": [ { "oauth2": ["read:me","icu","workouts:write"] } ],
+  "info": {
+    "title": "Intervals/STAS Gateway API",
+    "description": "OAuth-protected gateway for STAS DB and Intervals.icu. user_id extracted from JWT token, no client-side user_id required.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://intervals.stas.run"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
   "paths": {
-    "/gw/healthz": {
+    "/gw/api/me": {
       "get": {
-        "summary": "Health check",
-        "operationId": "healthzGet",
+        "operationId": "getMe",
+        "summary": "Get current user identity from JWT token",
         "responses": {
-          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HealthzResponse" } } } }
+          "200": {
+            "description": "User identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "user_id": {
+                      "type": "integer"
+                    },
+                    "athlete_id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
         },
-        "security": []
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
-    "/gw/version": {
+    "/gw/api/db/user_summary": {
       "get": {
-        "summary": "Gateway version",
-        "operationId": "versionGet",
+        "operationId": "getUserSummary",
+        "summary": "Get user summary from STAS DB (user_id from JWT token)",
         "responses": {
-          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VersionResponse" } } } }
+          "200": {
+            "description": "User summary data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "user_summary": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
         },
-        "security": []
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
-    "/gw/oauth/authorize": {
+    "/gw/api/db/trainings": {
       "get": {
-        "summary": "OAuth2 authorize (user_id form)",
-        "operationId": "oauthAuthorizeGet",
+        "operationId": "getUserTrainings",
+        "summary": "Get user trainings from STAS DB (user_id from JWT token)",
         "parameters": [
-          { "name": "response_type", "in": "query", "required": true, "schema": { "type": "string", "enum": ["code"] } },
-          { "name": "client_id", "in": "query", "required": true, "schema": { "type": "string" } },
-          { "name": "redirect_uri", "in": "query", "required": true, "schema": { "type": "string", "format": "uri" } },
-          { "name": "scope", "in": "query", "required": false, "schema": { "type": "string" } },
-          { "name": "state", "in": "query", "required": false, "schema": { "type": "string" } }
+          {
+            "name": "days",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 30
+            }
+          },
+          {
+            "name": "full",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "If set to \"1\", returns full training payload (includes activity_plan, hr_zone_times, interval_summary, splits_km)."
+          }
         ],
         "responses": {
-          "200": { "description": "HTML form asking for user_id", "content": { "text/html": { "schema": { "type": "string" } } } }
+          "200": {
+            "description": "Training sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "trainings": {
+                      "type": "array"
+                    }
+                  }
+                }
+              }
+            }
+          }
         },
-        "security": []
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
-    "/gw/oauth/token": {
+    "/gw/icu/events": {
+      "get": {
+        "operationId": "getPlannedWorkouts",
+        "summary": "Get planned workouts from Intervals.icu (athlete_id from JWT token)",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 60
+            }
+          },
+          {
+            "name": "oldest",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "newest",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Planned workouts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "start_date": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
       "post": {
-        "summary": "OAuth2 token (stub/PKCE)",
-        "operationId": "oauthTokenPost",
+        "operationId": "createPlannedWorkouts",
+        "summary": "Create planned workouts in Intervals.icu (requires workouts:write scope)",
+        "parameters": [
+          {
+            "name": "dry_run",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          {
+            "name": "external_id_prefix",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
-            "application/x-www-form-urlencoded": {
+            "application/json": {
               "schema": {
                 "type": "object",
                 "properties": {
-                  "grant_type": { "type": "string", "enum": ["authorization_code","client_credentials","refresh_token"] },
-                  "client_id": { "type": "string" },
-                  "redirect_uri": { "type": "string", "format": "uri" },
-                  "code": { "type": "string" },
-                  "code_verifier": { "type": "string" },
-                  "refresh_token": { "type": "string" }
-                },
-                "required": ["grant_type"]
+                  "events": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "category": {
+                          "type": "string",
+                          "enum": [
+                            "WORKOUT"
+                          ]
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "RUN",
+                            "BIKE",
+                            "SWIM"
+                          ]
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "start_date_local": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
           }
         },
         "responses": {
-          "200": { "description": "Access token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OAuthTokenResponse" } } } },
-          "400": { "description": "Error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+          "200": {
+            "description": "Bulk operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "dry_run": {
+                      "type": "boolean"
+                    },
+                    "created": {
+                      "type": "integer"
+                    },
+                    "skipped": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
         },
-        "security": []
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
-    "/gw/api/db/user_summary": {
+    "/gw/trainings": {
       "get": {
-        "summary": "Get user summary (user_id inferred from Bearer)",
-        "operationId": "dbUserSummaryGet",
+        "summary": "Load trainings (runs) for a date window",
+        "operationId": "trainingsGet",
+        "description": "Returns an array of trainings for the authenticated user. Use oldest/newest for non-overlapping windows. Use full=1 to request detailed payload.",
         "parameters": [
-          { "name": "user_id", "in": "query", "required": false, "schema": { "type": "string", "pattern": "^[0-9]+$" }, "description": "If omitted, server infers from Bearer token" }
+          {
+            "name": "oldest",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "description": "Start date (inclusive), YYYY-MM-DD"
+          },
+          {
+            "name": "newest",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "description": "End date (exclusive), YYYY-MM-DD"
+          },
+          {
+            "name": "full",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            },
+            "description": "If true -> detailed payload"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "description": "Max items to return (server may cap)"
+          }
         ],
         "responses": {
-          "200": { "description": "User summary object", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UserSummary" } } } },
-          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
-        }
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "date": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "workout_type": {
+                        "type": "string"
+                      },
+                      "distance": {
+                        "type": "string"
+                      },
+                      "user_report": {
+                        "type": "string"
+                      },
+                      "ai_comment": {
+                        "type": "string"
+                      },
+                      "training_load": {
+                        "type": "number"
+                      },
+                      "fitness": {
+                        "type": "number"
+                      },
+                      "fatigue": {
+                        "type": "number"
+                      },
+                      "elevation_gain": {
+                        "type": "number"
+                      },
+                      "intensity": {
+                        "type": "string"
+                      },
+                      "icu_hr_zones": {
+                        "type": "string"
+                      },
+                      "avg_heartrate": {
+                        "type": "number"
+                      },
+                      "max_heartrate": {
+                        "type": "number"
+                      },
+                      "lactate_threshold_hr": {
+                        "type": "number"
+                      },
+                      "moving_time": {
+                        "type": "string"
+                      },
+                      "form": {
+                        "type": "string"
+                      },
+                      "user_id": {
+                        "type": "integer"
+                      },
+                      "pace": {
+                        "type": "string"
+                      },
+                      "activity_name": {
+                        "type": "string"
+                      },
+                      "session_type": {
+                        "oneOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "activity_plan": {
+                        "oneOf": [
+                          {
+                            "type": "object"
+                          },
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "hr_zone_times": {
+                        "oneOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "integer"
+                            }
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "interval_summary": {
+                        "oneOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "splits_km": {
+                        "oneOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "km": {
+                                  "type": "number"
+                                },
+                                "pace": {
+                                  "type": "string"
+                                },
+                                "hr": {
+                                  "type": "number"
+                                }
+                              },
+                              "additionalProperties": true
+                            }
+                          },
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
-    "/gw/api/db/activities": {
-      "get": {
-        "summary": "List user activities (fallbacks to activities_full/trainings)",
-        "operationId": "dbActivitiesGet",
-        "parameters": [
-          { "name": "user_id", "in": "query", "required": false, "schema": { "type": "string", "pattern": "^[0-9]+$" } },
-          { "name": "days", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 365 } },
-          { "name": "from", "in": "query", "required": false, "schema": { "type": "string", "format": "date" } },
-          { "name": "to",   "in": "query", "required": false, "schema": { "type": "string", "format": "date" } }
-        ],
+    "/gw/strategy": {
+      "post": {
+        "summary": "Update user strategy text",
+        "operationId": "gwPostStrategy",
+        "description": "Updates public.user.strategy for the authenticated user (uid comes only from Bearer token; user_id in query/body is forbidden).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "strategy_text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "strategy_text"
+                ]
+              }
+            }
+          }
+        },
         "responses": {
-          "200": { "description": "Array of activities", "content": { "application/json": { "schema": { "type": "array", "items": { "type": "object", "additionalProperties": true } } } } },
-          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
-        }
-      }
-    },
-    "/gw/icu/events": {
-      "get": {
-        "summary": "Intervals.icu events via gateway (user_id inferred from Bearer)",
-        "operationId": "icuEventsGet",
-        "parameters": [
-          { "name": "user_id", "in": "query", "required": false, "schema": { "type": "string", "pattern": "^[0-9]+$" } },
-          { "name": "days",   "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 365 } },
-          { "name": "oldest", "in": "query", "required": false, "schema": { "type": "string", "format": "date" } },
-          { "name": "newest", "in": "query", "required": false, "schema": { "type": "string", "format": "date" } }
-        ],
-        "responses": {
-          "200": { "description": "Array of events", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IcuEventsResponse" } } } },
-          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
-        }
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "user_id": {
+                      "type": "integer"
+                    },
+                    "bytes": {
+                      "type": "integer"
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     }
   },
   "components": {
     "securitySchemes": {
-      "oauth2": {
-        "type": "oauth2",
-        "flows": {
-          "authorizationCode": {
-            "authorizationUrl": "https://intervals.stas.run/gw/oauth/authorize",
-            "tokenUrl": "https://intervals.stas.run/gw/oauth/token",
-            "scopes": {
-              "read:me": "Read profile",
-              "icu": "Access ICU proxy endpoints",
-              "workouts:write": "Write workouts / plans"
-            }
-          }
-        }
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
       }
     },
     "schemas": {
-      "HealthzResponse": { "type": "object", "properties": { "ok": { "type": "boolean" }, "ts": { "type": "string", "format": "date-time" } }, "required": ["ok"], "additionalProperties": false },
-      "VersionResponse": { "type": "object", "properties": { "name": { "type": "string" }, "version": { "type": "string" }, "ts": { "type": "string", "format": "date-time" } }, "additionalProperties": false },
-      "OAuthTokenResponse": { "type": "object", "properties": { "access_token": { "type": "string" }, "token_type": { "type": "string", "enum": ["Bearer"] }, "expires_in": { "type": "integer" }, "scope": { "type": "string" } }, "required": ["access_token","token_type","expires_in"], "additionalProperties": false },
-      "ErrorResponse": { "type": "object", "properties": { "error": { "type": "string" }, "error_description": { "type": "string" }, "message": { "type": "string" } }, "additionalProperties": true },
-      "UserSummary": { "type": "object", "additionalProperties": true },
-      "IcuEventsResponse": { "type": "array", "items": { "type": "object", "additionalProperties": true } }
+      "Training": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "workout_type": {
+            "type": "string"
+          },
+          "distance": {
+            "type": "string"
+          },
+          "training_load": {
+            "type": "number"
+          },
+          "fitness": {
+            "type": "number"
+          },
+          "fatigue": {
+            "type": "number"
+          },
+          "elevation_gain": {
+            "type": "number"
+          },
+          "intensity": {
+            "type": "string"
+          },
+          "user_report": {
+            "type": "string"
+          }
+        }
+      }
     }
   }
 }

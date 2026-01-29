@@ -1,124 +1,290 @@
 {
   "openapi": "3.1.0",
-  "info": { "title": "STAS Gateway (Actions Inline)", "version": "0.1.3" },
-  "servers": [ { "url": "https://intervals.stas.run" } ],
+  "info": {
+    "title": "STAS Gateway (Actions Inline)",
+    "version": "0.1.3"
+  },
+  "servers": [
+    {
+      "url": "https://intervals.stas.run/gw"
+    }
+  ],
   "components": {
     "securitySchemes": {
-      "oauth2": {
-        "type": "oauth2",
-        "flows": {
-          "authorizationCode": {
-            "authorizationUrl": "https://intervals.stas.run/gw/oauth/authorize",
-            "tokenUrl": "https://intervals.stas.run/gw/oauth/token",
-            "scopes": {
-              "read:me": "Read profile",
-              "icu": "Access ICU proxy endpoints",
-              "workouts:write": "Write workouts / plans"
-            }
-          }
-        }
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
       }
     },
     "schemas": {}
   },
-  "security": [ { "oauth2": ["read:me","icu","workouts:write"] } ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
   "paths": {
-    "/gw/healthz": {
+    "/healthz": {
       "get": {
         "summary": "Health check",
         "operationId": "healthzGet",
         "responses": {
           "200": {
             "description": "OK",
-            "content": { "application/json": { "schema": {
-              "type": "object",
-              "required": ["ok"],
-              "additionalProperties": false,
-              "properties": { "ok": { "type": "boolean" }, "ts": { "type": "string", "format": "date-time" } }
-            }}}
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "ts": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "security": []
       }
     },
-    "/gw/version": {
+    "/version": {
       "get": {
         "summary": "Gateway version",
         "operationId": "versionGet",
         "responses": {
           "200": {
             "description": "OK",
-            "content": { "application/json": { "schema": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": { "name": { "type": "string" }, "version": { "type": "string" }, "ts": { "type": "string", "format": "date-time" } }
-            }}}
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "string"
+                    },
+                    "ts": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "security": []
       }
     },
-    "/gw/api/db/user_summary": {
+    "/api/db/user_summary": {
       "get": {
         "summary": "Get user summary (user_id inferred from Bearer)",
         "operationId": "dbUserSummaryGet",
         "parameters": [
-          { "name": "user_id", "in": "query", "required": false, "schema": { "type": "string", "pattern": "^[0-9]+$" }, "description": "If omitted, server infers from Bearer token" }
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "If omitted, server infers from Bearer token"
+          }
         ],
         "responses": {
-          "200": { "description": "User summary object", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
-          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } }
+          "200": {
+            "description": "User summary object",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "ok",
+                    "user_summary"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "user_summary": {
+                      "type": "object",
+                      "additionalProperties": true,
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {}
+                }
+              }
+            }
+          }
         }
       }
     },
-    "/gw/api/db/activities": {
-      "get": {
-        "summary": "List user activities",
-        "operationId": "dbActivitiesGet",
-        "parameters": [
-          { "name": "user_id", "in": "query", "required": false, "schema": { "type": "string", "pattern": "^[0-9]+$" } },
-          { "name": "days", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 365 } },
-          { "name": "from", "in": "query", "required": false, "schema": { "type": "string", "format": "date" } },
-          { "name": "to",   "in": "query", "required": false, "schema": { "type": "string", "format": "date" } }
-        ],
-        "responses": {
-          "200": { "description": "Array of activities", "content": { "application/json": { "schema": { "type": "array", "items": { "type": "object", "additionalProperties": true } } } } },
-          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } }
-        }
-      }
-    },
-    "/gw/icu/events": {
+    "/icu/events": {
       "get": {
         "summary": "Intervals.icu events via gateway (user_id inferred from Bearer)",
         "operationId": "icuEventsGet",
         "parameters": [
-          { "name": "user_id", "in": "query", "required": false, "schema": { "type": "string", "pattern": "^[0-9]+$" } },
-          { "name": "days",   "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 365 } },
-          { "name": "oldest", "in": "query", "required": false, "schema": { "type": "string", "format": "date" } },
-          { "name": "newest", "in": "query", "required": false, "schema": { "type": "string", "format": "date" } }
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 365
+            }
+          },
+          {
+            "name": "oldest",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "newest",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
         ],
         "responses": {
-          "200": { "description": "Array of events", "content": { "application/json": { "schema": { "type": "array", "items": { "type": "object", "additionalProperties": true } } } } },
-          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } }
+          "200": {
+            "description": "Array of events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "properties": {}
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {}
+                }
+              }
+            }
+          }
         }
       }
     },
-    "/gw/oauth/authorize": {
+    "/oauth/authorize": {
       "get": {
         "summary": "OAuth2 authorize (stubbed)",
         "operationId": "oauthAuthorizeGet",
         "parameters": [
-          { "name": "response_type", "in": "query", "required": true, "schema": { "type": "string", "enum": ["code"] } },
-          { "name": "client_id", "in": "query", "required": true, "schema": { "type": "string" } },
-          { "name": "redirect_uri", "in": "query", "required": true, "schema": { "type": "string", "format": "uri" } },
-          { "name": "scope", "in": "query", "required": false, "schema": { "type": "string" } },
-          { "name": "state", "in": "query", "required": false, "schema": { "type": "string" } }
+          {
+            "name": "response_type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "code"
+              ]
+            }
+          },
+          {
+            "name": "client_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "redirect_uri",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
-        "responses": { "200": { "description": "HTML", "content": { "text/html": { "schema": { "type": "string" } } } } },
+        "responses": {
+          "200": {
+            "description": "HTML",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
         "security": []
       }
     },
-    "/gw/oauth/token": {
+    "/oauth/token": {
       "post": {
         "summary": "OAuth2 token (stub/PKCE)",
         "operationId": "oauthTokenPost",
@@ -128,14 +294,34 @@
             "application/x-www-form-urlencoded": {
               "schema": {
                 "type": "object",
-                "required": ["grant_type"],
+                "required": [
+                  "grant_type"
+                ],
                 "properties": {
-                  "grant_type": { "type": "string", "enum": ["authorization_code","client_credentials","refresh_token"] },
-                  "client_id": { "type": "string" },
-                  "redirect_uri": { "type": "string", "format": "uri" },
-                  "code": { "type": "string" },
-                  "code_verifier": { "type": "string" },
-                  "refresh_token": { "type": "string" }
+                  "grant_type": {
+                    "type": "string",
+                    "enum": [
+                      "authorization_code",
+                      "client_credentials",
+                      "refresh_token"
+                    ]
+                  },
+                  "client_id": {
+                    "type": "string"
+                  },
+                  "redirect_uri": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "code": {
+                    "type": "string"
+                  },
+                  "code_verifier": {
+                    "type": "string"
+                  },
+                  "refresh_token": {
+                    "type": "string"
+                  }
                 },
                 "additionalProperties": false
               }
@@ -143,14 +329,207 @@
           }
         },
         "responses": {
-          "200": { "description": "Access token", "content": { "application/json": { "schema": {
-            "type":"object","required":["access_token","token_type","expires_in"],
-            "properties":{"access_token":{"type":"string"},"token_type":{"type":"string","enum":["Bearer"]},"expires_in":{"type":"integer"},"scope":{"type":"string"}},
-            "additionalProperties":false
-          }}}},
-          "400": { "description": "Error", "content": { "application/json": { "schema": { "type":"object","additionalProperties":true } } } }
+          "200": {
+            "description": "Access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "access_token",
+                    "token_type",
+                    "expires_in"
+                  ],
+                  "properties": {
+                    "access_token": {
+                      "type": "string"
+                    },
+                    "token_type": {
+                      "type": "string",
+                      "enum": [
+                        "Bearer"
+                      ]
+                    },
+                    "expires_in": {
+                      "type": "integer"
+                    },
+                    "scope": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {}
+                }
+              }
+            }
+          }
         },
         "security": []
+      }
+    },
+    "/strategy": {
+      "post": {
+        "summary": "Update user strategy text",
+        "operationId": "gwPostStrategy",
+        "description": "Updates public.user.strategy for the authenticated user (uid comes only from Bearer token; user_id in query/body is forbidden).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "strategy_text": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "strategy_text"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "user_id": {
+                      "type": "integer"
+                    },
+                    "updated_at": {
+                      "type": "string"
+                    },
+                    "length": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "415": {
+            "description": "Unsupported Media Type"
+          }
+        }
+      }
+    },
+    "/trainings": {
+      "get": {
+        "summary": "Load trainings (runs) for a date window",
+        "operationId": "trainingsGet",
+        "description": "Returns an array of trainings for the authenticated user. Use oldest/newest for non-overlapping windows. Use full=1 to request detailed payload.",
+        "parameters": [
+          {
+            "name": "oldest",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "description": "Start date (inclusive), YYYY-MM-DD"
+          },
+          {
+            "name": "newest",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "description": "End date (exclusive), YYYY-MM-DD"
+          },
+          {
+            "name": "full",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "enum": [
+                    0,
+                    1
+                  ]
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            },
+            "description": "If true/1 -> detailed payload"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "description": "Max items to return (server may cap)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
       }
     }
   }

@@ -1,0 +1,526 @@
+{
+  "components": {
+    "schemas": {
+      "IcuEvent": {
+        "additionalProperties": true,
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "end_date_local": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "external_id": {
+            "type": "string"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "start_date_local": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "Training": {
+        "additionalProperties": true,
+        "properties": {
+          "date": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "distance": {
+            "type": "string"
+          },
+          "elevation_gain": {
+            "type": "number"
+          },
+          "fatigue": {
+            "type": "number"
+          },
+          "fitness": {
+            "type": "number"
+          },
+          "id": {
+            "type": "string"
+          },
+          "intensity": {
+            "type": "string"
+          },
+          "training_load": {
+            "type": "number"
+          },
+          "user_report": {
+            "type": "string"
+          },
+          "workout_type": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "UserSummary": {
+        "additionalProperties": true,
+        "properties": {
+          "condition": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "doc_text": {
+            "type": "string"
+          },
+          "goals": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "info": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "pace_journal": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "preferences": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "strategy": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "bearerFormat": "JWT",
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "title": "STAS Gateway",
+    "version": "2025-09-26"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/db/user_summary": {
+      "get": {
+        "operationId": "getUserSummary",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "user_summary": {
+                      "$ref": "#/components/schemas/UserSummary"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Object with user_summary"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "gwHealthzGet",
+        "responses": {
+          "200": {
+            "description": "ok"
+          }
+        }
+      }
+    },
+    "/icu/events": {
+      "delete": {
+        "operationId": "deleteIcuEvents",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "external_id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Delete only events with this external_id prefix.",
+            "example": "plan:",
+            "in": "query",
+            "name": "external_id_prefix",
+            "required": true,
+            "schema": {
+              "default": "plan:",
+              "type": "string"
+            }
+          },
+          {
+            "description": "UTC date YYYY-MM-DD (inclusive, start of window)",
+            "in": "query",
+            "name": "oldest",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "description": "UTC date YYYY-MM-DD (inclusive, end of window)",
+            "in": "query",
+            "name": "newest",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "description": "If true, only simulate (no delete).",
+            "example": true,
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "count": {
+                      "type": "integer"
+                    },
+                    "deleted": {
+                      "items": {
+                        "$ref": "#/components/schemas/IcuEvent"
+                      },
+                      "type": "array"
+                    },
+                    "dry_run": {
+                      "type": "boolean"
+                    },
+                    "failed": {
+                      "items": {
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Delete result"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "get": {
+        "operationId": "listIcuEvents",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "days",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "oldest",
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "newest",
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "category",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "external_id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "external_id_prefix",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/IcuEvent"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Array of ICU events"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "postIcuEvents",
+        "parameters": [
+          {
+            "description": "Apply this prefix to created events external_id.",
+            "example": "plan:",
+            "in": "query",
+            "name": "external_id_prefix",
+            "required": true,
+            "schema": {
+              "default": "plan:",
+              "type": "string"
+            }
+          },
+          {
+            "description": "If true, only simulate (no write).",
+            "example": false,
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "events": {
+                    "items": {
+                      "$ref": "#/components/schemas/IcuEvent"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "events"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "count": {
+                      "type": "integer"
+                    },
+                    "created": {
+                      "items": {
+                        "$ref": "#/components/schemas/IcuEvent"
+                      },
+                      "type": "array"
+                    },
+                    "dry_run": {
+                      "type": "boolean"
+                    },
+                    "errors": {
+                      "items": {
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Write result"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/oauth/authorize": {
+      "get": {
+        "operationId": "gwOauthAuthorizeGet",
+        "responses": {
+          "302": {
+            "description": "redirect"
+          }
+        }
+      }
+    },
+    "/oauth/token": {
+      "post": {
+        "operationId": "gwOauthTokenPost",
+        "responses": {
+          "200": {
+            "description": "ok"
+          }
+        }
+      }
+    },
+    "/trainings": {
+      "get": {
+        "operationId": "trainingsListGet",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "days",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "oldest",
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "newest",
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Return detailed fields from activities_full",
+            "in": "query",
+            "name": "full",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Training"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Array of Training"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List user trainings (array; user_id from Bearer)"
+      }
+    }
+  },
+  "servers": [
+    {
+      "description": "Prod GW base",
+      "url": "https://intervals.stas.run/gw"
+    }
+  ]
+}

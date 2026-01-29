@@ -27,7 +27,7 @@ module.exports = app => {
     if (!uid) return res.status(401).json({ status:401, error:'missing_or_invalid_token' });
 
     const from = clamp(req.query.from), to = clamp(req.query.to);
-    const u = new URL(`${BASE}/api/db/trainings`);
+    const u = new URL(`${BASE}/gw/trainings`);
     u.searchParams.set('user_id', uid);
     if (from) u.searchParams.set('from', from);
     if (to)   u.searchParams.set('to', to);

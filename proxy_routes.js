@@ -31,7 +31,7 @@ function setupProxyRoutes(app) {
   app.use('/api', authenticateTokenMiddleware, async (req, res) => {
     try {
       const uid = req.uid;
-      const apiKey = process.env.STAS_API_KEY || '7ca1e3d9d8bb76a1297a9c7d9e39d5eaf4d0d6da249440eea43bb50ff0fddf27';
+      const apiKey = process.env.STAS_API_KEY ;
       
       // Добавляем user_id к URL
       const url = new URL(`http://127.0.0.1:3336${req.originalUrl}`);

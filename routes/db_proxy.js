@@ -3,7 +3,7 @@ const router  = express.Router();
 
 // === Config to STAS DB Bridge ===
 const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
-const STAS_KEY  = process.env.STAS_KEY  || '7ca1e3d9d8bb76a1297a9c7d9e39d5eaf4d0d6da249440eea43bb50ff0fddf27';
+const STAS_KEY  = process.env.STAS_KEY  ;
 
 // === Helpers ===
 function uidFromBearer(req) {

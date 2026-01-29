@@ -1,0 +1,69 @@
+const { Router } = require('express');
+const fetch = global.fetch || require('node-fetch');
+const credsDao = require('../credsDao');
+
+const ICU_BASE = process.env.ICU_API_BASE_URL || 'https://intervals.icu/api/v1';
+
+const r = Router();
+// Совместимый контракт: GET /gw/icu/plan?oldest&newest -> массив
+\1
+  try { res.set('X-Route','icu_plan_fix'); } catch(e){}
+
+  try {
+    const user_id = String(req.query.user_id || req.user_id || '').trim();
+    const oldest  = String(req.query.oldest || '').trim();
+    const newest  = String(req.query.newest || '').trim();
+    if (!user_id) return res.status(401).json({ error:'missing_or_invalid_token' });
+    if (!oldest || !newest) return res.status(400).json({ error:'invalid_date_range' });
+
+    const creds = await credsDao.getByUserId(user_id);
+    if (!creds || !creds.api_key || !creds.athlete_id) {
+      console.warn('[icu_plan_fix] no creds for user', user_id);
+      return res.json([]); // совместимо
+    }
+
+    const icuUrl = `${ICU_BASE}/athlete/${encodeURIComponent(creds.athlete_id)}/calendar?oldest=${encodeURIComponent(oldest)}&newest=${encodeURIComponent(newest)}`;
+    const rr = await fetch(icuUrl, { headers: { 'X-API-Key': creds.api_key } });
+    if (!rr.ok) {
+      const txt = await rr.text().catch(()=> '');
+      console.error('[icu_plan_fix] ICU fetch failed', rr.status, txt);
+      return res.status(502).json({ error:'icu_fetch_failed', status: rr.status });
+    }
+    const data = await rr.json();
+    try { console.log('[icu_plan_fix][DBG] user', user_id, 'athlete', creds.athlete_id, 'key.len', String(creds.api_key||'').length, 'URL', icuUrl, 'len', Array.isArray(data)?data.length:'?'); } catch(e){}
+    if (Array.isArray(data)) {
+      console.log('[icu_plan_fix] ok user', user_id, 'len', data.length);
+      return res.json(data);
+    }
+    return res.json([]);
+  } catch (e) {
+    console.error('[icu_plan_fix] error', e && (e.stack || e));
+    res.status(500).json({ error:'internal_error' });
+  }
+});
+
+module.exports = r;
+
+
+r.get('/icu/plan/_probe', async (req,res)=>{
+  try{
+    const user_id = String(req.query.user_id || req.user_id || '').trim();
+    const oldest  = String(req.query.oldest || '').trim();
+    const newest  = String(req.query.newest || '').trim();
+    const creds = await require('../credsDao').getByUserId(user_id);
+    const ICU_BASE = process.env.ICU_API_BASE_URL || 'https://intervals.icu/api/v1';
+    const icuUrl = (creds && creds.athlete_id) ? `${ICU_BASE}/athlete/${encodeURIComponent(creds.athlete_id)}/calendar?oldest=${encodeURIComponent(oldest)}&newest=${encodeURIComponent(newest)}` : null;
+    res.set('X-Route','icu_plan_fix');
+    res.json({
+      ok:true,
+      user_id, oldest, newest,
+      have_creds: !!(creds && creds.api_key && creds.athlete_id),
+      athlete_id: creds && creds.athlete_id || null,
+      api_key_len: creds && String(creds.api_key||'').length || 0,
+      icu_url: icuUrl
+    });
+  }catch(e){
+    console.error('[icu_plan_fix][_probe] error', e && (e.stack||e));
+    res.status(500).json({ok:false,error:'internal_error'});
+  }
+});

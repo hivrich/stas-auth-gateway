@@ -1,0 +1,71 @@
+const express = require(express);
+const router  = express.Router();
+
+async function readDbBridgeApiKey() {
+  const fs = require(fs);
+  if (process.env.DB_BRIDGE_API_KEY) return process.env.DB_BRIDGE_API_KEY;
+  try {
+    const raw = fs.readFileSync(/opt/stas-db-bridge/.env, utf8);
+    const line = (raw.split(/\r?\n/).find(x => /^API_KEY=/.test(x)) || ).split(=,2)[1] || ;
+    return String(line).trim();
+  } catch { return ; }
+}
+
+function uidFromReq(req) {
+  return req.user_id || (req.bearer && req.bearer.uid) || req.query.user_id || null;
+}
+
+/**
+ * GET /gw/trainings
+ * - default: компактный список (DB-Bridge /api/db/trainings)
+ * - full=1|true: детальный список (DB-Bridge /api/db/activities_full)
+ *
+ * Важно: не зависим от наличия API_KEY; если ключ есть — добавляем X-API-Key,
+ * если нет — всё равно пробуем (внутренний loopback обычно разрешён).
+ */
+router.get(/trainings, async (req, res) => {
+  try {
+    const { URLSearchParams } = require(node:url);
+    const uid = uidFromReq(req);
+    if (!uid) return res.json([]);
+
+    const qs = new URLSearchParams();
+    qs.set(user_id, String(uid));
+    for (const k of [days,oldest,newest,limit,offset]) {
+      if (req.query[k] != null && req.query[k] !== ) qs.set(k, String(req.query[k]));
+    }
+
+    const wantFull =
+      String(req.query.full || ) === 1 ||
+      String(req.query.full || ).toLowerCase() === true;
+
+    const apiKey = await readDbBridgeApiKey();
+    const headers = { Accept: application/json };
+    if (apiKey) headers[X-API-Key] = apiKey;
+
+    if (wantFull) {
+      const urlFull = `http://127.0.0.1:3336/api/db/activities_full?${qs.toString()}`;
+      const rFull = await fetch(urlFull, { headers });
+      if (rFull.ok) {
+        const j = await rFull.json();
+        const arr = Array.isArray(j.activities) ? j.activities
+                  : Array.isArray(j.trainings)  ? j.trainings
+                  : Array.isArray(j)            ? j
+                  : [];
+        return res.json(arr);
+      }
+      // если full не удался — падаем в summary
+    }
+
+    const urlSlim = `http://127.0.0.1:3336/api/db/trainings?${qs.toString()}`;
+    const rSlim = await fetch(urlSlim, { headers });
+    if (!rSlim.ok) return res.json([]);
+    const j2 = await rSlim.json();
+    return res.json(Array.isArray(j2.trainings) ? j2.trainings : (Array.isArray(j2) ? j2 : []));
+
+  } catch (_e) {
+    return res.json([]);
+  }
+});
+
+module.exports = router;

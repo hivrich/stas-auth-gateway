@@ -56,7 +56,7 @@ echo "Создание .env файлов..."
 cat >/opt/stas-db-bridge/.env <<'ENV'
 API_KEY=7ca1e3d9d8bb76a1297a9c7d9e39d5eaf4d0d6da249440eea43bb50ff0fddf27
 PORT=3336
-DB_HOST=94.241.141.239
+DB_HOST=147.45.156.24
 DB_PORT=5432
 DB_NAME=hivrich_db
 DB_USER=limpid_beaker67
@@ -69,7 +69,7 @@ cat >/opt/mcp-bridge/.env <<'ENV'
 PORT=3334
 DEBUG=true
 EXTERNAL_API_KEY=e63ad0c93b969a864f5f16addfdad55eaabee376f1641b64
-DB_HOST=94.241.141.239
+DB_HOST=147.45.156.24
 DB_PORT=5432
 DB_NAME=hivrich_db
 DB_USER=limpid_beaker67

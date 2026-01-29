@@ -27,3 +27,19 @@ router.get('/db/activities_full', requireUserId, (req, res) => pipeProxy(STAS_BA
 router.get('/db/user_summary',    requireUserId, (req, res) => pipeProxy(STAS_BASE, req, res, {'X-API-Key': STAS_KEY}, rw));
 
 module.exports = router;
+// explicit: /gw/api/db/user_summary → DB-Bridge
+router.get('/api/db/user_summary', async (req, res) => {
+  try {
+    const { URLSearchParams } = require('node:url');
+    const fs = require('fs');
+    const qs = new URLSearchParams();
+    const uid = (req.user_id) || (req.bearer && req.bearer.uid) || req.query.user_id;
+    if (uid) qs.set('user_id', String(uid));
+    const env = fs.readFileSync('/opt/stas-db-bridge/.env','utf8');
+    const apikey = (env.split(/\r?\n/).find(x=>/^API_KEY=/.test(x))||'').split('=',2)[1].trim();
+    const r = await fetch(`http://127.0.0.1:3336/api/db/user_summary?${qs.toString()}`, { headers: { 'X-API-Key': apikey }});
+    if (!r.ok) return res.status(r.status).json({ ok:false, status:r.status });
+    const j = await r.json();
+    return res.json(j);
+  } catch(e) { return res.status(500).json({ ok:false, error:'user_summary_proxy_error' }); }
+});

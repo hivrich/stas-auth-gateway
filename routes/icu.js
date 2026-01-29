@@ -2,7 +2,7 @@ const express = require('express');
 const router  = express.Router();
 
 const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
-const STAS_KEY  = process.env.STAS_KEY  || '7ca1e3d9d8bb76a1297a9c7d9e39d5eaf4d0d6da249440eea43bb50ff0fddf27';
+const STAS_KEY  = process.env.STAS_KEY  ;
 
 function uidFromBearerStrict(req){
   const auth = String(req.headers['authorization'] || '');
@@ -40,9 +40,9 @@ router.get('/events', async (req, res) => {
     if (!qs.has('days') && !qs.has('oldest') && !qs.has('newest')) qs.set('days','7');
 
     const icuUrl = new URL(`/api/v1/athlete/${athlete_id}/events?${qs.toString()}`, 'https://intervals.icu');
-    const basic  = Buffer.from(`API_KEY:${api_key}`).toString('base64');
+  try { console.log("[icu][DBG] GET", icuUrl, { athlete_id, has_key: !!(api_key) }); } catch(e){}
 
-    const ir  = await fetch(icuUrl, { headers: { 'Authorization': `Basic ${basic}`, 'Accept': 'application/json' }});
+    const ir  = await fetch(icuUrl, { headers: { 'Authorization': `Bearer ${api_key}`, 'Accept': 'application/json' }});
     const txt = await ir.text();
     const ct  = ir.headers.get('content-type') || 'application/json; charset=utf-8';
 

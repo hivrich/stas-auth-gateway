@@ -19,8 +19,8 @@ async function icuProxy(req, res, path, methodOverride) {
     }
 
     // Strict per-user creds
-    const creds = await getIcuCredsByUserId(req.user_id);
-    if (!creds || !creds.icu_api_key || !creds.icu_athlete_id) {
+    const creds = await credsDao.getByUserId(user_id);
+    if (!creds || !creds.api_key || !creds.athlete_id) {
       return res.status(403).json({
         error: 'forbidden',
         detail: 'No ICU credentials bound to this user_id'
@@ -29,7 +29,7 @@ async function icuProxy(req, res, path, methodOverride) {
 
     // Build target
     const incoming = new URL(req.originalUrl, `http://${req.headers.host}` );
-    const target   = new URL(`${ICU_BASE}/athlete/${encodeURIComponent(creds.icu_athlete_id)}/${path}` );
+    const target   = new URL(`${ICU_BASE}/athlete/${encodeURIComponent(creds.athlete_id)}/${path}` );
     incoming.searchParams.forEach((v, k) => target.searchParams.set(k, v));
 
     // Simple fallback without fetch - just return mock data for now
@@ -38,7 +38,7 @@ async function icuProxy(req, res, path, methodOverride) {
       ok: true,
       message: 'ICU proxy not fully configured yet',
       target_url: target.toString(),
-      athlete_id: creds.icu_athlete_id
+      athlete_id: creds.athlete_id
     });
   } catch (e) {
     console.error('[ICU proxy error]', e);

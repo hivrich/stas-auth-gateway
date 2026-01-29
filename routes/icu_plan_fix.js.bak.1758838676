@@ -1,0 +1,83 @@
+const express = require('express');
+const r = express.Router();
+const { getCreds2 } = require('../credsDao');
+
+const ICU_BASE = process.env.ICU_API_BASE_URL || 'https://intervals.icu/api/v1';
+
+function b64urlToUtf8(s){
+  try {
+    // base64url → base64
+    const b64 = s.replace(/-/g,'+').replace(/_/g,'/').replace(/\s+/g,'');
+    const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+    return Buffer.from(b64 + pad, 'base64').toString('utf8');
+  } catch(_e){ return ''; }
+}
+
+function uidFromBearer(req){
+  const h = req.headers && (req.headers.authorization || req.headers.Authorization);
+  if (!h || !/^Bearer\s+/i.test(h)) return null;
+  let raw = h.replace(/^Bearer\s+/i,'').trim();
+  if (raw.startsWith('t_')) raw = raw.slice(2);
+  const txt = b64urlToUtf8(raw);
+  try {
+    const json = JSON.parse(txt);
+    const uid = json.uid || json.user_id || json.sub || null;
+    return uid ? String(uid) : null;
+  } catch(_e){ return null; }
+}
+
+function pickUid(req){
+  if (req.auth && (req.auth.user_id || req.auth.uid)) return String(req.auth.user_id || req.auth.uid);
+  const fromBearer = uidFromBearer(req);
+  if (fromBearer) return fromBearer;
+  if (req.query && (req.query.user_id || req.query.uid)) return String(req.query.user_id || req.query.uid);
+  if (req.headers['x-user-id']) return String(req.headers['x-user-id']);
+  return null;
+}
+
+r.get('/icu/plan', async (req, res) => {
+  res.set('X-Route','icu_plan_fix');
+  try {
+    const oldest = String(req.query.oldest || '').trim();
+    const newest = String(req.query.newest || '').trim();
+    const uid    = pickUid(req);
+    if (uid) res.set('X-ICU-Uid', uid);
+
+    if (!uid || !oldest || !newest) {
+      res.set('X-ICU-Status', 'skip-no-uid-or-range');
+      return res.json([]);
+    }
+
+    const creds = await getCreds2(uid).catch(()=>null);
+    const apiKey  = creds && creds.api_key;
+    const athlete = creds && creds.athlete_id;
+    res.set('X-ICU-Creds', apiKey && athlete ? 'ok' : 'missing');
+
+    if (!apiKey || !athlete) {
+      res.set('X-ICU-Status', 'skip-no-creds');
+      return res.json([]);
+    }
+
+    const url  = `${ICU_BASE}/athlete/${encodeURIComponent(athlete)}/events?oldest=${encodeURIComponent(oldest)}&newest=${encodeURIComponent(newest)}`;
+    const auth = 'Basic ' + Buffer.from(`API_KEY:${apiKey}`).toString('base64');
+
+    const rr = await fetch(url, { headers: { Authorization: auth } });
+    res.set('X-ICU-Status', String(rr.status));
+    if (!rr.ok) {
+      const body = await rr.text().catch(()=> '');
+      return res.status(502).json({ ok:false, source:'icu', status: rr.status, body: (body||'').slice(0,400) });
+    }
+
+    let data = await rr.json().catch(()=> []);
+    const len = Array.isArray(data) ? data.length : 0;
+    res.set('X-ICU-Len', String(len));
+    if (!Array.isArray(data)) data = [];
+    return res.json(data);
+  } catch (e) {
+    console.error('[icu_plan_fix][ERR]', e && (e.stack||e));
+    res.set('X-ICU-Status','exception');
+    return res.json([]);
+  }
+});
+
+module.exports = r;

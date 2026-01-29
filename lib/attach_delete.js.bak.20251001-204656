@@ -1,0 +1,133 @@
+'use strict';
+
+function getUidFromReq(req){
+  if (req && req.uid) return String(req.uid);
+  const h = (req.headers && (req.headers.authorization || req.headers.Authorization)) || '';
+  const m = /^Bearer\s+t_([A-Za-z0-9\-_]+)$/.exec(h);
+  if (!m) return null;
+  const b64url = m[1].trim();
+  const b64 = b64url.replace(/-/g,'+').replace(/_/g,'/') + '=='.slice((b64url.length % 4) || 0);
+  try { const json = JSON.parse(Buffer.from(b64, 'base64').toString('utf8')); return (json && json.uid!=null) ? String(json.uid) : null; }
+  catch(e){ return null; }
+}
+
+async function listViaLocalProxy(req, oldest, newest, prefixOpt){
+  const port = (process.env.PORT && Number(process.env.PORT)) || req.socket.localPort || 3339;
+  const url = new URL(`http://127.0.0.1:${port}/gw/icu/events`);
+  if (oldest) url.searchParams.set('oldest', oldest);
+  if (newest) url.searchParams.set('newest', newest);
+  if (prefixOpt) url.searchParams.set('external_id_prefix', prefixOpt);
+  const r = await fetch(url, { headers: { Authorization: req.headers.authorization || '' }});
+  if (!r.ok) {
+    const t = await r.text().catch(()=> '');
+    return { ok:false, status:r.status, body:t.slice(0,800) };
+  }
+  const items = await r.json();
+  return { ok:true, items };
+}
+
+function jsonPreview(x){ try{ return JSON.parse(x); }catch{ return (x||'').slice(0,800); } }
+
+module.exports = function attachDelete(app) {
+  console.log('[icu][DELETE] exact /gw/icu/events (bulk) attached (PER-ID DELETE)');
+
+  const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
+  const STAS_KEY  = process.env.STAS_KEY;
+  const ICU_BASE  = process.env.INTERVALS_API_BASE_URL || 'https://intervals.icu/api/v1';
+
+  app.delete('/gw/icu/events', async (req, res) => {
+  // GPT compat: force real delete for window-delete when UA=ChatGPT-User and dry_run is missing
+  app.use("/gw/icu/events", (req, _res, next) => {
+    try {
+      const ua = (req.get && req.get("user-agent")) || req.headers["user-agent"] || "";
+      const isChatGPT = /ChatGPT-User/i.test(ua);
+      const hasId = !!(req.query && req.query.id);
+      const hasPrefix = !!(req.query && typeof req.query.external_id_prefix === "string" && req.query.external_id_prefix.length);
+      const hasDry = Object.prototype.hasOwnProperty.call((req.query||{}), "dry_run");
+      if (req.method === "DELETE" && isChatGPT && !hasId && hasPrefix && !hasDry) {
+        req.query.dry_run = "false";
+        if (req.log) req.log.info({gpt_window_delete:true}, "[icu][DELETE] GPT compat: forcing dry_run=false");
+      }
+    } catch(e) { /* noop */ }
+    return next();
+  });
+    try {
+      const uid = getUidFromReq(req);
+      if (!uid) return res.status(401).json({ ok:false, error:'missing_or_invalid_token' });
+
+      const q = new URLSearchParams(req.query);
+      const dryRun = q.get('dry_run') !== 'false';
+      const oldest = q.get('oldest') || '';
+      const newest = q.get('newest') || '';
+      const prefix = q.get('external_id_prefix') || '';
+      const exactExternal = (q.getAll('external_id') || []).flatMap(v => String(v).split(',').map(s => s.trim()).filter(Boolean));
+      const exactIds = (q.getAll('id') || []).flatMap(v => String(v).split(',').map(s => s.trim()).filter(Boolean));
+
+      // creds из DB-Bridge (только для удаления; листинг — через локальный GET-прокси)
+      const credsResp = await fetch(`${STAS_BASE}/api/db/icu_creds?user_id=${encodeURIComponent(uid)}`, {
+        headers: { 'X-API-Key': STAS_KEY }
+      });
+      if (!credsResp.ok) {
+        const txt = await credsResp.text().catch(()=> '');
+        return res.status(502).json({ ok:false, stage:'icu_creds', status:credsResp.status, body:txt.slice(0,800) });
+      }
+      const creds = await credsResp.json();
+      const apiKey = creds.api_key || (creds.data && creds.data.api_key);
+      const athleteId = creds.athlete_id || (creds.data && creds.data.athlete_id);
+      if (!apiKey || !athleteId) return res.status(500).json({ ok:false, error:'icu_creds_not_found' });
+
+      // ВАЖНО: для Basic юзернейм "API_KEY", пароль = apiKey (по докам)
+      const basic = 'Basic ' + Buffer.from(`API_KEY:${apiKey}`).toString('base64');
+
+      // Сбор кандидатов к удалению
+      let toDeleteIds = [...exactIds];
+      let meta = { matched_by:'exact' };
+
+      if (exactExternal.length) {
+        const r = await listViaLocalProxy(req, oldest, newest, null);
+        if (!r.ok) return res.status(502).json({ ok:false, stage:'list_for_exact_external', status:r.status, body:r.body });
+        const map = new Map(r.items.map(ev => [String(ev.external_id||''), String(ev.id)]));
+        exactExternal.forEach(x => { const id = map.get(x); if (id) toDeleteIds.push(id); });
+        meta = { matched_by:'external_id', requested: exactExternal.length, resolved: toDeleteIds.length };
+      } else if (prefix) {
+        const r = await listViaLocalProxy(req, oldest, newest, prefix);
+        if (!r.ok) return res.status(502).json({ ok:false, stage:'list_for_prefix', status:r.status, body:r.body });
+        // ДВОЙНАЯ страховка: дополнительно фильтруем по external_id локально
+        const filtered = r.items.filter(ev => (ev.external_id || '').startsWith(prefix));
+        toDeleteIds = filtered.map(ev => String(ev.id));
+        meta = { matched_by:'prefix', prefix, window:{ oldest, newest } };
+      }
+
+      toDeleteIds = [...new Set(toDeleteIds)].filter(Boolean);
+
+      if (dryRun) {
+        return res.json({ ok:true, dry_run:true, uid, prefix, window:{ oldest, newest }, to_delete:{ count: toDeleteIds.length, ids: toDeleteIds.slice(0,200) }});
+      }
+
+      // Реальное удаление: по одному событию
+      const results = [];
+      for (const evId of toDeleteIds) {
+        const delUrl = `${ICU_BASE}/athlete/${encodeURIComponent(athleteId)}/events/${encodeURIComponent(evId)}`;
+        const r = await fetch(delUrl, { method:'DELETE', headers:{ Authorization: basic }});
+        const bodyTxt = await r.text().catch(()=> '');
+        results.push({ id:evId, ok:r.ok, status:r.status, body: jsonPreview(bodyTxt) });
+        if (!r.ok) break; // максимально консервативно: стоп на первой ошибке
+      }
+      const okAll = results.every(x => x.ok);
+      const deleted = results.filter(x => x.ok).map(x => x.id);
+
+      return res.status(okAll?200:502).json({
+        ok: okAll,
+        dry_run: false,
+        uid,
+        ...meta,
+        deleted_count: deleted.length,
+        deleted_ids: deleted.slice(0,200),
+        failed: results.filter(x => !x.ok).slice(0,5) // короткий хвост ошибок
+      });
+    } catch(e){
+      console.error('[icu][DELETE] error', e);
+      return res.status(500).json({ ok:false, error:e.message });
+    }
+  });
+};

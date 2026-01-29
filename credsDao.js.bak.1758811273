@@ -1,0 +1,51 @@
+// credsDao.js — получение ICU кредов по user_id
+const { Pool } = require('pg');
+
+const PGURL = process.env.STAS_PGURL || process.env.STAS_DB_URL || process.env.DATABASE_URL;
+if (!PGURL) console.warn('[credsDao] STAS_PGURL/DATABASE_URL не задан');
+
+const pool = PGURL ? new Pool({ connectionString: PGURL }) : null;
+
+function normalize(row){
+  if (!row) return null;
+  const api_key = row.api_key || row.icu_api_key || null;
+  const athlete_id = row.athlete_id || row.icu_athlete_id || null;
+  if (!api_key || !athlete_id) return null;
+  return { api_key, athlete_id };
+}
+
+async function getFromUserTable(user_id){
+  if (!pool) return null;
+  const sql = `
+    SELECT api_key, athlete_id
+    FROM "user"
+    WHERE ("user"->>'user_id') = $1
+    LIMIT 1
+  `;
+  const { rows } = await pool.query(sql, [String(user_id)]);
+  return normalize(rows[0]);
+}
+
+async function getFromGwUserCreds(user_id){
+  if (!pool) return null;
+  const sql = `
+    SELECT
+      COALESCE(api_key, icu_api_key)       AS api_key,
+      COALESCE(athlete_id, icu_athlete_id) AS athlete_id
+    FROM gw_user_creds
+    WHERE user_id = $1
+    LIMIT 1
+  `;
+  const { rows } = await pool.query(sql, [String(user_id)]);
+  return normalize(rows[0]);
+}
+
+async function getByUserId(user_id){
+  try { const a = await getFromUserTable(user_id); if (a) return a; }
+  catch(e){ console.error('[credsDao][user]', e.message || e); }
+  try { const b = await getFromGwUserCreds(user_id); if (b) return b; }
+  catch(e){ console.error('[credsDao][gw_user_creds]', e.message || e); }
+  return null;
+}
+
+module.exports = { getByUserId };

@@ -1,0 +1,37 @@
+'use strict';
+const { Pool } = require('pg');
+let pool; const getPool = () => pool ?? (pool = new Pool({ connectionString: process.env.STAS_PGURL }));
+const yes = v => /^(1|true|yes|on)$/i.test((v??'').toString());
+const normAthlete = v => (v ? (String(v).trim().startsWith('i') ? String(v).trim() : `i${String(v).trim()}`) : null);
+const b64 = key => `Basic ${Buffer.from(`API_KEY:${key}`).toString('base64')}`;
+function uidFromBearer(req){ try{ const m=String(req.get('authorization')||'').match(/^bearer\s+t_([A-Za-z0-9\-_]+)/i); if(!m) return null;
+  const obj=JSON.parse(Buffer.from(m[1].replace(/-/g,'+').replace(/_/g,'/'),'base64').toString()); const u=String(obj?.uid??''); return /^\d+$/.test(u)?u:null; }catch{ return null; } }
+module.exports = app => {
+  console.log('[v2][load] icu_delete_exact_gw');
+  app.delete('/gw/icu/events', async (req, res) => {
+    const hasAuth = /^bearer\s+/i.test(req.get('authorization')||'');
+    const uid = res.locals.user_id || req.query?.user_id || uidFromBearer(req);
+    const prefix = String(req.query?.external_id_prefix ?? '');
+    const oldest = String(req.query?.oldest ?? '');
+    const newest = String(req.query?.newest ?? '');
+    const dry = yes(req.query?.dry_run);
+    if (!hasAuth || !uid) return res.status(401).json({ status:401, error:'missing_or_invalid_token' });
+    if (!prefix) return res.status(400).json({ status:400, error:'missing_external_id_prefix' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(oldest) || !/^\d{4}-\d{2}-\d{2}$/.test(newest))
+      return res.status(400).json({ status:400, error:'bad_date_window' });
+    try{
+      const { rows } = await getPool().query('select "api_key","athlete_id" from "user" where "id"=$1 limit 1',[uid]);
+      if (!rows?.length) return res.status(400).json({ status:400, error:'icu_creds_not_found' });
+      const api_key = rows[0].api_key, athlete = normAthlete(rows[0].athlete_id);
+      if (!api_key || !athlete) return res.status(400).json({ status:400, error:'icu_creds_invalid', missing:{ api_key:!api_key, athlete_id:!athlete } });
+      const base = process.env.ICU_BASE_URL || process.env.ICU_API_BASE_URL || 'https://intervals.icu/api/v1';
+      const qs = new URLSearchParams({ oldest, newest, external_id_prefix: prefix, category: 'TARGET' });
+      if (dry) qs.set('dry_run','true');
+      const url = `${base}/athlete/${athlete}/events?${qs.toString()}`;
+      let r = await fetch(url, { method:'DELETE', headers:{ Authorization:`Bearer ${api_key}` } });
+      if (r.status===401 || r.status===403) r = await fetch(url, { method:'DELETE', headers:{ Authorization:b64(api_key) } });
+      const text = await r.text().catch(()=> ''); if (!r.ok) return res.status(r.status).json({ status:r.status, error:'icu_upstream_error', detail:text.slice(0,400) });
+      try { return res.json(JSON.parse(text)); } catch { return res.json({ ok:true, upstream_status:r.status }); }
+    }catch(e){ return res.status(502).json({ status:502, error:'icu_upstream_error', detail:String(e?.message||e) }); }
+  });
+};
