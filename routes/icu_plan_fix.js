@@ -16,15 +16,8 @@ async function getCredsFallback(uid){
   const client = new Client({ connectionString: url });
   await client.connect();
   try {
-    // 1) user
-    const a = await client.query('SELECT api_key, athlete_id FROM "user" WHERE id=$1::bigint LIMIT 1',[uid]);
-    if (a.rows && a.rows[0] && a.rows[0].api_key && a.rows[0].athlete_id) {
-      return { api_key: a.rows[0].api_key, athlete_id: a.rows[0].athlete_id };
-    }
-    // 2) gw_user_creds (fallback)
     const b = await client.query(
-      `SELECT COALESCE(api_key, icu_api_key) AS api_key,
-              COALESCE(athlete_id, icu_athlete_id) AS athlete_id
+      `SELECT icu_api_key AS api_key, icu_athlete_id AS athlete_id
          FROM gw_user_creds WHERE user_id=$1::text LIMIT 1`, [String(uid)]
     );
     if (b.rows && b.rows[0] && b.rows[0].api_key && b.rows[0].athlete_id) {

@@ -17,7 +17,7 @@ module.exports = app => {
     const newest = clamp(req.query.newest);
 
     try {
-      const { rows } = await getPool().query('select api_key, athlete_id from "user" where id=$1 limit 1', [uid]);
+      const { rows } = await getPool().query('select icu_api_key as api_key, icu_athlete_id as athlete_id from gw_user_creds where user_id=$1::text limit 1', [String(uid)]);
       if (!rows?.length) return res.status(400).json({ status:400, error:'icu_creds_not_found' });
 
       const api_key = rows[0].api_key;

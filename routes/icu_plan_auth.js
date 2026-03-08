@@ -16,10 +16,8 @@ function bearerUid(req){
 }
 
 async function loadCreds(uid){
-  const a = await pool.query('SELECT api_key, athlete_id FROM "user" WHERE id=$1 LIMIT 1', [uid]);
-  if (a.rows[0] && a.rows[0].api_key && a.rows[0].athlete_id) return { api_key: a.rows[0].api_key, athlete_id: a.rows[0].athlete_id };
   const b = await pool.query(
-    'SELECT COALESCE(api_key,icu_api_key) AS api_key, COALESCE(athlete_id,icu_athlete_id) AS athlete_id FROM gw_user_creds WHERE user_id=$1::text LIMIT 1',
+    'SELECT icu_api_key AS api_key, icu_athlete_id AS athlete_id FROM gw_user_creds WHERE user_id=$1::text LIMIT 1',
     [String(uid)]
   );
   return b.rows[0] || {};
