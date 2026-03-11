@@ -1,128 +1,42 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "STAS Gateway (Actions Inline)",
-    "version": "0.1.3"
+    "title": "STAS Intervals Gateway",
+    "version": "1.0.0",
+    "description": "Gateway for Intervals.icu planned workouts (read/write/delete) + STAS DB endpoints. Auth via OAuth2."
   },
   "servers": [
     {
-      "url": "https://intervals.stas.run/gw"
+      "url": "https://intervals.stas.run"
     }
   ],
-  "components": {
-    "securitySchemes": {
-      "bearerAuth": {
-        "type": "http",
-        "scheme": "bearer"
-      }
-    },
-    "schemas": {}
-  },
   "security": [
     {
-      "bearerAuth": []
+      "oauth2": ["read:me", "icu", "workouts:write"]
     }
   ],
   "paths": {
-    "/gw/healthz": {
+    "/gw/api/me": {
       "get": {
-        "summary": "Health check",
-        "operationId": "healthzGet",
+        "operationId": "getMe",
+        "summary": "Get current user identity from JWT token",
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "User identity",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "required": [
-                    "ok"
-                  ],
-                  "additionalProperties": false,
-                  "properties": {
-                    "ok": {
-                      "type": "boolean"
-                    },
-                    "ts": {
-                      "type": "string",
-                      "format": "date-time"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "security": []
-      }
-    },
-    "/gw/version": {
-      "get": {
-        "summary": "Gateway version",
-        "operationId": "versionGet",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "name": {
-                      "type": "string"
-                    },
-                    "version": {
-                      "type": "string"
-                    },
-                    "ts": {
-                      "type": "string",
-                      "format": "date-time"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "security": []
-      }
-    },
-    "/gw/api/db/user_summary": {
-      "get": {
-        "summary": "Get user summary (user_id inferred from Bearer)",
-        "operationId": "dbUserSummaryGet",
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "pattern": "^[0-9]+$"
-            },
-            "description": "If omitted, server infers from Bearer token"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "User summary object",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "$ref": "#/components/schemas/MeResponse"
                 }
               }
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "Missing or invalid token",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -130,71 +44,55 @@
         }
       }
     },
-    "/gw/api/db/activities": {
+    "/gw/api/db/user_summary": {
       "get": {
-        "summary": "List user activities",
-        "operationId": "dbActivitiesGet",
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "pattern": "^[0-9]+$"
-            }
-          },
-          {
-            "name": "days",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 365
-            }
-          },
-          {
-            "name": "from",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "date"
-            }
-          },
-          {
-            "name": "to",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "date"
-            }
-          }
-        ],
+        "operationId": "getUserSummary",
+        "summary": "Get user_summary from STAS DB",
         "responses": {
           "200": {
-            "description": "Array of activities",
+            "description": "User summary payload",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "additionalProperties": true
-                  }
+                  "$ref": "#/components/schemas/UserSummaryResponse"
                 }
               }
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "Missing or invalid token",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gw/api/db/trainings": {
+      "get": {
+        "operationId": "getTrainingsFromDB",
+        "summary": "Get trainings from STAS DB",
+        "responses": {
+          "200": {
+            "description": "Trainings list payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrainingsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -204,18 +102,9 @@
     },
     "/gw/icu/events": {
       "get": {
-        "summary": "Intervals.icu events via gateway (user_id inferred from Bearer)",
-        "operationId": "icuEventsGet",
+        "operationId": "getPlannedWorkoutsGw",
+        "summary": "List planned workouts (gateway route)",
         "parameters": [
-          {
-            "name": "user_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "pattern": "^[0-9]+$"
-            }
-          },
           {
             "name": "days",
             "in": "query",
@@ -224,7 +113,8 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 365
-            }
+            },
+            "description": "Return planned events for last N days window (relative). If omitted, can use oldest/newest."
           },
           {
             "name": "oldest",
@@ -233,7 +123,8 @@
             "schema": {
               "type": "string",
               "format": "date"
-            }
+            },
+            "description": "Oldest date (YYYY-MM-DD) inclusive."
           },
           {
             "name": "newest",
@@ -242,31 +133,132 @@
             "schema": {
               "type": "string",
               "format": "date"
-            }
+            },
+            "description": "Newest date (YYYY-MM-DD) inclusive."
           }
         ],
         "responses": {
           "200": {
-            "description": "Array of events",
+            "description": "Planned events list",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "additionalProperties": true
-                  }
+                  "$ref": "#/components/schemas/PlannedWorkoutsList"
                 }
               }
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "Missing or invalid token",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deletePlannedWorkouts",
+        "summary": "Delete planned workouts by external_id_prefix + date window (supports dry_run)",
+        "parameters": [
+          {
+            "name": "external_id_prefix",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "Delete only events whose external_id starts with this prefix, e.g. plan: or test:"
+          },
+          {
+            "name": "oldest",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Oldest date (YYYY-MM-DD) inclusive."
+          },
+          {
+            "name": "newest",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Newest date (YYYY-MM-DD) inclusive."
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            },
+            "description": "If true, do not delete, only report what would be deleted."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Delete result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteWindowResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createPlannedWorkoutsGw",
+        "summary": "Bulk create planned events (gateway route)",
+        "description": "Bulk create planned events via Intervals API (dedupe by external_id).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePlannedWorkoutsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Bulk create result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkCreateResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -274,162 +266,627 @@
         }
       }
     },
-    "/gw/oauth/authorize": {
+    "/gw/trainings": {
       "get": {
-        "summary": "OAuth2 authorize (stubbed)",
-        "operationId": "oauthAuthorizeGet",
+        "operationId": "getFullTrainings",
+        "summary": "Get full trainings (with splits/intervals) from STAS DB bridge",
         "parameters": [
           {
-            "name": "response_type",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "code"
-              ]
-            }
-          },
-          {
-            "name": "client_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "redirect_uri",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uri"
-            }
-          },
-          {
-            "name": "scope",
+            "name": "limit",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
-            }
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "description": "Max number of trainings to return."
           },
           {
-            "name": "state",
+            "name": "offset",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
-            }
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Offset for pagination."
+          },
+          {
+            "name": "full",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true
+            },
+            "description": "If true, include full details."
           }
         ],
         "responses": {
           "200": {
-            "description": "HTML",
+            "description": "Full trainings list",
             "content": {
-              "text/html": {
+              "application/json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/TrainingsListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
           }
-        },
-        "security": []
+        }
       }
     },
-    "/gw/oauth/token": {
+    "/gw/user_summary": {
+      "get": {
+        "operationId": "getUserSummaryGw",
+        "summary": "Get full user summary via gateway (profile, metrics, trainings, pace journal, condition)",
+        "responses": {
+          "200": {
+            "description": "User summary payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSummaryResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gw/strategy": {
       "post": {
-        "summary": "OAuth2 token (stub/PKCE)",
-        "operationId": "oauthTokenPost",
+        "operationId": "writeStrategy",
+        "summary": "Write strategy to user_summary (server-side storage)",
         "requestBody": {
           "required": true,
           "content": {
-            "application/x-www-form-urlencoded": {
+            "application/json": {
               "schema": {
-                "type": "object",
-                "required": [
-                  "grant_type"
-                ],
-                "properties": {
-                  "grant_type": {
-                    "type": "string",
-                    "enum": [
-                      "authorization_code",
-                      "client_credentials",
-                      "refresh_token"
-                    ]
-                  },
-                  "client_id": {
-                    "type": "string"
-                  },
-                  "redirect_uri": {
-                    "type": "string",
-                    "format": "uri"
-                  },
-                  "code": {
-                    "type": "string"
-                  },
-                  "code_verifier": {
-                    "type": "string"
-                  },
-                  "refresh_token": {
-                    "type": "string"
-                  }
-                },
-                "additionalProperties": false
+                "$ref": "#/components/schemas/StrategyWriteRequest"
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Access token",
+            "description": "Write result",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "required": [
-                    "access_token",
-                    "token_type",
-                    "expires_in"
-                  ],
-                  "properties": {
-                    "access_token": {
-                      "type": "string"
-                    },
-                    "token_type": {
-                      "type": "string",
-                      "enum": [
-                        "Bearer"
-                      ]
-                    },
-                    "expires_in": {
-                      "type": "integer"
-                    },
-                    "scope": {
-                      "type": "string"
-                    }
-                  },
-                  "additionalProperties": false
+                  "$ref": "#/components/schemas/StrategyWriteResponse"
                 }
               }
             }
           },
-          "400": {
-            "description": "Error",
+          "401": {
+            "description": "Missing or invalid token",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
           }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "oauth2": {
+        "type": "oauth2",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://stas.run/api/gpt/oauth/authorize",
+            "tokenUrl": "https://stas.run/api/gpt/oauth/token",
+            "scopes": {
+              "read:me": "Read profile",
+              "icu": "Access ICU proxy",
+              "workouts:write": "Write workouts"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer"
+          },
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": true
+          }
         },
-        "security": []
+        "additionalProperties": false
+      },
+      "MeResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "user_id": {
+            "type": "string",
+            "description": "STAS user id from JWT"
+          },
+          "email": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "user_id"
+        ],
+        "additionalProperties": false
+      },
+      "UserSummaryResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "user_summary": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "ok",
+          "user_summary"
+        ],
+        "additionalProperties": false
+      },
+      "Training": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "workout_type": {
+            "type": "string"
+          },
+          "distance": {
+            "type": "string"
+          },
+          "moving_time": {
+            "type": "string"
+          },
+          "training_load": {
+            "type": "integer"
+          },
+          "fitness": {
+            "type": "number"
+          },
+          "fatigue": {
+            "type": "number"
+          },
+          "intensity": {
+            "type": "string"
+          },
+          "avg_heartrate": {
+            "type": "integer"
+          },
+          "max_heartrate": {
+            "type": "integer"
+          },
+          "user_report": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ai_comment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "date"
+        ],
+        "additionalProperties": true
+      },
+      "TrainingsResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "trainings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Training"
+            }
+          }
+        },
+        "required": [
+          "ok",
+          "trainings"
+        ],
+        "additionalProperties": false
+      },
+      "IcuEvent": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Intervals event id"
+          },
+          "name": {
+            "type": "string"
+          },
+          "start_date": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "type": {
+            "type": "string",
+            "description": "Usually WORKOUT"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "start_date"
+        ],
+        "additionalProperties": true
+      },
+      "PlannedWorkoutsList": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/IcuEvent"
+        }
+      },
+      "DeleteWindowResult": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "matched": {
+            "type": "integer"
+          },
+          "deleted": {
+            "type": "integer"
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "ok",
+          "dry_run",
+          "matched",
+          "deleted",
+          "ids"
+        ],
+        "additionalProperties": false
+      },
+      "CreatePlannedWorkoutsRequest": {
+        "type": "object",
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Event name, concise and specific"
+                },
+                "start_date_local": {
+                  "type": "string",
+                  "description": "Local start datetime, e.g. 2026-02-16T09:00:00"
+                },
+                "end_date_local": {
+                  "type": "string",
+                  "description": "Local end datetime. For NOTE all-day: next day T00:00:00"
+                },
+                "category": {
+                  "type": "string",
+                  "enum": ["WORKOUT", "NOTE"],
+                  "description": "WORKOUT for training, NOTE for context/rest/illness. Defaults to WORKOUT if omitted."
+                },
+                "type": {
+                  "type": "string",
+                  "enum": ["Run", "Ride", "Swim", "Workout", "WeightTraining", "Other"],
+                  "description": "Title Case activity type. Required for WORKOUT. Omit for NOTE."
+                },
+                "description": {
+                  "type": "string",
+                  "description": "Structured multi-line description"
+                },
+                "color": {
+                  "type": "string",
+                  "enum": ["green", "orange", "blue", "red", "purple"],
+                  "description": "green=cardio/run, orange=strength/mobility"
+                },
+                "moving_time": {
+                  "type": "integer",
+                  "description": "Duration in seconds. For WORKOUT only, omit for NOTE."
+                },
+                "icu_training_load": {
+                  "type": "integer",
+                  "description": "Estimated training load. For WORKOUT only, omit for NOTE."
+                },
+                "duration_minutes": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Duration in minutes (alternative to moving_time)"
+                },
+                "external_id": {
+                  "type": "string",
+                  "description": "Unique ID for upsert/dedupe, e.g. plan:2026-03-11:easy-run or note:2026-03-11:illness"
+                }
+              },
+              "required": [
+                "name",
+                "start_date_local"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "events"
+        ],
+        "additionalProperties": false
+      },
+      "BulkCreateResult": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "created": {
+            "type": "integer"
+          },
+          "skipped": {
+            "type": "integer"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "ok",
+          "created",
+          "skipped",
+          "errors"
+        ],
+        "additionalProperties": false
+      },
+      "TrainingFull": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "workout_type": {
+            "type": "string"
+          },
+          "distance": {
+            "type": "string"
+          },
+          "moving_time": {
+            "type": "string"
+          },
+          "training_load": {
+            "type": "integer"
+          },
+          "fitness": {
+            "type": "number"
+          },
+          "fatigue": {
+            "type": "number"
+          },
+          "intensity": {
+            "type": "string"
+          },
+          "avg_heartrate": {
+            "type": "integer"
+          },
+          "max_heartrate": {
+            "type": "integer"
+          },
+          "lactate_threshold_hr": {
+            "type": "integer"
+          },
+          "elevation_gain": {
+            "type": "integer"
+          },
+          "icu_hr_zones": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "splits_km": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "km": {
+                  "type": "integer"
+                },
+                "pace": {
+                  "type": "string"
+                },
+                "time": {
+                  "type": "string"
+                },
+                "avg_hr": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "km",
+                "pace",
+                "time"
+              ],
+              "additionalProperties": true
+            }
+          },
+          "interval_summary": {
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "activity_plan": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "has_intervals": {
+                    "type": "boolean"
+                  },
+                  "intervals": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "label": {
+                          "type": "string"
+                        },
+                        "duration_s": {
+                          "type": "integer"
+                        },
+                        "distance_m": {
+                          "type": "number"
+                        },
+                        "avg_pace": {
+                          "type": "string"
+                        },
+                        "avg_hr": {
+                          "type": "integer"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                },
+                "required": [
+                  "has_intervals"
+                ],
+                "additionalProperties": true
+              }
+            ]
+          },
+          "hr_zone_times": {
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "date"
+        ],
+        "additionalProperties": true
+      },
+      "TrainingsListResponse": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/TrainingFull"
+        }
+      },
+      "StrategyWriteRequest": {
+        "type": "object",
+        "properties": {
+          "strategy_md": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "strategy_md"
+        ],
+        "additionalProperties": false
+      },
+      "StrategyWriteResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "additionalProperties": false
       }
     }
   }
