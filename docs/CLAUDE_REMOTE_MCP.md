@@ -122,3 +122,44 @@ Bridge обязан пробрасывать источник:
 - `/opt/stas/bridge-api/server.js`
 - `/opt/stas/bridge-api/lib/request-auth.js`
 - `/opt/stas/bridge-api/lib/request-source.js`
+
+## Правило сопровождения
+
+Этот bridge нельзя менять только на production.
+
+Если в production правился Claude/GPT OAuth flow, задача не считается законченной, пока:
+
+- код не сохранён в этом репозитории;
+- изменения не закоммичены;
+- изменения не запушены в GitHub;
+- связанная документация в `stas.run` не обновлена.
+
+## Что обязательно проверять после будущих изменений
+
+1. Metadata:
+   - `/.well-known/oauth-authorization-server`
+   - наличие `registration_endpoint`
+
+2. DCR:
+   - `POST /gw/oauth/register`
+
+3. OAuth:
+   - `GET /gw/oauth/authorize`
+   - `POST /gw/oauth/token`
+
+4. Sync в STAS:
+   - `resolveDirectIntervalsAuth(...)`
+   - `ensure-intervals-user`
+
+5. Проброс источника:
+   - `x-stas-source: claude`
+
+## Что является source of truth
+
+Для bridge-части Claude source of truth:
+
+1. этот файл
+2. `routes/oauth.js`
+3. `server.js`
+4. `lib/request-auth.js`
+5. `lib/request-source.js`
