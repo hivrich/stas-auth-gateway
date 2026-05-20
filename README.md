@@ -22,9 +22,9 @@
 
 ## Env
 
-- PORT — порт шлюза (прод: 3338)
+- PORT — порт шлюза. Source of truth для local/server-local и production: `3337`.
 - STAS_BASE — http://127.0.0.1:3336 (DB-bridge)
-- STAS_KEY или STAS_KEY_FILE — API-key для DB-bridge
+- STAS_KEY или DB_BRIDGE_API_KEY — API-key для DB-bridge
 - INTERVALS_API_BASE_URL — https://intervals.icu/api/v1
 - INTERVALS_CLIENT_ID — OAuth client для Intervals
 - INTERVALS_CLIENT_SECRET — OAuth secret для Intervals
@@ -32,10 +32,23 @@
 
 ## Запуск
 
-    env STAS_BASE="http://127.0.0.1:3336" STAS_KEY="***" INTERVALS_API_BASE_URL="https://intervals.icu/api/v1" PORT=3338 \
-      node server.js
+Mac path: `/Users/hivr/Projects/stas-auth-gateway`.
+Server-local path: `/home/codex/codex-work/Projects/stas-auth-gateway`.
+
+Приватный `.env` не хранится в git. Для запуска:
+
+    set -a; source .env; set +a
+    node server.js
+
+Проверка:
+
+    curl -sS http://127.0.0.1:3337/gw/healthz
 
 ## Systemd / Nginx
 
-Смотрите примеры в contrib/systemd/*.service.example и contrib/nginx/*.example.
-Секреты/сертификаты не входят в репозиторий.
+Production examples live in `deploy/`.
+Production path remains `/opt/stas-auth-gateway`; service runs `/opt/stas-auth-gateway/server.js` with `PORT=3337`.
+Nginx must pass `/gw/...` to Node without cutting the `/gw` prefix.
+
+Secrets and certificates are not stored in git.
+Use `deploy/.env.deploy.example` as a template, keep real values in ignored private files only.

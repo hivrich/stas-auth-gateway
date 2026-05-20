@@ -1,0 +1,11 @@
+.git
+node_modules
+npm-debug.log
+*.log
+.env
+.env.*
+.private
+.secrets
+deploy/.env.deploy
+*.key
+*.pem

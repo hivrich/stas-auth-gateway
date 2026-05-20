@@ -4,7 +4,7 @@ set -euo pipefail
 # Sync server snapshot to /opt/*, write .env files (without Intervals keys),
 # configure systemd and nginx on the target host.
 # This script runs LOCALLY and connects to the remote host via SSH.
-# It expects environment variables (recommended: load from deploy/.env.deploy)
+# It expects environment variables (recommended: load from .private/deploy.env)
 # Requires local directory ./server-snapshot/{stas-auth-gateway,stas-db-bridge,mcp-bridge[,mcp]}
 
 require() {
@@ -99,15 +99,21 @@ EOF
   rcat "/opt/mcp/.env" "$tmpfile"; rm -f "$tmpfile"
 fi
 
-# stas-auth-gateway .env (basic, unified STAS_API_BASE)
+# stas-auth-gateway .env
 if [[ -n "${STAS_API_KEY:-}" ]]; then
   echo "==> Writing /opt/stas-auth-gateway/.env"
   tmpfile=$(mktemp)
   cat >"$tmpfile" <<EOF
 PORT=3337
 NODE_ENV=production
-STAS_API_BASE=https://${TARGET_DOMAIN:-intervals.stas.run}/api
+STAS_BASE=http://127.0.0.1:3336
+STAS_INTERNAL_BASE_URL=http://127.0.0.1:3336
+STAS_KEY=${STAS_API_KEY:-}
+DB_BRIDGE_API_KEY=${STAS_API_KEY:-}
 STAS_API_KEY=${STAS_API_KEY:-}
+INTERVALS_API_BASE_URL=${INTERVALS_API_BASE_URL:-https://intervals.icu/api/v1}
+ICU_API_BASE_URL=${INTERVALS_API_BASE_URL:-https://intervals.icu/api/v1}
+ICU_BASE_URL=${INTERVALS_API_BASE_URL:-https://intervals.icu/api/v1}
 DEBUG=true
 EOF
   rcat "/opt/stas-auth-gateway/.env" "$tmpfile"; rm -f "$tmpfile"
@@ -123,7 +129,7 @@ create_unit "stas-db-bridge.service" "[Unit]\nDescription=STAS DB Bridge\nAfter=
 
 create_unit "mcp-bridge.service" "[Unit]\nDescription=MCP Bridge (Intervals.icu HTTP proxy)\nAfter=network.target\n\n[Service]\nType=simple\nWorkingDirectory=/opt/mcp-bridge\nEnvironmentFile=/opt/mcp-bridge/.env\nExecStart=/usr/bin/node /opt/mcp-bridge/app.js\nRestart=always\nRestartSec=2\n\n[Install]\nWantedBy=multi-user.target\n"
 
-create_unit "stas-auth-gateway.service" "[Unit]\nDescription=STAS Auth Gateway (OAuth + API proxy)\nAfter=network.target\n\n[Service]\nType=simple\nWorkingDirectory=/opt/stas-auth-gateway\nEnvironmentFile=/opt/stas-auth-gateway/.env\nExecStart=/usr/bin/node /opt/stas-auth-gateway/app.js\nRestart=always\nRestartSec=3\nUser=root\nGroup=root\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n"
+create_unit "stas-auth-gateway.service" "[Unit]\nDescription=STAS Auth Gateway (OAuth + API proxy)\nAfter=network.target\n\n[Service]\nType=simple\nWorkingDirectory=/opt/stas-auth-gateway\nEnvironmentFile=/opt/stas-auth-gateway/.env\nExecStart=/usr/bin/node /opt/stas-auth-gateway/server.js\nRestart=always\nRestartSec=3\nUser=root\nGroup=root\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n"
 
 remote "systemctl daemon-reload"
 remote "systemctl enable --now stas-db-bridge.service || true"
@@ -162,10 +168,10 @@ server {
   location /gw/ {
     proxy_http_version 1.1;
     proxy_set_header Connection "";
-    proxy_pass http://127.0.0.1:3337/;
+    proxy_pass http://127.0.0.1:3337;
   }
   location = /gw/healthz {
-    proxy_pass http://127.0.0.1:3337/healthz;
+    proxy_pass http://127.0.0.1:3337/gw/healthz;
   }
 
   location /api/ {
@@ -192,7 +198,7 @@ server {
   }
 
   location = /healthz {
-    proxy_pass http://127.0.0.1:3337/healthz;
+    proxy_pass http://127.0.0.1:3337/gw/healthz;
   }
 }
 EOF

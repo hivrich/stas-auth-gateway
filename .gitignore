@@ -8,6 +8,15 @@
 node_modules/
 
 # secrets
+.env
+.env.*
+!.env.example
+.private/
+.secrets/
+deploy/.env.deploy
+deploy/.env.*
+!deploy/.env.example
+!deploy/.env.deploy.example
 .stas_key.current
 *.key
 *.pem

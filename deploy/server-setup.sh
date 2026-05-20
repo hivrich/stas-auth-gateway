@@ -35,7 +35,7 @@ U
 
 # stas-auth-gateway
 cat >/etc/systemd/system/stas-auth-gateway.service <<U
-$(unit "STAS Auth Gateway (OAuth + API proxy)" /opt/stas-auth-gateway "/usr/bin/node /opt/stas-auth-gateway/app.js")
+$(unit "STAS Auth Gateway (OAuth + API proxy)" /opt/stas-auth-gateway "/usr/bin/node /opt/stas-auth-gateway/server.js")
 U
 
 # Опционально: mcp-sse-proxy (только если есть бинарь)
@@ -76,10 +76,10 @@ server {
   location /gw/ {
     proxy_http_version 1.1;
     proxy_set_header Connection "";
-    proxy_pass http://127.0.0.1:3337/;
+    proxy_pass http://127.0.0.1:3337;
   }
   location = /gw/healthz {
-    proxy_pass http://127.0.0.1:3337/healthz;
+    proxy_pass http://127.0.0.1:3337/gw/healthz;
   }
 
   location /api/ {
@@ -106,7 +106,7 @@ server {
   }
 
   location = /healthz {
-    proxy_pass http://127.0.0.1:3337/healthz;
+    proxy_pass http://127.0.0.1:3337/gw/healthz;
   }
 }
 NG

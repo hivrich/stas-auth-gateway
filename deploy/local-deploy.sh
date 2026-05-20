@@ -54,13 +54,13 @@ mkdir -p /etc/nginx/sites-{available,enabled} /var/log/intervals
 echo "Создание .env файлов..."
 
 cat >/opt/stas-db-bridge/.env <<'ENV'
-API_KEY=7ca1e3d9d8bb76a1297a9c7d9e39d5eaf4d0d6da249440eea43bb50ff0fddf27
+API_KEY=__SET_IN_ENV__
 PORT=3336
-DB_HOST=94.241.141.239
+DB_HOST=__SET_IN_ENV__
 DB_PORT=5432
-DB_NAME=hivrich_db
-DB_USER=limpid_beaker67
-DB_PASSWORD=jup64918
+DB_NAME=__SET_IN_ENV__
+DB_USER=__SET_IN_ENV__
+DB_PASSWORD=__SET_IN_ENV__
 DB_SSL=false
 DEBUG=true
 ENV
@@ -68,19 +68,25 @@ ENV
 cat >/opt/mcp-bridge/.env <<'ENV'
 PORT=3334
 DEBUG=true
-EXTERNAL_API_KEY=e63ad0c93b969a864f5f16addfdad55eaabee376f1641b64
-DB_HOST=94.241.141.239
+EXTERNAL_API_KEY=__SET_IN_ENV__
+DB_HOST=__SET_IN_ENV__
 DB_PORT=5432
-DB_NAME=hivrich_db
-DB_USER=limpid_beaker67
-DB_PASSWORD=jup64918
+DB_NAME=__SET_IN_ENV__
+DB_USER=__SET_IN_ENV__
+DB_PASSWORD=__SET_IN_ENV__
 DB_SSL=false
 ENV
 
 cat >/opt/stas-auth-gateway/.env <<'ENV'
 PORT=3337
-STAS_API_BASE=https://intervals.stas.run/api
-STAS_API_KEY=7ca1e3d9d8bb76a1297a9c7d9e39d5eaf4d0d6da249440eea43bb50ff0fddf27
+STAS_BASE=http://127.0.0.1:3336
+STAS_INTERNAL_BASE_URL=http://127.0.0.1:3336
+STAS_KEY=__SET_IN_ENV__
+DB_BRIDGE_API_KEY=__SET_IN_ENV__
+STAS_API_KEY=__SET_IN_ENV__
+INTERVALS_API_BASE_URL=https://intervals.icu/api/v1
+ICU_API_BASE_URL=https://intervals.icu/api/v1
+ICU_BASE_URL=https://intervals.icu/api/v1
 DEBUG=true
 ENV
 
@@ -138,7 +144,7 @@ U
 
 # stas-auth-gateway
 cat >/etc/systemd/system/stas-auth-gateway.service <<U
-$(unit "STAS Auth Gateway (OAuth + API proxy)" /opt/stas-auth-gateway "/usr/bin/node /opt/stas-auth-gateway/app.js")
+$(unit "STAS Auth Gateway (OAuth + API proxy)" /opt/stas-auth-gateway "/usr/bin/node /opt/stas-auth-gateway/server.js")
 U
 
 # Опционально: mcp-sse-proxy (только если есть бинарь)
@@ -179,10 +185,10 @@ server {
   location /gw/ {
     proxy_http_version 1.1;
     proxy_set_header Connection "";
-    proxy_pass http://127.0.0.1:3337/;
+    proxy_pass http://127.0.0.1:3337;
   }
   location = /gw/healthz {
-    proxy_pass http://127.0.0.1:3337/healthz;
+    proxy_pass http://127.0.0.1:3337/gw/healthz;
   }
 
   location /api/ {
@@ -209,7 +215,7 @@ server {
   }
 
   location = /healthz {
-    proxy_pass http://127.0.0.1:3337/healthz;
+    proxy_pass http://127.0.0.1:3337/gw/healthz;
   }
 }
 NG
@@ -233,8 +239,8 @@ set -euo pipefail
 
 USER_ID=95192039
 TARGET_DOMAIN='intervals.stas.run'
-STAS_API_KEY='7ca1e3d9d8bb76a1297a9c7d9e39d5eaf4d0d6da249440eea43bb50ff0fddf27'
-MCP_API_KEY='e63ad0c93b969a864f5f16addfdad55eaabee376f1641b64'
+STAS_API_KEY='__SET_IN_ENV__'
+MCP_API_KEY='__SET_IN_ENV__'
 
 echo "=== Smoke тесты ==="
 

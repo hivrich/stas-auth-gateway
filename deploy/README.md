@@ -14,10 +14,12 @@ Files:
 
 ### 0) Prepare local environment
 ```
-cp deploy/.env.deploy.example deploy/.env.deploy
-edit deploy/.env.deploy
-set -a; source deploy/.env.deploy; set +a
+cp deploy/.env.deploy.example .private/deploy.env
+edit .private/deploy.env
+set -a; source .private/deploy.env; set +a
 ```
+`deploy/.env.deploy` is also ignored for compatibility with older scripts, but real values must not be committed.
+
 If you use password auth, install `sshpass` locally (macOS):
 ```
 brew install hudochenkov/sshpass/sshpass
@@ -57,9 +59,14 @@ Create `/opt/stas-auth-gateway/.env` with:
 ```
 PORT=3337
 NODE_ENV=production
-STAS_API_BASE=https://stas.stravatg.ru
-STAS_API_KEY=7ca1e3d9d8bb76a1297a9c7d9e39d5eaf4d0d6da249440eea43bb50ff0fddf27
-ICU_API_BASE=https://intervals.icu/api/v1
+STAS_BASE=http://127.0.0.1:3336
+STAS_INTERNAL_BASE_URL=http://127.0.0.1:3336
+STAS_KEY=__SET_IN_ENV__
+DB_BRIDGE_API_KEY=__SET_IN_ENV__
+STAS_API_KEY=__SET_IN_ENV__
+INTERVALS_API_BASE_URL=https://intervals.icu/api/v1
+ICU_API_BASE_URL=https://intervals.icu/api/v1
+ICU_BASE_URL=https://intervals.icu/api/v1
 OAUTH_CLIENT_ID=chatgpt-actions
 OAUTH_CLIENT_SECRET=<PASTE_NEW_OAUTH_CLIENT_SECRET>
 OAUTH_REDIRECTS=https://chat.openai.com/aip/*/oauth/callback
@@ -107,6 +114,7 @@ curl -is "https://intervals.stas.run/gw/oauth/authorize?response_type=code&clien
 ```
 
 ## Notes
-- `proxy_pass` must end with trailing slash (`...:3337/`).
+- Gateway source of truth is `PORT=3337` and `/gw/*`.
+- In nginx, `proxy_pass http://127.0.0.1:3337;` keeps the `/gw` prefix. Do not use `...:3337/` for `location /gw/`.
 - `OAUTH_REDIRECTS` supports wildcard in app, but DB must store the exact URI received from ChatGPT.
-- Secrets must not be committed; only stored in `.env` on the server.
+- Secrets must not be committed; keep them in `.env`, `.private/deploy.env`, or another ignored private path.
