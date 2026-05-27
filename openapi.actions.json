@@ -660,6 +660,10 @@
                   "enum": ["WORKOUT", "NOTE"],
                   "description": "WORKOUT for training, NOTE for context/rest/illness. Defaults to WORKOUT if omitted."
                 },
+                "for_week": {
+                  "type": "boolean",
+                  "description": "For NOTE only: mark the note as applying to the whole week."
+                },
                 "type": {
                   "type": "string",
                   "enum": ["Run", "Ride", "Swim", "Workout", "WeightTraining", "Other"],
