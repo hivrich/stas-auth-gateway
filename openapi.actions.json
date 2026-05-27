@@ -162,22 +162,49 @@
       },
       "delete": {
         "operationId": "deletePlannedWorkouts",
-        "summary": "Delete planned workouts by external_id_prefix + date window (supports dry_run)",
+        "summary": "Delete planned events exactly by id/external_id, or by prefix + date window for full replacement",
         "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact Intervals event id to delete. Can be comma-separated for several event ids."
+          },
+          {
+            "name": "external_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "One exact STAS external_id value to delete, e.g. plan:2026-03-11:easy-run or note:2026-03-11:illness."
+          },
+          {
+            "name": "external_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated exact STAS external_id values to delete, e.g. plan:2026-03-11:easy-run. Use this for deleting one specific event without clearing the whole day."
+          },
           {
             "name": "external_id_prefix",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string",
               "minLength": 1
             },
-            "description": "Delete only events whose external_id starts with this prefix, e.g. plan: or test:"
+            "description": "Delete only events whose external_id starts with this prefix, e.g. plan: or note:. Use with oldest/newest only for full-window replacement."
           },
           {
             "name": "oldest",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string",
               "format": "date"
@@ -187,7 +214,7 @@
           {
             "name": "newest",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string",
               "format": "date"
@@ -230,8 +257,8 @@
       },
       "post": {
         "operationId": "createPlannedWorkoutsGw",
-        "summary": "Bulk create planned events (gateway route)",
-        "description": "Bulk create planned events via Intervals API (dedupe by external_id).",
+        "summary": "Bulk create or update planned events (gateway route)",
+        "description": "Bulk create/update planned events via Intervals API. Keep the same external_id to update an existing STAS event; do not delete a day/window for simple edits.",
         "requestBody": {
           "required": true,
           "content": {
@@ -662,7 +689,7 @@
                 },
                 "external_id": {
                   "type": "string",
-                  "description": "Unique ID for upsert/dedupe, e.g. plan:2026-03-11:easy-run or note:2026-03-11:illness"
+                  "description": "Stable unique ID for upsert/update, e.g. plan:2026-03-11:easy-run or note:2026-03-11:illness. Reuse the same value when editing an existing event."
                 }
               },
               "required": [

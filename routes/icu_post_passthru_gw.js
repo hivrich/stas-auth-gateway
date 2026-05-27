@@ -1,16 +1,5 @@
 const express = require('express');
-
-function decodeUidFromBearer(auth){
-  try{
-    if(!auth) return null;
-    const m = String(auth).match(/Bearer\s+t_([A-Za-z0-9_-]+)/i);
-    if(!m) return null;
-    let b64 = m[1].replace(/-/g,'+').replace(/_/g,'/'); while(b64.length%4!==0) b64+='=';
-    const obj = JSON.parse(Buffer.from(b64,'base64').toString('utf8'));
-    const uid = (obj && (obj.uid||obj.user_id)) ? String(obj.uid||obj.user_id) : null;
-    return uid && /^\d+$/.test(uid) ? uid : null;
-  }catch(_){ return null; }
-}
+const { getIcuRequestAuth } = require('../lib/icu-request-auth');
 
 module.exports = function(app){
   const router = express.Router();
@@ -38,38 +27,39 @@ module.exports = function(app){
         return res.json({ ok:true, dry_run:true, count: events.length, mode_hint: isGPT?'gpt':'default' });
       }
 
-      // uid: query или Bearer t_<b64>{"uid":...}
-      const authIn = (req.get && req.get('authorization')) || req.headers['authorization'];
-      const uid = String(q.user_id || decodeUidFromBearer(authIn) || '').trim();
-      if (!uid) return res.status(400).json({ ok:false, error:'missing_user_id' });
-
-      // токен из DB-bridge
-      const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
-      const STAS_KEY  = process.env.STAS_KEY  || '';
-      const credsUrl = new URL(`${STAS_BASE}/api/db/icu_creds`); credsUrl.searchParams.set('user_id', uid);
-      const cr = await fetch(credsUrl, { headers: STAS_KEY ? { 'X-API-Key': STAS_KEY } : {} });
-      if (!cr.ok) return res.status(502).json({ ok:false, error:'icu_creds_fetch_failed', status:cr.status });
-      const cj = await cr.json();
-      if (!cj || !cj.ok || !cj.api_key) return res.status(400).json({ ok:false, error:'invalid_icu_creds' });
-
+      const auth = await getIcuRequestAuth(req);
       const API_BASE = process.env.INTERVALS_API_BASE_URL || 'https://intervals.icu/api/v1';
-      const token = String(cj.api_key);
 
-      // Нормализация: гарантируем category
-      const payloadArr = events.map(ev => ({ category:'WORKOUT', ...ev }));
-      const url = `${API_BASE}/athlete/0/events/bulk`;
+      // Нормализация: гарантируем category и единое поле external_id.
+      // Intervals.icu должен обновлять событие с тем же external_id, а не создавать дубль.
+      const payloadArr = events.map(ev => {
+        const normalized = { category:'WORKOUT', ...ev };
+        if (normalized.externalId) {
+          normalized.external_id = normalized.external_id || normalized.externalId;
+          delete normalized.externalId;
+        }
+        return normalized;
+      });
+      const url = `${API_BASE}/athlete/${encodeURIComponent(auth.athleteId)}/events/bulk?upsert=true`;
       const bodyJson = JSON.stringify(payloadArr);
 
       const hdrs = (mode)=> {
         const h = { 'Accept':'application/json', 'Content-Type':'application/json' };
-        if (mode==='bearer') h['Authorization'] = `Bearer ${token}`;
-        else h['Authorization'] = `Basic ${Buffer.from(`API_KEY:${token}`).toString('base64')}`;
+        if (mode==='bearer') h['Authorization'] = `Bearer ${auth.token}`;
+        else h['Authorization'] = `Basic ${Buffer.from(`API_KEY:${auth.token}`).toString('base64')}`;
         return h;
       };
 
       let r = await fetch(url, { method:'POST', headers: hdrs('bearer'), body: bodyJson });
-      if (r.status===401 || r.status===403) {
+      if ((r.status===401 || r.status===403) && auth.authMode === 'legacy') {
         r = await fetch(url, { method:'POST', headers: hdrs('basic'), body: bodyJson });
+      }
+      if ((r.status===401 || r.status===403) && auth.authMode === 'intervals') {
+        return res.status(401).json({
+          ok:false,
+          error:'auth_required',
+          message:'Требуется переподключение. Попросите пользователя заново войти через Intervals.icu',
+        });
       }
 
       const text = await r.text(); let json; try{ json = JSON.parse(text);}catch(_){}
@@ -84,6 +74,12 @@ module.exports = function(app){
       return res.json(result);
 
     }catch(e){
+      if (e?.status === 401) {
+        return res.status(401).json({ ok:false, error:'missing_or_invalid_token' });
+      }
+      if (e?.status === 404) {
+        return res.status(404).json({ ok:false, error:'icu_creds_not_found' });
+      }
       console.error('[icu][POST][passthru] error:', e && e.stack || e);
       return res.status(500).json({ ok:false, error:'post_passthru_failed' });
     }
