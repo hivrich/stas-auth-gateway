@@ -3,6 +3,7 @@ const { getIcuRequestAuth } = require('../lib/icu-request-auth');
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const WEEKLY_REVIEW_RE = /^note:(\d{4}-\d{2}-\d{2})(:weekly-review-w(\d{1,2})(?::.*)?)$/i;
+const WEEKLY_SUMMARY_TEXT_RE = /(?:weekly[-_\s]?review|week[-_\s]?review|weekly[-_\s]?summary|week[-_\s]?summary|weekly[-_\s]?recap|week[-_\s]?recap|итоги недели|итог недели|недельн(?:ый|ые|ое|ая)?\s+(?:итог|итоги|обзор|ревью)|(?:итог|итоги|обзор|ревью)\s+(?:[^\s]+\s+){0,2}недел[ьи])/i;
 
 function badWeeklyNote(message, details) {
   const err = new Error(message);
@@ -57,6 +58,59 @@ function setAllDayAnchor(ev, sunday) {
   if (Object.prototype.hasOwnProperty.call(ev, 'end_date')) ev.end_date = ev.end_date_local;
 }
 
+function isNoteEvent(ev) {
+  return String(ev.category || '').toUpperCase() === 'NOTE';
+}
+
+function eventTextForWeeklySignal(ev) {
+  return [
+    ev.external_id,
+    ev.externalId,
+    ev.slug,
+    ev.name,
+    ev.title,
+    ev.description,
+  ].filter(Boolean).map(String).join(' ');
+}
+
+function hasWeeklySummarySignal(ev) {
+  return WEEKLY_SUMMARY_TEXT_RE.test(eventTextForWeeklySignal(ev));
+}
+
+function isAllDayValue(value) {
+  const s = String(value || '');
+  return /^\d{4}-\d{2}-\d{2}(?:T00:00(?::00(?:\.000)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/.test(s);
+}
+
+function getAllDayRangeDays(ev) {
+  const startText = ev.start_date_local || ev.start_date;
+  const endText = ev.end_date_local || ev.end_date;
+  if (!startText || !endText || !isAllDayValue(startText) || !isAllDayValue(endText)) return null;
+
+  const start = parseYmd(startText);
+  const end = parseYmd(endText);
+  if (!start || !end) return null;
+
+  return Math.round((end.getTime() - start.getTime()) / MS_PER_DAY);
+}
+
+function hasWeeklyAllDayRange(ev) {
+  const days = getAllDayRangeDays(ev);
+  return days >= 6 && days <= 8;
+}
+
+function getEventAnchorDate(ev) {
+  const dateText = ev.start_date_local || ev.start_date || String(ev.external_id || ev.externalId || '').split(':')[1];
+  return parseYmd(dateText);
+}
+
+function normalizeWeeklyAnchor(ev, anchor) {
+  const info = getIsoWeekInfo(anchor);
+  ev.category = 'NOTE';
+  ev.for_week = true;
+  setAllDayAnchor(ev, sundayForIsoWeek(info.isoYear, info.week));
+}
+
 function normalizeWeeklyReviewNote(ev) {
   const externalId = String(ev.external_id || ev.externalId || '');
   const m = externalId.match(WEEKLY_REVIEW_RE);
@@ -87,17 +141,30 @@ function normalizeWeeklyReviewNote(ev) {
   return true;
 }
 
+function normalizeWeeklySummaryNote(ev) {
+  if (!isNoteEvent(ev) || !hasWeeklySummarySignal(ev)) return false;
+
+  const anchor = getEventAnchorDate(ev);
+  if (!anchor) {
+    throw badWeeklyNote('weekly summary NOTE requires a valid anchor date', { external_id: ev.external_id || ev.externalId });
+  }
+
+  normalizeWeeklyAnchor(ev, anchor);
+  return true;
+}
+
 function normalizeForWeekEvent(ev) {
   if (ev.for_week !== true) return;
+  if (!isNoteEvent(ev)) {
+    throw badWeeklyNote('for_week is only allowed for NOTE events', { category: ev.category });
+  }
 
-  const dateText = ev.start_date_local || ev.start_date || String(ev.external_id || '').split(':')[1];
-  const anchor = parseYmd(dateText);
+  const anchor = getEventAnchorDate(ev);
   if (!anchor) {
     throw badWeeklyNote('for_week event requires a valid anchor date', { external_id: ev.external_id || ev.externalId });
   }
 
-  const info = getIsoWeekInfo(anchor);
-  setAllDayAnchor(ev, sundayForIsoWeek(info.isoYear, info.week));
+  normalizeWeeklyAnchor(ev, anchor);
 }
 
 module.exports = function(app){
@@ -138,10 +205,8 @@ module.exports = function(app){
           delete normalized.externalId;
         }
         const isWeeklyReview = normalizeWeeklyReviewNote(normalized);
-        if (!isWeeklyReview && normalized.for_week === true && normalized.category !== 'NOTE') {
-          throw badWeeklyNote('for_week is only supported for NOTE events', { external_id: normalized.external_id });
-        }
-        if (!isWeeklyReview) normalizeForWeekEvent(normalized);
+        const isWeeklySummary = !isWeeklyReview && normalizeWeeklySummaryNote(normalized);
+        if (!isWeeklyReview && !isWeeklySummary && normalized.for_week === true) normalizeForWeekEvent(normalized);
         return normalized;
       });
       const url = `${API_BASE}/athlete/${encodeURIComponent(auth.athleteId)}/events/bulk?upsert=true`;
