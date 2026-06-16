@@ -144,12 +144,23 @@ Bridge обязан пробрасывать источник:
 
 ## Production paths
 
-На production это лежит в:
+Активный production для `intervals.stas.run` сейчас работает через Docker compose:
 
-- `/opt/stas-auth-gateway/routes/oauth.js`
-- `/opt/stas-auth-gateway/server.js`
-- `/opt/stas-auth-gateway/lib/request-auth.js`
-- `/opt/stas-auth-gateway/lib/request-source.js`
+- compose project: `/opt/stas/docker-compose.yml`
+- service: `bridge-api`
+- container: `stas-bridge-api-1`
+- source directory: `/opt/stas/bridge-api`
+
+Основные gateway-файлы на активном production:
+
+- `/opt/stas/bridge-api/routes/oauth.js`
+- `/opt/stas/bridge-api/server.js`
+- `/opt/stas/bridge-api/lib/request-auth.js`
+- `/opt/stas/bridge-api/lib/request-source.js`
+- `/opt/stas/bridge-api/openapi.actions.json`
+- `/opt/stas/bridge-api/openapi.min.json`
+
+Старый checkout `/opt/stas-auth-gateway` может существовать на сервере, но он не является активным runtime, если запущен Docker-контейнер `stas-bridge-api-1`.
 
 ## Правило сопровождения
 
