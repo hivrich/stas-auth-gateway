@@ -53,6 +53,13 @@ Runtime gateway copy served by production:
 
 These two Actions JSON files must stay equivalent when changing GPT Actions.
 
+`/opt/stas/bridge-api` is a deploy copy, not the source-of-truth git checkout.
+Stale server-local `.git` metadata was archived on 2026-06-16 to:
+
+```bash
+/opt/stas/legacy-cleanup/bridge-api-git-metadata-20260616T215004Z
+```
+
 ## Safe Deploy
 
 From the local gateway repo, sync the current repository contents to the production bridge source.
