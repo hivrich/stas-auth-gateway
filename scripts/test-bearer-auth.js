@@ -54,7 +54,16 @@ global.fetch = async (url, options = {}) => {
     return jsonResponse({ api_key: 'test-icu-key', athlete_id: 'i15487' });
   }
 
+  if (parsed.origin === 'https://intervals.icu' && parsed.pathname === '/api/v1/athlete/0/events') {
+    assert.equal(options.headers.Authorization, 'Bearer intervals-access-token');
+    return jsonResponse([]);
+  }
+
   if (parsed.origin === 'https://intervals.icu' && parsed.pathname === '/api/v1/athlete/i15487/events') {
+    assert.match(options.headers.Authorization || '', /^Bearer |^Basic /);
+    if (String(options.headers.Authorization || '').startsWith('Bearer ')) {
+      return jsonResponse({ error: 'forbidden' }, 403);
+    }
     return jsonResponse([]);
   }
 
@@ -120,8 +129,20 @@ async function main() {
     assert.equal(response.status, 200);
     assert.deepEqual(response.body, []);
 
+    response = await request(baseUrl, '/gw/icu/events?days=7', makeLegacyToken('108'));
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, []);
+
     const ensureHit = upstreamHits.find((hit) => new URL(hit.url).pathname === '/api/db/ensure-intervals-user');
     assert.ok(ensureHit, 'expected ensure-intervals-user call for direct Intervals token');
+
+    const directEventsHit = upstreamHits.find((hit) => new URL(hit.url).pathname === '/api/v1/athlete/0/events');
+    assert.equal(directEventsHit?.headers.Authorization, 'Bearer intervals-access-token');
+
+    const legacyEventsHits = upstreamHits.filter((hit) => new URL(hit.url).pathname === '/api/v1/athlete/i15487/events');
+    assert.equal(legacyEventsHits.length, 2);
+    assert.match(legacyEventsHits[0].headers.Authorization || '', /^Bearer /);
+    assert.match(legacyEventsHits[1].headers.Authorization || '', /^Basic /);
 
     console.log('ok - bearer auth accepts legacy and direct Intervals tokens');
   } finally {
