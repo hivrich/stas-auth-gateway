@@ -7,7 +7,7 @@ RUN npm ci --omit=dev
 
 COPY . .
 
-ENV PORT=3337
-EXPOSE 3337
+ENV PORT=3001
+EXPOSE 3001
 
 CMD ["node", "server.js"]
