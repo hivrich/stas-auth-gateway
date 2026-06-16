@@ -12,7 +12,14 @@
   ],
   "security": [
     {
-      "oauth2": ["read:me", "icu", "workouts:write"]
+      "oauth2": [
+        "ACTIVITY:WRITE",
+        "WELLNESS:WRITE",
+        "CALENDAR:WRITE",
+        "CHATS:WRITE",
+        "LIBRARY:WRITE",
+        "SETTINGS:WRITE"
+      ]
     }
   ],
   "paths": {
@@ -103,7 +110,8 @@
     "/gw/api/db/activity_detail": {
       "get": {
         "operationId": "getActivityDetailFromDB",
-        "summary": "Get activity detail from STAS DB",
+        "summary": "Get detailed package for one completed training",
+        "description": "Read-only detailed package for one selected completed workout. Use after getTrainingsFromDB or getFullTrainings identifies the exact training_id. Do not batch this action across many workouts. The response omits rawData, route coordinates, latlng, and raw stream arrays.",
         "parameters": [
           {
             "name": "training_id",
@@ -113,23 +121,385 @@
               "type": "string",
               "minLength": 1
             },
-            "description": "Training id to load details for."
+            "description": "Training id returned by trainings actions. Load trainings first to identify the exact completed workout."
           }
         ],
         "responses": {
           "200": {
-            "description": "Activity detail payload",
+            "description": "Detailed activity package for one selected workout",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "$ref": "#/components/schemas/ActivityDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid training_id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
           },
           "401": {
             "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Training not found for current user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gw/api/db/profile_sections": {
+      "get": {
+        "operationId": "readProfileSections",
+        "summary": "Read profile memory sections",
+        "description": "Read current profile, goals, and rules with hashes. Use before preview so the saved hash is fresh. This does not write anything.",
+        "responses": {
+          "200": {
+            "description": "Profile sections payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "sections": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ProfileSection"
+                      }
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "sections"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gw/api/db/profile_sections/preview": {
+      "post": {
+        "operationId": "previewProfileSectionChange",
+        "summary": "Preview a profile memory change",
+        "description": "Preview one profile/goals/rules section using structured fields. For goals, send a flat items list with optional exact ISO date, goal, target result, and comment; server builds canonical goals text. Never saves; commit only after exact confirmation.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileSectionPreviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Profile change preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Write disabled, section disabled, not allowlisted, or sensitive data rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Current section text differs from previousHash",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gw/api/db/profile_sections/commit": {
+      "post": {
+        "operationId": "commitProfileSectionChange",
+        "summary": "Commit a profile memory change",
+        "description": "Save a previewed profile/goals/rules change. Call only after the user confirms the exact full new text shown from preview.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileSectionCommitRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Profile change committed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or expired preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Profile change not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Profile changed since preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gw/api/db/profile_changes": {
+      "get": {
+        "operationId": "readProfileChangeHistory",
+        "summary": "Read profile memory change history",
+        "description": "Read profile/goals/rules change history. This is read-only. Use before restore decisions, not as permission to restore.",
+        "parameters": [
+          {
+            "name": "section",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "profile",
+                "goals",
+                "rules"
+              ]
+            },
+            "description": "Optional profile section filter."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "previewed",
+                "committed",
+                "restored",
+                "expired",
+                "conflict",
+                "rejected"
+              ]
+            },
+            "description": "Optional change status filter."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "description": "Maximum number of changes to return."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Profile change history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "changes": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ProfileMemoryChange"
+                      }
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "changes"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gw/api/db/profile_changes/{changeId}/restore": {
+      "post": {
+        "operationId": "restoreProfileChange",
+        "summary": "Restore a profile memory change",
+        "description": "Restore a committed profile/goals/rules change. Call only after showing exact restore text and getting explicit user confirmation.",
+        "parameters": [
+          {
+            "name": "changeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Committed profile memory change id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Profile change restored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Profile change not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Profile changed since commit",
             "content": {
               "application/json": {
                 "schema": {
@@ -203,49 +573,22 @@
       },
       "delete": {
         "operationId": "deletePlannedWorkouts",
-        "summary": "Delete planned events exactly by id/external_id, or by prefix + date window for full replacement",
+        "summary": "Delete planned workouts by external_id_prefix + date window (supports dry_run)",
         "parameters": [
-          {
-            "name": "id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Exact Intervals event id to delete. Can be comma-separated for several event ids."
-          },
-          {
-            "name": "external_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            },
-            "description": "One exact STAS external_id value to delete, e.g. plan:2026-03-11:easy-run or note:2026-03-11:illness."
-          },
-          {
-            "name": "external_ids",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Comma-separated exact STAS external_id values to delete, e.g. plan:2026-03-11:easy-run. Use this for deleting one specific event without clearing the whole day."
-          },
           {
             "name": "external_id_prefix",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string",
               "minLength": 1
             },
-            "description": "Delete only events whose external_id starts with this prefix, e.g. plan: or note:. Use with oldest/newest only for full-window replacement."
+            "description": "Delete only events whose external_id starts with this prefix, e.g. plan: or test:"
           },
           {
             "name": "oldest",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string",
               "format": "date"
@@ -255,7 +598,7 @@
           {
             "name": "newest",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string",
               "format": "date"
@@ -298,8 +641,8 @@
       },
       "post": {
         "operationId": "createPlannedWorkoutsGw",
-        "summary": "Bulk create or update planned events (gateway route)",
-        "description": "Bulk create/update planned events via Intervals API. Keep the same external_id to update an existing STAS event; do not delete a day/window for simple edits.",
+        "summary": "Bulk create planned events (gateway route)",
+        "description": "Bulk create planned events via Intervals API (dedupe by external_id).",
         "requestBody": {
           "required": true,
           "content": {
@@ -340,15 +683,46 @@
         "summary": "Get full trainings (with splits/intervals) from STAS DB bridge",
         "parameters": [
           {
+            "name": "oldest",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Start boundary date (YYYY-MM-DD), inclusive."
+          },
+          {
+            "name": "newest",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "End boundary date (YYYY-MM-DD). For calendar windows, use the day after the last desired date."
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Relative days window. Prefer oldest/newest for planning history."
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
             "schema": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 200
+              "maximum": 50,
+              "default": 30
             },
-            "description": "Max number of trainings to return."
+            "description": "Max trainings per page. Real cap is 50."
           },
           {
             "name": "offset",
@@ -356,9 +730,10 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "minimum": 0
+              "minimum": 0,
+              "default": 0
             },
-            "description": "Offset for pagination."
+            "description": "Pagination offset when a date window needs more pages."
           },
           {
             "name": "full",
@@ -368,7 +743,7 @@
               "type": "boolean",
               "default": true
             },
-            "description": "If true, include full details."
+            "description": "Default true for Actions; send true/full=1 to include intervals and splits."
           }
         ],
         "responses": {
@@ -468,12 +843,15 @@
         "type": "oauth2",
         "flows": {
           "authorizationCode": {
-            "authorizationUrl": "https://stas.run/api/gpt/oauth/authorize",
-            "tokenUrl": "https://stas.run/api/gpt/oauth/token",
+            "authorizationUrl": "https://intervals.stas.run/gw/oauth/authorize",
+            "tokenUrl": "https://intervals.stas.run/gw/oauth/token",
             "scopes": {
-              "read:me": "Read profile",
-              "icu": "Access ICU proxy",
-              "workouts:write": "Write workouts"
+              "ACTIVITY:WRITE": "Read and write activities",
+              "WELLNESS:WRITE": "Read and write wellness data",
+              "CALENDAR:WRITE": "Read and write planned workouts",
+              "CHATS:WRITE": "Read and write chats",
+              "LIBRARY:WRITE": "Read and write workout library",
+              "SETTINGS:WRITE": "Read and write athlete settings"
             }
           }
         }
@@ -508,7 +886,7 @@
           },
           "user_id": {
             "type": "string",
-            "description": "STAS user id from JWT"
+            "description": "Intervals athlete id resolved from OAuth token"
           },
           "email": {
             "type": "string"
@@ -613,6 +991,386 @@
         ],
         "additionalProperties": false
       },
+      "ProfileSection": {
+        "type": "object",
+        "properties": {
+          "section": {
+            "type": "string",
+            "enum": [
+              "profile",
+              "goals",
+              "rules"
+            ],
+            "description": "Choose profile for athlete facts, goals for targets, rules for constraints. Do not mix sections."
+          },
+          "targetField": {
+            "type": "string",
+            "enum": [
+              "info",
+              "goals",
+              "rules"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "hash": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "section",
+          "targetField",
+          "text",
+          "hash",
+          "enabled"
+        ],
+        "additionalProperties": false
+      },
+      "ProfileSectionPreviewRequest": {
+        "type": "object",
+        "properties": {
+          "section": {
+            "type": "string",
+            "enum": [
+              "profile",
+              "goals",
+              "rules"
+            ]
+          },
+          "structured": {
+            "$ref": "#/components/schemas/ProfileMemoryStructuredInput",
+            "description": "Required. Send only the object matching section. For goals, send a flat items list with optional exact ISO date, goal, target result, and comment; the server builds canonical goals text."
+          },
+          "previousHash": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Hash returned by readProfileSections for this section."
+          },
+          "diffSummary": {
+            "type": "string",
+            "description": "Short factual summary of what changed. Do not include raw chat."
+          }
+        },
+        "required": [
+          "section",
+          "structured",
+          "previousHash"
+        ],
+        "additionalProperties": false
+      },
+      "ProfileMemoryStructuredInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goals": {
+            "$ref": "#/components/schemas/ProfileMemoryStructuredGoals",
+            "description": "Use only when section is goals. Server builds canonical goals text from the goals list."
+          },
+          "rules": {
+            "$ref": "#/components/schemas/ProfileMemoryStructuredRules"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/ProfileMemoryStructuredProfile"
+          }
+        },
+        "description": "Structured profile memory input. Send only the object matching section. Do not include firstName."
+      },
+      "ProfileMemoryStructuredProfile": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "birthYear": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1940,
+            "maximum": 2010,
+            "description": "Birth year. Omit to preserve; null only to clear."
+          },
+          "gender": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "male",
+              "female",
+              null
+            ],
+            "description": "Gender from the web profile form. Omit to preserve; null only to clear."
+          },
+          "height": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 130,
+            "maximum": 230,
+            "description": "Height in cm. Omit to preserve; null only to clear."
+          },
+          "weight": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 30,
+            "maximum": 200,
+            "description": "Weight in kg. Omit to preserve; null only to clear."
+          },
+          "maxHr": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 100,
+            "maximum": 220,
+            "description": "Maximum heart rate. Omit to preserve; null only to clear."
+          },
+          "ltHr": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 100,
+            "maximum": 220,
+            "description": "Lactate-threshold heart rate. Omit to preserve; null only to clear."
+          },
+          "otherSports": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Other sports. Omit to preserve; null only to clear."
+          },
+          "raceResults": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "distance": {
+                  "type": "string"
+                },
+                "result": {
+                  "type": "string"
+                },
+                "date": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "distance",
+                "result"
+              ]
+            },
+            "description": "Race PR list. If provided, replaces the whole list; [] or null clears it. Omit to preserve."
+          },
+          "additional": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Additional durable profile context. Do not use for firstName."
+          }
+        }
+      },
+      "ProfileMemoryStructuredGoals": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                  "description": "Optional exact goal date in YYYY-MM-DD. Omit when unknown; approximate dates are not supported."
+                },
+                "goal": {
+                  "type": "string",
+                  "description": "Required goal or event, for example 5 км, 10 км, regularity, health, cycling event, or triathlon."
+                },
+                "targetResult": {
+                  "type": "string",
+                  "description": "Target result or measurable outcome. Omit when unknown; server writes `не указано`."
+                },
+                "comment": {
+                  "type": "string",
+                  "description": "Short durable context: role, preparation depth, taper/risk note, or season meaning. Omit when unknown; server writes `не указано`."
+                }
+              },
+              "required": [
+                "goal"
+              ]
+            },
+            "description": "Flat goals list in the same shape as the web profile card. Every dated race is a real goal by default; do not demote goals into lower-value categories.",
+            "minItems": 1
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "ProfileMemoryStructuredRules": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "trainingsPerWeek": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 14,
+            "description": "Exact single number for Тренировок в неделю. Do not send ranges, minimums, maximums, or flexible wording here."
+          },
+          "offDays": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 7,
+            "description": "Exact single number for Выходных. Do not send ranges, minimums, maximums, or flexible wording here."
+          },
+          "restDays": {
+            "type": "string",
+            "description": "Fixed rest weekdays for Дни отдыха, only when the user names fixed weekdays."
+          },
+          "customRules": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Separate durable custom rules. The server writes one Правило line per item."
+          },
+          "additional": {
+            "type": "string",
+            "description": "Extra durable rule context."
+          }
+        }
+      },
+      "ProfileSectionCommitRequest": {
+        "type": "object",
+        "properties": {
+          "changeId": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Preview change id returned by previewProfileSectionChange."
+          }
+        },
+        "required": [
+          "changeId"
+        ],
+        "additionalProperties": false
+      },
+      "ProfileMemoryChange": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "athleteId": {
+            "type": "integer"
+          },
+          "section": {
+            "type": "string",
+            "enum": [
+              "profile",
+              "goals",
+              "rules"
+            ]
+          },
+          "targetField": {
+            "type": "string"
+          },
+          "oldText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "newText": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Server-rendered exact full text proposed or committed by the change. Do not send newText in preview requests."
+          },
+          "oldHash": {
+            "type": "string"
+          },
+          "newHash": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "gpt",
+              "claude"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "previewed",
+              "committed",
+              "restored",
+              "expired",
+              "conflict",
+              "rejected"
+            ]
+          },
+          "diffSummary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "committedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": true
+      },
+      "ProfileWriteResult": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "change": {
+            "$ref": "#/components/schemas/ProfileMemoryChange"
+          },
+          "section": {
+            "$ref": "#/components/schemas/ProfileSection"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "additionalProperties": false
+      },
       "IcuEvent": {
         "type": "object",
         "properties": {
@@ -698,16 +1456,22 @@
                 },
                 "category": {
                   "type": "string",
-                  "enum": ["WORKOUT", "NOTE"],
+                  "enum": [
+                    "WORKOUT",
+                    "NOTE"
+                  ],
                   "description": "WORKOUT for training, NOTE for context/rest/illness. Defaults to WORKOUT if omitted."
-                },
-                "for_week": {
-                  "type": "boolean",
-                  "description": "For NOTE only: mark the note as applying to the whole week."
                 },
                 "type": {
                   "type": "string",
-                  "enum": ["Run", "Ride", "Swim", "Workout", "WeightTraining", "Other"],
+                  "enum": [
+                    "Run",
+                    "Ride",
+                    "Swim",
+                    "Workout",
+                    "WeightTraining",
+                    "Other"
+                  ],
                   "description": "Title Case activity type. Required for WORKOUT. Omit for NOTE."
                 },
                 "description": {
@@ -716,7 +1480,13 @@
                 },
                 "color": {
                   "type": "string",
-                  "enum": ["green", "orange", "blue", "red", "purple"],
+                  "enum": [
+                    "green",
+                    "orange",
+                    "blue",
+                    "red",
+                    "purple"
+                  ],
                   "description": "green=cardio/run, orange=strength/mobility"
                 },
                 "moving_time": {
@@ -734,7 +1504,7 @@
                 },
                 "external_id": {
                   "type": "string",
-                  "description": "Stable unique ID for upsert/update, e.g. plan:2026-03-11:easy-run or note:2026-03-11:illness. Reuse the same value when editing an existing event."
+                  "description": "Unique ID for upsert/dedupe, e.g. plan:2026-03-11:easy-run or note:2026-03-11:illness"
                 }
               },
               "required": [
@@ -959,6 +1729,818 @@
           "ok"
         ],
         "additionalProperties": false
+      },
+      "ActivityDetailResponse": {
+        "type": "object",
+        "description": "AI-ready detailed passport for one completed workout. Raw source payloads, route coordinates, latlng, and raw stream arrays are intentionally omitted.",
+        "properties": {
+          "overview": {
+            "$ref": "#/components/schemas/ActivityDetailOverview"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/ActivityDetailTotals"
+          },
+          "intervalsDetailed": {
+            "$ref": "#/components/schemas/ActivityDetailListSection"
+          },
+          "lapsDetailed": {
+            "$ref": "#/components/schemas/ActivityDetailListSection"
+          },
+          "splitsDetailed": {
+            "$ref": "#/components/schemas/ActivityDetailListSection"
+          },
+          "terrainSummary": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ActivityDetailTerrainSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "streamSummary": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ActivityDetailStreamSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "weather": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ActivityDetailWeatherSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "bestEfforts": {
+            "$ref": "#/components/schemas/ActivityDetailListSection"
+          },
+          "segments": {
+            "$ref": "#/components/schemas/ActivityDetailListSection"
+          },
+          "flags": {
+            "type": "array",
+            "description": "Detected issues or notable conditions, for example uphill, pace_drop, hr_drift, missing_hr, weak_altitude, terrain_mismatch.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "dataQuality": {
+            "$ref": "#/components/schemas/ActivityDetailDataQuality"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/ActivityDetailLimits"
+          },
+          "sizeEstimate": {
+            "$ref": "#/components/schemas/ActivityDetailSizeEstimate"
+          }
+        },
+        "required": [
+          "overview",
+          "totals",
+          "intervalsDetailed",
+          "lapsDetailed",
+          "splitsDetailed",
+          "bestEfforts",
+          "segments",
+          "flags",
+          "dataQuality",
+          "limits",
+          "sizeEstimate"
+        ],
+        "additionalProperties": true
+      },
+      "ActivityDetailOverview": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "STAS training id."
+          },
+          "sourceActivityId": {
+            "type": "string",
+            "description": "Source activity id if available; not a route or raw payload."
+          },
+          "date": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "localDate": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sport": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sportFamily": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "run",
+              "ride",
+              "swim",
+              null
+            ]
+          },
+          "sessionType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "detailLevel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "userReport": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "User self-report for the workout if available."
+          },
+          "externalAssessment": {
+            "$ref": "#/components/schemas/ActivityDetailGenericObject"
+          }
+        },
+        "additionalProperties": true
+      },
+      "ActivityDetailTotals": {
+        "type": "object",
+        "properties": {
+          "distanceKm": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "movingTimeSec": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "elapsedTimeSec": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "averagePaceSecPerKm": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "averagePace": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "avgSpeedMps": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "avgHr": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "maxHr": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "lactateThresholdHr": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "load": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "intensity": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "fitness": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "fatigue": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "form": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "elevationGainM": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "avgWatts": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "normalizedPower": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "maxWatts": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ftp": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "variabilityIndex": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "intensityFactor": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "cadence": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "calories": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "coastingTimeSec": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "decouplingPct": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "efficiencyFactor": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "hrZoneTimes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "number"
+            }
+          },
+          "hrZones": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "number"
+            }
+          },
+          "powerZoneTimes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "additionalProperties": true
+      },
+      "ActivityDetailListSection": {
+        "type": "object",
+        "description": "Limited list section. available is the full detected count; returned is how many items are included in this response.",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActivityDetailItem"
+            }
+          },
+          "available": {
+            "type": "integer"
+          },
+          "returned": {
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "max": {
+            "type": "integer"
+          },
+          "policy": {
+            "type": "string",
+            "enum": [
+              "all",
+              "uniform_sample"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "quality": {
+            "type": "string",
+            "enum": [
+              "high",
+              "medium",
+              "low",
+              "none",
+              "unavailable"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": true
+      },
+      "ActivityDetailItem": {
+        "type": "object",
+        "description": "One detailed interval, lap, split, best effort, or segment item. Fields vary by section.",
+        "properties": {
+          "num": {
+            "type": "integer"
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "startIndex": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "endIndex": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "startTimeSec": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "endTimeSec": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "distance": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "distanceM": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "time": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "activeTimeSec": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "movingTimeSec": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "elapsedTimeSec": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "pace": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "paceSecPerKm": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "gapSecPerKm": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "avgSpeedMps": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "avgHr": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "minHr": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "maxHr": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "avgCadence": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "avgWatts": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "maxWatts": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "elevationGainM": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "elevationLossM": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "minAltitudeM": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "maxAltitudeM": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "avgGradePct": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "rank": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "pr": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "flags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      },
+      "ActivityDetailTerrainSummary": {
+        "type": "object",
+        "properties": {
+          "elevationGainM": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "elevationLossM": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "minElevationM": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "maxElevationM": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "avgGradePct": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "gradedPaceSecPerKm": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "quality": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      },
+      "ActivityDetailStreamSummary": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "quality": {
+            "type": "string"
+          },
+          "requestedTypes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "availableTypes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sampleCountByType": {
+            "$ref": "#/components/schemas/ActivityDetailGenericObject"
+          },
+          "totalSamples": {
+            "type": "integer"
+          },
+          "durationSec": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "distanceM": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "metrics": {
+            "$ref": "#/components/schemas/ActivityDetailGenericObject"
+          },
+          "pauseSummary": {
+            "$ref": "#/components/schemas/ActivityDetailGenericObject"
+          },
+          "terrainFromSamples": {
+            "$ref": "#/components/schemas/ActivityDetailGenericObject"
+          }
+        },
+        "additionalProperties": true
+      },
+      "ActivityDetailWeatherSummary": {
+        "type": "object",
+        "properties": {
+          "temperatureC": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "humidityPct": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "windSpeedMps": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "condition": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "quality": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      },
+      "ActivityDetailDataQuality": {
+        "type": "object",
+        "properties": {
+          "activity": {
+            "$ref": "#/components/schemas/ActivityDetailGenericObject"
+          },
+          "intervals": {
+            "$ref": "#/components/schemas/ActivityDetailGenericObject"
+          },
+          "laps": {
+            "$ref": "#/components/schemas/ActivityDetailGenericObject"
+          },
+          "splits": {
+            "$ref": "#/components/schemas/ActivityDetailGenericObject"
+          },
+          "live": {
+            "$ref": "#/components/schemas/ActivityDetailGenericObject"
+          },
+          "redactions": {
+            "type": "array",
+            "description": "Confirms that raw source payloads, raw streams, and route coordinates were omitted.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": true
+      },
+      "ActivityDetailLimits": {
+        "type": "object",
+        "properties": {
+          "intervals": {
+            "type": "integer"
+          },
+          "laps": {
+            "type": "integer"
+          },
+          "splits": {
+            "type": "integer"
+          },
+          "bestEfforts": {
+            "type": "integer"
+          },
+          "segments": {
+            "type": "integer"
+          },
+          "responseSizeGuardrail": {
+            "$ref": "#/components/schemas/ActivityDetailGenericObject"
+          }
+        },
+        "additionalProperties": true
+      },
+      "ActivityDetailSizeEstimate": {
+        "type": "object",
+        "properties": {
+          "jsonChars": {
+            "type": "integer"
+          },
+          "approxTokens": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "jsonChars",
+          "approxTokens"
+        ],
+        "additionalProperties": false
+      },
+      "ActivityDetailGenericObject": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "string",
+            "description": "Generic object; actual keys may vary by workout and data source."
+          }
+        },
+        "additionalProperties": true
       }
     }
   }
