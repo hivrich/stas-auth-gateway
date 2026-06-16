@@ -53,11 +53,21 @@ Server-local path: `/home/codex/codex-work/Projects/stas-auth-gateway`.
 
     npm run test:db-proxy
 
-## Systemd / Nginx
+OAuth flow нужно проверять отдельно после любой правки gateway-auth, OpenAPI Actions или деплоя bridge-api:
 
-Production examples live in `deploy/`.
-Production path remains `/opt/stas-auth-gateway`; service runs `/opt/stas-auth-gateway/server.js` with `PORT=3337`.
-Nginx must pass `/gw/...` to Node without cutting the `/gw` prefix.
+    npm run test:oauth
+    scripts/smoke-oauth-gpt.sh
+
+Ожидаемый контракт: GPT OAuth с Intervals scope сразу отдаёт `302` на `https://intervals.icu/oauth/authorize`, но внутри Intervals URL должен быть `redirect_uri=https://intervals.stas.run/gw/oauth/callback`, а не ChatGPT callback.
+Legacy-страница ввода STAS ID не должна перехватывать этот сценарий.
+
+## Production runtime
+
+Active production for `intervals.stas.run` runs from `/opt/stas/docker-compose.yml`.
+The gateway service is `bridge-api`, built from `/opt/stas/bridge-api`, exposed inside Docker on `PORT=3001`.
+The older `/opt/stas-auth-gateway` checkout may exist on the server, but it is not the active runtime when `stas-bridge-api-1` is running.
+
+Production examples for the older systemd/nginx setup still live in `deploy/`; treat them as legacy unless the active server has been moved back to systemd.
 
 Secrets and certificates are not stored in git.
 Use `deploy/.env.deploy.example` as a template, keep real values in ignored private files only.

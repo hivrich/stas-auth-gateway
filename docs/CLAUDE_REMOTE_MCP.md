@@ -32,8 +32,11 @@ Claude подключает STAS как Remote MCP server по URL:
 
 - `POST /oauth/register` для Dynamic Client Registration Claude;
 - `GET /oauth/authorize` для редиректа в Intervals OAuth;
+- `GET /oauth/callback` как общий callback от Intervals обратно в bridge;
 - `POST /oauth/token` для обмена кода на токен;
 - автоматическую подстановку серверных `INTERVALS_CLIENT_ID` и `INTERVALS_CLIENT_SECRET` для Claude;
+- автоматическую подстановку серверного `INTERVALS_CLIENT_ID` для GPT, если ChatGPT присылает пустой `client_id`;
+- bridge-code flow для GPT: ChatGPT callback хранится в подписанном `state`, Intervals получает только `https://intervals.stas.run/gw/oauth/callback`, а bridge затем возвращает ChatGPT код вида `gpt_...`;
 - вызов `resolveDirectIntervalsAuth(...)` после получения Intervals access token.
 
 ### `server.js`
@@ -83,6 +86,31 @@ Claude подключает STAS как Remote MCP server по URL:
 10. Bridge синхронизирует пользователя в STAS через `ensure-intervals-user`.
 11. Дальше bridge уже может резолвить этого пользователя по direct Intervals bearer token.
 
+## Как проходит GPT Actions flow
+
+1. ChatGPT вызывает:
+   - `GET /gw/oauth/authorize`
+2. Bridge проверяет ChatGPT callback:
+   - `https://chat.openai.com/aip/g-.../oauth/callback`
+   - `https://chatgpt.com/aip/g-.../oauth/callback`
+3. Bridge отправляет пользователя в Intervals OAuth, но с единым redirect:
+   - `https://intervals.stas.run/gw/oauth/callback`
+4. Intervals возвращает пользователя на:
+   - `GET /gw/oauth/callback`
+5. Bridge создаёт короткий bridge-code `gpt_...` и редиректит обратно в исходный ChatGPT callback.
+6. ChatGPT вызывает:
+   - `POST /gw/oauth/token`
+7. Bridge меняет сохранённый Intervals code на Intervals access token, используя тот же redirect:
+   - `https://intervals.stas.run/gw/oauth/callback`
+8. Bridge вызывает `resolveDirectIntervalsAuth(...)`.
+9. Дальше bridge резолвит пользователя по direct Intervals bearer token.
+
+Для Intervals app `66` обязательно должен быть разрешён redirect URL:
+
+- `https://intervals.stas.run/gw/oauth/callback`
+
+Не нужно добавлять каждый новый ChatGPT `g-...` callback в Intervals app. Эти callback URL остаются только на стороне ChatGPT и bridge-state.
+
 ## Что важно для Claude
 
 - ручной `client_secret` от пользователя не нужен;
@@ -116,12 +144,23 @@ Bridge обязан пробрасывать источник:
 
 ## Production paths
 
-На production это лежит в:
+Активный production для `intervals.stas.run` сейчас работает через Docker compose:
+
+- compose project: `/opt/stas/docker-compose.yml`
+- service: `bridge-api`
+- container: `stas-bridge-api-1`
+- source directory: `/opt/stas/bridge-api`
+
+Основные gateway-файлы на активном production:
 
 - `/opt/stas/bridge-api/routes/oauth.js`
 - `/opt/stas/bridge-api/server.js`
 - `/opt/stas/bridge-api/lib/request-auth.js`
 - `/opt/stas/bridge-api/lib/request-source.js`
+- `/opt/stas/bridge-api/openapi.actions.json`
+- `/opt/stas/bridge-api/openapi.min.json`
+
+Старый checkout `/opt/stas-auth-gateway` может существовать на сервере, но он не является активным runtime, если запущен Docker-контейнер `stas-bridge-api-1`.
 
 ## Правило сопровождения
 
@@ -145,7 +184,9 @@ Bridge обязан пробрасывать источник:
 
 3. OAuth:
    - `GET /gw/oauth/authorize`
+   - `GET /gw/oauth/callback`
    - `POST /gw/oauth/token`
+   - для GPT Intervals authorize URL должен содержать `redirect_uri=https://intervals.stas.run/gw/oauth/callback`, а не ChatGPT callback
 
 4. Sync в STAS:
    - `resolveDirectIntervalsAuth(...)`

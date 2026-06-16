@@ -4,11 +4,12 @@ module.exports = function oauthPage() {
     const accept = String(req.headers['accept'] || '');
     const isAuthorize = ou.startsWith('/gw/oauth/authorize') || ou === '/oauth/authorize';
     const hasUid = /[?&](uid|user_id)=\d+/.test(ou);
+    const q = new URL('http://x' + ou).searchParams;
+    const hasIntervalsScope = /\b(?:ACTIVITY|WELLNESS|CALENDAR|CHATS|LIBRARY|SETTINGS):(?:READ|WRITE)\b/.test(String(q.get('scope') || ''));
 
-    if (!isAuthorize || hasUid) return next();         // отдаём в реальный oauth-роутер
+    if (!isAuthorize || hasUid || hasIntervalsScope) return next();         // отдаём в реальный oauth-роутер
 
     // соберём исходные параметры, чтобы вернуть их при сабмите
-    const q = new URL('http://x' + ou).searchParams;
     const qp = ['response_type','client_id','redirect_uri','state','scope']
       .map(k => q.get(k) ? `${k}=${encodeURIComponent(q.get(k))}` : '')
       .filter(Boolean)
