@@ -11,6 +11,16 @@ function safeJSON(text, fallback=null) {
   try { return JSON.parse(text); } catch { return fallback; }
 }
 
+function methodCanHaveBody(method) {
+  return !['GET', 'HEAD'].includes(String(method || 'GET').toUpperCase());
+}
+
+function requestBodyForFetch(req) {
+  if (req.body === undefined) return undefined;
+  if (Buffer.isBuffer(req.body) || typeof req.body === 'string') return req.body;
+  return JSON.stringify(req.body);
+}
+
 // === Main proxy for /gw/api/db/* ===
 router.use(async (req, res) => {
   const rest = req.path.replace(/^\/+/, '');          // e.g. "trainings"
@@ -33,10 +43,23 @@ router.use(async (req, res) => {
   const timer = setTimeout(() => ac.abort('timeout'), 5000);
 
   try {
-    const r = await fetch(url, {
-      headers: buildStasSourceHeaders(req, { 'X-API-Key': STAS_KEY, 'Accept': 'application/json' }),
+    const method = String(req.method || 'GET').toUpperCase();
+    const headers = buildStasSourceHeaders(req, { 'X-API-Key': STAS_KEY, 'Accept': 'application/json' });
+    const init = {
+      method,
+      headers,
       signal: ac.signal
-    });
+    };
+
+    if (methodCanHaveBody(method)) {
+      const body = requestBodyForFetch(req);
+      if (body !== undefined) {
+        headers['Content-Type'] = req.get?.('content-type') || req.headers?.['content-type'] || 'application/json';
+        init.body = body;
+      }
+    }
+
+    const r = await fetch(url, init);
     const bodyText = await r.text();
     let body = bodyText;
     const ct  = r.headers.get('content-type') || 'application/json; charset=utf-8';

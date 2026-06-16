@@ -38,14 +38,18 @@ function makeLegacyToken(uid) {
   return `t_${Buffer.from(JSON.stringify({ uid })).toString('base64url')}`;
 }
 
-function makeReq(query, userId) {
+function makeReq(query, userId, options = {}) {
+  const path = options.path || '/activity_detail';
+  const method = options.method || 'GET';
+  const headers = {};
   const rawQuery = new URLSearchParams(query).toString();
   const req = {
-    path: '/activity_detail',
-    originalUrl: `/gw/api/db/activity_detail${rawQuery ? `?${rawQuery}` : ''}`,
-    method: 'GET',
+    path,
+    originalUrl: `/gw/api/db${path}${rawQuery ? `?${rawQuery}` : ''}`,
+    method,
     query: { ...query },
-    headers: {},
+    headers,
+    body: options.body,
     get(name) {
       return this.headers[String(name).toLowerCase()];
     },
@@ -53,6 +57,9 @@ function makeReq(query, userId) {
 
   if (userId) {
     req.headers.authorization = `Bearer ${makeLegacyToken(userId)}`;
+  }
+  if (options.body !== undefined) {
+    req.headers['content-type'] = options.contentType || 'application/json';
   }
 
   return req;
@@ -137,8 +144,8 @@ async function runDbProxy(req, res) {
   });
 }
 
-async function runRequest(query, userId) {
-  const req = makeReq(query, userId);
+async function runRequest(query, userId, options = {}) {
+  const req = makeReq(query, userId, options);
   const res = makeRes();
   if (await runUidInject(req, res)) await runDbProxy(req, res);
   return res;
@@ -175,7 +182,31 @@ async function main() {
     assert.deepStrictEqual(response.jsonBody, { status: 401, error: 'missing_or_invalid_token' });
     assert.strictEqual(upstreamHits.length, 2);
 
-    console.log('ok - db_proxy forwards activity_detail and handles user_id/auth');
+    response = await runRequest({}, 'user-42', {
+      path: '/profile_sections/preview',
+      method: 'POST',
+      body: {
+        section: 'rules',
+        structured: { rules: { trainingsPerWeek: 5 } },
+        previousHash: 'hash-123',
+      },
+    });
+    assert.strictEqual(response.statusCode, 200);
+
+    assert.strictEqual(upstreamHits.length, 3);
+    hit = upstreamHits[2];
+    forwarded = new URL(hit.url);
+    assert.strictEqual(hit.method, 'POST');
+    assert.strictEqual(forwarded.pathname, '/api/db/profile_sections/preview');
+    assert.strictEqual(forwarded.searchParams.get('user_id'), 'user-42');
+    assert.strictEqual(hit.headers['Content-Type'], 'application/json');
+    assert.deepStrictEqual(JSON.parse(hit.body), {
+      section: 'rules',
+      structured: { rules: { trainingsPerWeek: 5 } },
+      previousHash: 'hash-123',
+    });
+
+    console.log('ok - db_proxy forwards db reads/writes and handles user_id/auth');
   } finally {
     global.fetch = originalFetch;
   }
