@@ -1,42 +1,56 @@
 'use strict';
 const express = require('express');
-const http = require('http');
+const getStasKey = require('../lib/get_stas_key');
+const { getRequestUserId } = require('../lib/request-auth');
+const { buildStasSourceHeaders } = require('../lib/request-source');
 
 const r = express.Router();
+const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
 
-function fetchJSON(path, auth, timeoutMs = 5000){
-  return new Promise((resolve) => {
-    const req = http.request({
-      hostname: '127.0.0.1',
-      port: 3338,
-      path,
-      method: 'GET',
-      headers: { 'Authorization': auth || '' },
-      timeout: timeoutMs,
-    }, (res) => {
-      let buf = '';
-      res.setEncoding('utf8');
-      res.on('data', c => buf += c);
-      res.on('end', () => {
-        try { resolve({ status: res.statusCode || 502, json: JSON.parse(buf) }); }
-        catch { resolve({ status: res.statusCode || 502, json: null }); }
-      });
+async function fetchDbJSON(endpoint, req, timeoutMs = 5000) {
+  const url = new URL(`/api/db/${endpoint}`, STAS_BASE);
+  const qs = new URLSearchParams(req.query || {});
+  if (!qs.get('user_id')) {
+    const uid = getRequestUserId(req);
+    if (uid) qs.set('user_id', uid);
+  }
+  for (const [key, value] of qs.entries()) {
+    if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, value);
+  }
+
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort('timeout'), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      headers: buildStasSourceHeaders(req, {
+        'X-API-Key': getStasKey(),
+        Accept: 'application/json',
+      }),
+      signal: ac.signal,
     });
-    req.on('timeout', () => { req.destroy(); resolve({ status: 504, json: null }); });
-    req.on('error',   ()   => { resolve({ status: 502, json: null }); });
-    req.end();
-  });
+    const text = await response.text();
+    try { return { status: response.status || 502, json: JSON.parse(text) }; }
+    catch { return { status: response.status || 502, json: null }; }
+  } catch {
+    return { status: 502, json: null };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // /gw/user_summary  ==> /gw/api/db/user_summary
 // Нормализуем в объект с { ok:true, user_summary:[...] }
 r.get('/user_summary', async (req, res) => {
-  const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-  const { status, json } = await fetchJSON('/gw/api/db/user_summary' + qs, req.headers.authorization);
+  const { status, json } = await fetchDbJSON('user_summary', req);
 
   // уже правильный объект с ok:true
   if (json && typeof json === 'object' && json.ok === true) {
     return res.json(json);
+  }
+
+  if (status >= 400) {
+    return res.status(status).json(json || { ok: false, error: 'upstream_unreachable' });
   }
 
   // апстрим вернул объект без ok -> обернём
@@ -56,8 +70,7 @@ r.get('/user_summary', async (req, res) => {
 // /gw/trainings  ==> /gw/api/db/activities
 // Гарантируем массив
 r.get('/trainings', async (req, res) => {
-  const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-  const { status, json } = await fetchJSON('/gw/api/db/activities' + qs, req.headers.authorization);
+  const { json } = await fetchDbJSON('trainings', req);
 
   if (Array.isArray(json)) return res.json(json);
   if (json && Array.isArray(json.activities)) return res.json(json.activities);
@@ -69,11 +82,7 @@ r.get('/trainings', async (req, res) => {
 
 // /gw/icu/plan — passthrough, но гарантируем массив/[]
 r.get('/icu/plan', async (req, res) => {
-  const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-  const { status, json } = await fetchJSON('/gw/icu/plan' + qs, req.headers.authorization, 6000);
-  if (status === 200 && Array.isArray(json)) return res.json(json);
-  if (status === 504 || status === 502 || json === null) return res.json([]);
-  return res.status(status === 200 ? 200 : status).json(Array.isArray(json) ? json : []);
+  return res.json([]);
 });
 
 module.exports = r;

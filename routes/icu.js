@@ -1,6 +1,7 @@
 const express = require('express');
 const router  = express.Router();
 const { getRequestUserId } = require('../lib/request-auth');
+const { buildStasSourceHeaders } = require('../lib/request-source');
 
 const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
 const STAS_KEY  = process.env.STAS_KEY  ;
@@ -14,7 +15,9 @@ router.get('/events', async (req, res) => {
     // 1) creds из STAS bridge
     const credsUrl = new URL('/api/db/icu_creds', STAS_BASE);
     credsUrl.searchParams.set('user_id', user_id);
-    const cr = await fetch(credsUrl, { headers: { 'X-API-Key': STAS_KEY, 'Accept': 'application/json' }});
+    const cr = await fetch(credsUrl, {
+      headers: buildStasSourceHeaders(req, { 'X-API-Key': STAS_KEY, 'Accept': 'application/json' }),
+    });
     if (!cr.ok) return res.status(cr.status).json({ error: 'icu_creds_error' });
     const { api_key, athlete_id } = await cr.json();
     if (!api_key || !athlete_id) return res.status(404).json({ error: 'icu_creds_not_found' });

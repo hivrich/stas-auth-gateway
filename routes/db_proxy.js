@@ -1,6 +1,7 @@
 const express = require('express');
 const router  = express.Router();
 const { getRequestUserId } = require('../lib/request-auth');
+const { buildStasSourceHeaders } = require('../lib/request-source');
 
 // === Config to STAS DB Bridge ===
 const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
@@ -33,7 +34,7 @@ router.use(async (req, res) => {
 
   try {
     const r = await fetch(url, {
-      headers: { 'X-API-Key': STAS_KEY, 'Accept': 'application/json' },
+      headers: buildStasSourceHeaders(req, { 'X-API-Key': STAS_KEY, 'Accept': 'application/json' }),
       signal: ac.signal
     });
     const bodyText = await r.text();
