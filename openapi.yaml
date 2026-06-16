@@ -192,6 +192,32 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /gw/api/db/activity_detail:
+    get:
+      summary: Get activity detail (user_id inferred from Bearer)
+      operationId: dbActivityDetailGet
+      parameters:
+      - name: training_id
+        in: query
+        required: true
+        schema:
+          type: string
+          minLength: 1
+        description: Training id to load details for.
+      responses:
+        '200':
+          description: Activity detail object
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /gw/icu/events:
     get:
       summary: Intervals.icu events via gateway (user_id inferred from Bearer)
