@@ -573,37 +573,67 @@
       },
       "delete": {
         "operationId": "deletePlannedWorkouts",
-        "summary": "Delete planned workouts by external_id_prefix + date window (supports dry_run)",
+        "summary": "Delete planned workouts by exact id, exact external_id, or external_id_prefix + date window (supports dry_run)",
         "parameters": [
           {
-            "name": "external_id_prefix",
+            "name": "id",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string",
               "minLength": 1
             },
-            "description": "Delete only events whose external_id starts with this prefix, e.g. plan: or test:"
+            "description": "Exact Intervals event id to delete. Safest selector for one known event, e.g. 116577024. Can be comma-separated for multiple exact ids."
+          },
+          {
+            "name": "external_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "Exact external_id to delete, e.g. test:write-check:2026-06-18. Can be comma-separated or repeated as external_ids."
+          },
+          {
+            "name": "external_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "Comma-separated exact external_id values to delete. Use only when every value is known exactly."
+          },
+          {
+            "name": "external_id_prefix",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "Delete only events whose external_id starts with this prefix, e.g. plan: or test:. Requires oldest and newest. Gateway re-filters by external_id prefix before deleting."
           },
           {
             "name": "oldest",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string",
               "format": "date"
             },
-            "description": "Oldest date (YYYY-MM-DD) inclusive."
+            "description": "Oldest date (YYYY-MM-DD) inclusive. Required with external_id_prefix; optional narrowing window with external_id."
           },
           {
             "name": "newest",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string",
               "format": "date"
             },
-            "description": "Newest date (YYYY-MM-DD) inclusive."
+            "description": "Newest date (YYYY-MM-DD) inclusive. Required with external_id_prefix; optional narrowing window with external_id."
           },
           {
             "name": "dry_run",
@@ -613,7 +643,7 @@
               "type": "boolean",
               "default": false
             },
-            "description": "If true, do not delete, only report what would be deleted."
+            "description": "If true, do not delete, only report what would be deleted. Always use dry_run first before deleting by prefix."
           }
         ],
         "responses": {
@@ -637,7 +667,8 @@
               }
             }
           }
-        }
+        },
+        "description": "Safe delete selector. Prefer exact id for cleanup of a known single event. Otherwise use exact external_id. Use external_id_prefix only together with oldest and newest. The gateway filters returned events by external_id before dry-run and before real delete, so unrelated plan:* events are not selected when deleting test:*."
       },
       "post": {
         "operationId": "createPlannedWorkoutsGw",
@@ -1423,16 +1454,53 @@
             "items": {
               "type": "string"
             }
+          },
+          "selector": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": true
+          },
+          "to_delete": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer"
+              },
+              "ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": true
+          },
+          "deleted_count": {
+            "type": "integer"
+          },
+          "deleted_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {},
+              "additionalProperties": true
+            }
+          },
+          "mode_hint": {
+            "type": "string"
           }
         },
         "required": [
           "ok",
-          "dry_run",
-          "matched",
-          "deleted",
-          "ids"
+          "dry_run"
         ],
-        "additionalProperties": false
+        "additionalProperties": true
       },
       "CreatePlannedWorkoutsRequest": {
         "type": "object",
