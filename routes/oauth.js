@@ -1,14 +1,21 @@
 const express = require('express');
+const crypto = require('node:crypto');
 const router  = express.Router();
 const { resolveDirectIntervalsAuth } = require('../lib/request-auth');
 const { resolveOauthSource } = require('../lib/request-source');
 
 const INTERVALS_AUTH_URL = 'https://intervals.icu/oauth/authorize';
 const INTERVALS_TOKEN_URL = 'https://intervals.icu/api/oauth/token';
+const DEFAULT_INTERVALS_CALLBACK_URL = 'https://intervals.stas.run/gw/oauth/callback';
 const INTERVALS_SCOPE_RE = /\b(?:ACTIVITY|WELLNESS|CALENDAR|CHATS|LIBRARY|SETTINGS):(?:READ|WRITE)\b/;
 const DEFAULT_INTERVALS_SCOPE = 'ACTIVITY:WRITE,WELLNESS:WRITE,CALENDAR:WRITE,CHATS:WRITE,LIBRARY:WRITE,SETTINGS:WRITE';
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+const OAUTH_CODE_TTL_MS = 10 * 60 * 1000;
 const CLAUDE_CALLBACK_PATHS = new Set(['/api/mcp/auth_callback']);
 const CLAUDE_ALLOWED_HOSTS = new Set(['claude.ai', 'claude.com']);
+const CHATGPT_ALLOWED_HOSTS = new Set(['chat.openai.com', 'chatgpt.com']);
+const CHATGPT_CALLBACK_PATH_RE = /^\/aip\/g-[^/]+\/oauth\/callback$/;
+const pendingBridgeCodes = new Map();
 
 function trimToString(value) {
   if (value === null || value === undefined) return '';
@@ -44,6 +51,14 @@ function getServerIntervalsClientSecret() {
   return trimToString(process.env.INTERVALS_CLIENT_SECRET);
 }
 
+function getIntervalsCallbackUrl() {
+  return trimToString(
+    process.env.INTERVALS_OAUTH_CALLBACK_URL ||
+    process.env.INTERVALS_REDIRECT_URI ||
+    process.env.OAUTH_CALLBACK_URL,
+  ) || DEFAULT_INTERVALS_CALLBACK_URL;
+}
+
 function getClaudeClientId() {
   return trimToString(process.env.CLAUDE_OAUTH_CLIENT_ID) || 'claude-public-client';
 }
@@ -60,6 +75,18 @@ function isAllowedClaudeRedirectUri(uri) {
   }
 }
 
+function isAllowedChatGptRedirectUri(uri) {
+  const raw = trimToString(uri);
+  if (!raw) return false;
+
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:' && CHATGPT_ALLOWED_HOSTS.has(url.hostname) && CHATGPT_CALLBACK_PATH_RE.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
 function getClaudeIntervalsAuthConfig() {
   const clientId = getServerIntervalsClientId();
   const clientSecret = getServerIntervalsClientSecret();
@@ -71,6 +98,81 @@ function getClaudeIntervalsAuthConfig() {
   }
 
   return { clientId, clientSecret };
+}
+
+function base64url(input) {
+  return Buffer.from(input).toString('base64url');
+}
+
+function hmac(value) {
+  const secret = getServerIntervalsClientSecret() || process.env.OAUTH_STATE_SECRET || 'stas-oauth-state-dev-secret';
+  return crypto.createHmac('sha256', secret).update(value).digest('base64url');
+}
+
+function signState(payload) {
+  const body = base64url(JSON.stringify({
+    ...payload,
+    exp: Date.now() + OAUTH_STATE_TTL_MS,
+  }));
+  return `${body}.${hmac(body)}`;
+}
+
+function readSignedState(value) {
+  const raw = trimToString(value);
+  const [body, signature] = raw.split('.');
+  if (!body || !signature) return null;
+
+  const expected = hmac(body);
+  const expectedBuffer = Buffer.from(expected);
+  const signatureBuffer = Buffer.from(signature);
+  if (expectedBuffer.length !== signatureBuffer.length || !crypto.timingSafeEqual(expectedBuffer, signatureBuffer)) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    if (!payload || typeof payload !== 'object') return null;
+    if (!payload.exp || Date.now() > Number(payload.exp)) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function cleanupBridgeCodes() {
+  const now = Date.now();
+  for (const [code, record] of pendingBridgeCodes.entries()) {
+    if (!record || Number(record.expiresAt) <= now) pendingBridgeCodes.delete(code);
+  }
+}
+
+function createBridgeCode(record) {
+  cleanupBridgeCodes();
+  const code = `gpt_${crypto.randomBytes(24).toString('base64url')}`;
+  pendingBridgeCodes.set(code, {
+    ...record,
+    expiresAt: Date.now() + OAUTH_CODE_TTL_MS,
+  });
+  return code;
+}
+
+function takeBridgeCode(code) {
+  cleanupBridgeCodes();
+  const record = pendingBridgeCodes.get(code);
+  if (!record) return null;
+  pendingBridgeCodes.delete(code);
+  if (Number(record.expiresAt) <= Date.now()) return null;
+  return record;
+}
+
+function appendParams(uri, params) {
+  const url = new URL(uri);
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, String(value));
+    }
+  }
+  return url.toString();
 }
 
 router.post('/oauth/register', (req, res) => {
@@ -113,29 +215,44 @@ router.get('/oauth/authorize', (req, res, next) => {
     const uid = q.uid || q.user_id || '';
 
     if (isIntervalsScope(scope) || source === 'claude') {
-      const effectiveClientId = source === 'claude'
+      const isAllowedExternalRedirect = source === 'claude'
+        ? isAllowedClaudeRedirectUri(redirect_uri)
+        : isAllowedChatGptRedirectUri(redirect_uri);
+      const useServerClientForChatGpt = source === 'gpt' && !requestedClientId && isAllowedChatGptRedirectUri(redirect_uri);
+      const effectiveClientId = source === 'claude' || useServerClientForChatGpt
         ? getClaudeIntervalsAuthConfig().clientId
         : requestedClientId;
 
-      if (!redirect_uri || !effectiveClientId) {
+      if (!redirect_uri || !effectiveClientId || !isAllowedExternalRedirect) {
         return res.status(400).json({ error: 'invalid_request' });
       }
 
       const effectiveScope = isIntervalsScope(scope) ? scope : DEFAULT_INTERVALS_SCOPE;
+      const intervalsRedirectUri = getIntervalsCallbackUrl();
+      const bridgeState = signState({
+        source,
+        redirectUri: redirect_uri,
+        originalState: state,
+        effectiveClientId,
+        scope: effectiveScope,
+        intervalsRedirectUri,
+      });
       const url = new URL(INTERVALS_AUTH_URL);
       url.searchParams.set('client_id', effectiveClientId);
-      url.searchParams.set('redirect_uri', redirect_uri);
+      url.searchParams.set('redirect_uri', intervalsRedirectUri);
       url.searchParams.set('response_type', trimToString(q.response_type) || 'code');
       if (effectiveScope) url.searchParams.set('scope', effectiveScope);
-      if (state) url.searchParams.set('state', state);
+      url.searchParams.set('state', bridgeState);
       if (codeChallenge) url.searchParams.set('code_challenge', codeChallenge);
       if (codeChallengeMethod) url.searchParams.set('code_challenge_method', codeChallengeMethod);
 
       console.log('[oauth][authorize]', JSON.stringify({
         source,
         redirect_uri,
+        intervalsRedirectUri,
         requestedClientId: requestedClientId || null,
         effectiveClientId,
+        usedServerClientFallback: useServerClientForChatGpt,
         hasCodeChallenge: Boolean(codeChallenge),
         codeChallengeMethod: codeChallengeMethod || null,
       }));
@@ -164,6 +281,61 @@ router.get('/oauth/authorize', (req, res, next) => {
   }
 });
 
+router.get('/oauth/callback', (req, res) => {
+  const q = req.query || {};
+  const stateRecord = readSignedState(q.state);
+  if (!stateRecord) {
+    return res.status(400).json({ error: 'invalid_state' });
+  }
+
+  const source = stateRecord.source === 'claude' ? 'claude' : 'gpt';
+  const redirectUri = trimToString(stateRecord.redirectUri);
+  const isAllowedExternalRedirect = source === 'claude'
+    ? isAllowedClaudeRedirectUri(redirectUri)
+    : isAllowedChatGptRedirectUri(redirectUri);
+
+  if (!isAllowedExternalRedirect) {
+    return res.status(400).json({ error: 'invalid_redirect_uri' });
+  }
+
+  const upstreamError = trimToString(q.error);
+  if (upstreamError) {
+    return res.redirect(302, appendParams(redirectUri, {
+      error: upstreamError,
+      error_description: trimToString(q.error_description),
+      state: trimToString(stateRecord.originalState),
+    }));
+  }
+
+  const upstreamCode = trimToString(q.code);
+  if (!upstreamCode) {
+    return res.redirect(302, appendParams(redirectUri, {
+      error: 'invalid_request',
+      state: trimToString(stateRecord.originalState),
+    }));
+  }
+
+  const bridgeCode = createBridgeCode({
+    upstreamCode,
+    source,
+    redirectUri,
+    originalState: trimToString(stateRecord.originalState),
+    effectiveClientId: trimToString(stateRecord.effectiveClientId),
+    intervalsRedirectUri: trimToString(stateRecord.intervalsRedirectUri) || getIntervalsCallbackUrl(),
+  });
+
+  console.log('[oauth][callback]', JSON.stringify({
+    source,
+    redirectUri,
+    effectiveClientId: stateRecord.effectiveClientId || null,
+  }));
+
+  return res.redirect(302, appendParams(redirectUri, {
+    code: bridgeCode,
+    state: trimToString(stateRecord.originalState),
+  }));
+});
+
 router.post('/oauth/token', async (req, res) => {
   try {
     const b = Object.assign({}, req.body || {});
@@ -171,16 +343,28 @@ router.post('/oauth/token', async (req, res) => {
     if (!code) return res.status(400).json({ error: 'invalid_grant' });
 
     if (!code.startsWith('c_')) {
+      const bridgeRecord = code.startsWith('gpt_') ? takeBridgeCode(code) : null;
+      if (code.startsWith('gpt_') && !bridgeRecord) {
+        return res.status(400).json({ error: 'invalid_grant' });
+      }
+
       const basic = getBasicAuthCredentials(req);
       const requestedClientId = trimToString(b.client_id) || basic.clientId;
       const requestedClientSecret = trimToString(b.client_secret) || basic.clientSecret;
-      const redirectUri = trimToString(b.redirect_uri);
+      const redirectUri = bridgeRecord ? bridgeRecord.redirectUri : trimToString(b.redirect_uri);
+      const requestedRedirectUri = trimToString(b.redirect_uri);
       const codeVerifier = trimToString(b.code_verifier);
-      const source = resolveOauthSource({
+      const source = bridgeRecord ? bridgeRecord.source : resolveOauthSource({
         clientId: requestedClientId,
         redirectUri,
       });
-      const clientConfig = source === 'claude'
+
+      if (bridgeRecord && requestedRedirectUri && requestedRedirectUri !== bridgeRecord.redirectUri) {
+        return res.status(400).json({ error: 'invalid_grant', error_description: 'redirect_uri mismatch' });
+      }
+
+      const useServerClientForChatGpt = source === 'gpt' && isAllowedChatGptRedirectUri(redirectUri) && (!requestedClientId || !requestedClientSecret);
+      const clientConfig = source === 'claude' || useServerClientForChatGpt
         ? getClaudeIntervalsAuthConfig()
         : { clientId: requestedClientId, clientSecret: requestedClientSecret };
       const clientId = clientConfig.clientId;
@@ -190,21 +374,30 @@ router.post('/oauth/token', async (req, res) => {
         return res.status(400).json({ error: 'invalid_client' });
       }
 
+      if (bridgeRecord && bridgeRecord.effectiveClientId && clientId !== bridgeRecord.effectiveClientId) {
+        return res.status(400).json({ error: 'invalid_client' });
+      }
+
       const form = new URLSearchParams();
       form.set('grant_type', trimToString(b.grant_type) || 'authorization_code');
       form.set('client_id', clientId);
       form.set('client_secret', clientSecret);
-      form.set('code', code);
+      form.set('code', bridgeRecord ? bridgeRecord.upstreamCode : code);
 
       const upstreamPayload = {
         source,
         redirectUri: redirectUri || null,
+        intervalsRedirectUri: bridgeRecord ? bridgeRecord.intervalsRedirectUri : null,
         hasCodeVerifier: Boolean(codeVerifier),
         requestedClientId: requestedClientId || null,
         effectiveClientId: clientId,
+        usedServerClientFallback: useServerClientForChatGpt,
       };
 
-      if (source !== 'claude') {
+      if (bridgeRecord) {
+        form.set('redirect_uri', bridgeRecord.intervalsRedirectUri);
+        if (codeVerifier) form.set('code_verifier', codeVerifier);
+      } else if (source !== 'claude') {
         if (redirectUri) form.set('redirect_uri', redirectUri);
         if (codeVerifier) form.set('code_verifier', codeVerifier);
       }

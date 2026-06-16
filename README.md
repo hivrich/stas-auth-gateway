@@ -53,6 +53,14 @@ Server-local path: `/home/codex/codex-work/Projects/stas-auth-gateway`.
 
     npm run test:db-proxy
 
+OAuth flow нужно проверять отдельно после любой правки gateway-auth, OpenAPI Actions или деплоя bridge-api:
+
+    npm run test:oauth
+    scripts/smoke-oauth-gpt.sh
+
+Ожидаемый контракт: GPT OAuth с Intervals scope сразу отдаёт `302` на `https://intervals.icu/oauth/authorize`, но внутри Intervals URL должен быть `redirect_uri=https://intervals.stas.run/gw/oauth/callback`, а не ChatGPT callback.
+Legacy-страница ввода STAS ID не должна перехватывать этот сценарий.
+
 ## Systemd / Nginx
 
 Production examples live in `deploy/`.
