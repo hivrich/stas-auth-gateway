@@ -22,8 +22,8 @@
 
 ## Env
 
-- PORT — порт шлюза. Source of truth для local/server-local и production: `3337`.
-- STAS_BASE — http://127.0.0.1:3336 (DB-bridge)
+- PORT — порт шлюза. Для production Docker Compose сейчас используется `3001`.
+- STAS_BASE — адрес STAS app. В production Compose это `http://app:3000`.
 - STAS_KEY или DB_BRIDGE_API_KEY — API-key для DB-bridge
 - INTERVALS_API_BASE_URL — https://intervals.icu/api/v1
 - INTERVALS_CLIENT_ID — OAuth client для Intervals
@@ -65,11 +65,9 @@ Legacy-страница ввода STAS ID не должна перехваты�
 
 Active production for `intervals.stas.run` runs from `/opt/stas/docker-compose.yml`.
 The gateway service is `bridge-api`, built from `/opt/stas/bridge-api`, exposed inside Docker on `PORT=3001`.
-The older `/opt/stas-auth-gateway` checkout may exist on the server, but it is not the active runtime when `stas-bridge-api-1` is running.
+The older `/opt/stas-auth-gateway` checkout is not the active runtime when `stas-bridge-api-1` is running.
+On 2026-06-16 it was disabled by renaming it to `/opt/stas-auth-gateway.legacy-disabled-20260616T213939Z`.
 
 Current deploy instructions live in `docs/GATEWAY_DEPLOY_RUNBOOK.md`.
 
-Production examples for the older systemd/nginx setup still live in `deploy/`; treat them as legacy unless the active server has been moved back to systemd.
-
 Secrets and certificates are not stored in git.
-Use `deploy/.env.deploy.example` as a template, keep real values in ignored private files only.

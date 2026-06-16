@@ -16,7 +16,12 @@ Production runs from the `stas.run` Docker Compose stack:
 - Gateway container: `stas-bridge-api-1`
 - Gateway internal port: `3001`
 
-The old `/opt/stas-auth-gateway` checkout can exist on the server, but it is not the active runtime while `stas-bridge-api-1` is running.
+The old `/opt/stas-auth-gateway` checkout is not the active runtime while `stas-bridge-api-1` is running.
+On 2026-06-16 it was disabled by renaming it to:
+
+```bash
+/opt/stas-auth-gateway.legacy-disabled-20260616T213939Z
+```
 
 Do not deploy gateway changes to `109.172.46.200` for the current `intervals.stas.run` production host. That is an old host reference.
 
@@ -50,55 +55,35 @@ These two Actions JSON files must stay equivalent when changing GPT Actions.
 
 ## Safe Deploy
 
-From the local gateway repo:
+From the local gateway repo, sync the current repository contents to the production bridge source.
+Do not sync `node_modules`, local git metadata, Codex metadata, or private env files.
 
 ```bash
-tar -czf /tmp/stas-bridge-api-deploy.tgz \
-  README.md \
-  package.json \
-  openapi.actions.json \
-  openapi.min.json \
-  routes/oauth.js \
-  middleware/oauth_page.js \
-  docs/CLAUDE_REMOTE_MCP.md \
-  docs/GATEWAY_DEPLOY_RUNBOOK.md \
-  scripts/smoke-oauth-gpt.sh \
-  scripts/test-oauth-flow.js
-
-scp /tmp/stas-bridge-api-deploy.tgz intervals-prod:/tmp/
+rsync -az --delete \
+  --exclude node_modules \
+  --exclude .git \
+  --exclude .codex \
+  --exclude '.env*' \
+  ./ intervals-prod:/opt/stas/bridge-api/
 ```
 
 On the server:
 
 ```bash
 cd /opt/stas/bridge-api
-backup="/opt/stas/bridge-api/.backup/deploy-$(date -u +%Y%m%dT%H%M%SZ)"
+backup="/opt/stas/legacy-cleanup/bridge-api-predeploy-$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$backup"
-
-for f in \
-  README.md \
-  package.json \
-  openapi.actions.json \
-  openapi.min.json \
-  routes/oauth.js \
-  middleware/oauth_page.js \
-  docs/CLAUDE_REMOTE_MCP.md \
-  docs/GATEWAY_DEPLOY_RUNBOOK.md \
-  scripts/smoke-oauth-gpt.sh \
-  scripts/test-oauth-flow.js
-do
-  if [ -f "$f" ]; then
-    mkdir -p "$backup/$(dirname "$f")"
-    cp "$f" "$backup/$f"
-  fi
-done
-
-tar -xzf /tmp/stas-bridge-api-deploy.tgz -C /opt/stas/bridge-api
+tar -czf "$backup/source-before-deploy.tgz" \
+  --exclude node_modules \
+  --exclude .git \
+  --exclude .codex \
+  --exclude '.env*' \
+  .
 chmod +x /opt/stas/bridge-api/scripts/smoke-oauth-gpt.sh
-rm -f /tmp/stas-bridge-api-deploy.tgz
 
 cd /opt/stas
-docker compose up -d --build bridge-api
+docker compose build bridge-api
+docker compose up -d bridge-api
 ```
 
 ## Required Checks
@@ -150,4 +135,9 @@ Expected:
 
 Do not delete server directories or old checkouts during a normal deploy.
 
-Destructive cleanup candidates, such as removing `/opt/stas-auth-gateway` or old backup/action schema files, require a separate explicit cleanup approval and a fresh backup.
+Cleanup state from 2026-06-16:
+
+- Old checkout disabled, not deleted: `/opt/stas-auth-gateway.legacy-disabled-20260616T213939Z`
+- Old bridge source artifacts archived, not deleted: `/opt/stas/legacy-cleanup/bridge-api-artifacts-20260616T214204Z`
+
+Keep those archives for rollback until a separate cleanup approval says they can be deleted.

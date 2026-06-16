@@ -160,7 +160,8 @@ Bridge обязан пробрасывать источник:
 - `/opt/stas/bridge-api/openapi.actions.json`
 - `/opt/stas/bridge-api/openapi.min.json`
 
-Старый checkout `/opt/stas-auth-gateway` может существовать на сервере, но он не является активным runtime, если запущен Docker-контейнер `stas-bridge-api-1`.
+Старый checkout `/opt/stas-auth-gateway` не является активным runtime, если запущен Docker-контейнер `stas-bridge-api-1`.
+На 2026-06-16 он отключен переименованием в `/opt/stas-auth-gateway.legacy-disabled-20260616T213939Z`.
 
 ## Правило сопровождения
 
