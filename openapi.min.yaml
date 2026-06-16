@@ -67,6 +67,34 @@ paths:
                   error:
                     type: string
                 additionalProperties: true
+  /gw/api/db/activity_detail:
+    get:
+      summary: Activity detail (uid from Bearer)
+      parameters:
+      - name: training_id
+        in: query
+        required: true
+        schema:
+          type: string
+          minLength: 1
+      responses:
+        '200':
+          description: Activity detail
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                additionalProperties: true
   /gw/icu/events:
     get:
       summary: ICU events (uid from Bearer)

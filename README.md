@@ -44,6 +44,15 @@ Server-local path: `/home/codex/codex-work/Projects/stas-auth-gateway`.
 
     curl -sS http://127.0.0.1:3337/gw/healthz
 
+Для локальной проверки нового `activity_detail` есть отдельный smoke-скрипт:
+
+    GW_ACTIVITY_DETAIL_TOKEN=... GW_ACTIVITY_DETAIL_TRAINING_ID=... scripts/smoke-gw.sh
+
+По умолчанию эта проверка пропускается, так что реальные production `user_id` не нужны.
+Для быстрой проверки проксирования можно запустить:
+
+    npm run test:db-proxy
+
 ## Systemd / Nginx
 
 Production examples live in `deploy/`.
