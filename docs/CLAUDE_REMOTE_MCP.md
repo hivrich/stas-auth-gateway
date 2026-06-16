@@ -146,10 +146,10 @@ Bridge обязан пробрасывать источник:
 
 На production это лежит в:
 
-- `/opt/stas/bridge-api/routes/oauth.js`
-- `/opt/stas/bridge-api/server.js`
-- `/opt/stas/bridge-api/lib/request-auth.js`
-- `/opt/stas/bridge-api/lib/request-source.js`
+- `/opt/stas-auth-gateway/routes/oauth.js`
+- `/opt/stas-auth-gateway/server.js`
+- `/opt/stas-auth-gateway/lib/request-auth.js`
+- `/opt/stas-auth-gateway/lib/request-source.js`
 
 ## Правило сопровождения
 
