@@ -2305,6 +2305,13 @@
               "null"
             ]
           },
+          "maxGradePct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Maximum grade percent for the item when available from Intervals or derived from altitude/distance streams."
+          },
           "rank": {
             "type": [
               "integer",

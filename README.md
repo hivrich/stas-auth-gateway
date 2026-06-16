@@ -67,6 +67,8 @@ Active production for `intervals.stas.run` runs from `/opt/stas/docker-compose.y
 The gateway service is `bridge-api`, built from `/opt/stas/bridge-api`, exposed inside Docker on `PORT=3001`.
 The older `/opt/stas-auth-gateway` checkout may exist on the server, but it is not the active runtime when `stas-bridge-api-1` is running.
 
+Current deploy instructions live in `docs/GATEWAY_DEPLOY_RUNBOOK.md`.
+
 Production examples for the older systemd/nginx setup still live in `deploy/`; treat them as legacy unless the active server has been moved back to systemd.
 
 Secrets and certificates are not stored in git.
