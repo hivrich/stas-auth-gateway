@@ -1,21 +1,10 @@
 const express = require('express');
 const router  = express.Router();
+const { getRequestUserId } = require('../lib/request-auth');
 
 // === Config to STAS DB Bridge ===
 const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
 const STAS_KEY  = process.env.STAS_KEY  ;
-
-// === Helpers ===
-function uidFromBearer(req) {
-  const auth = String(req.headers['authorization'] || '');
-  const m = auth.match(/^Bearer\s+t_([A-Za-z0-9\-_]+)$/);
-  if (!m) return null;
-  try {
-    const b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
-    const json = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
-    return json && json.uid ? String(json.uid) : null;
-  } catch (_e) { return null; }
-}
 
 function safeJSON(text, fallback=null) {
   try { return JSON.parse(text); } catch { return fallback; }
@@ -29,7 +18,7 @@ router.use(async (req, res) => {
   // Ensure user_id (берём из Bearer, если клиент не прислал — мидлвар на /gw это уже делает, но подстрахуемся)
   const q = new URLSearchParams(req.query || {});
   if (!q.get('user_id')) {
-    const uid = uidFromBearer(req);
+    const uid = getRequestUserId(req);
     if (!uid) return res.status(401).json({ status: 401, error: 'missing_or_invalid_token' });
     q.set('user_id', uid);
   }

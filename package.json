@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
+    "test:bearer-auth": "node scripts/test-bearer-auth.js",
     "test:oauth": "node scripts/test-oauth-flow.js",
     "test:db-proxy": "node scripts/test-db-proxy.js"
   },

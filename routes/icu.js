@@ -1,26 +1,14 @@
 const express = require('express');
 const router  = express.Router();
+const { getRequestUserId } = require('../lib/request-auth');
 
 const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
 const STAS_KEY  = process.env.STAS_KEY  ;
 
-function uidFromBearerStrict(req){
-  const auth = String(req.headers['authorization'] || '');
-  const m = auth.match(/^Bearer\s+t_([A-Za-z0-9\-_]+)$/);
-  if (!m) return null;
-  try {
-    const b64 = m[1].replace(/-/g,'+').replace(/_/g,'/');
-    const json = JSON.parse(Buffer.from(b64,'base64').toString('utf8'));
-    const uid  = json && json.uid ? String(json.uid) : null;
-    return /^[0-9]+$/.test(String(uid)) ? uid : null;
-  } catch { return null; }
-}
-
 // GET /gw/icu/events?days=7 (или oldest/newest)
 router.get('/events', async (req, res) => {
   try {
-    // user_id ТОЛЬКО из Bearer
-    const user_id = uidFromBearerStrict(req);
+    const user_id = getRequestUserId(req);
     if (!user_id) return res.status(401).json({ status: 401, error: 'missing_or_invalid_token' });
 
     // 1) creds из STAS bridge

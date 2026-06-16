@@ -1,22 +1,24 @@
+const { applyResolvedAuth, resolveRequestAuth } = require('../lib/request-auth');
+
 /**
- * UID injector for /gw/api/db/*
- * Requires Bearer if ?user_id is missing. No defaults.
+ * UID injector for /gw/api/db/*.
+ * The global /gw middleware normally sets user_id already; this is a fallback.
  */
-module.exports = function(req, res, next){
+module.exports = async function(req, res, next){
   try{
     if (req.query && req.query.user_id) return next();
-    const auth = String(req.headers['authorization'] || '');
-    const m = auth.match(/^Bearer\s+t_([A-Za-z0-9\-_]+)$/);
-    if (!m) return res.status(401).json({status:401,error:'missing_or_invalid_token'});
-    const b64 = m[1].replace(/-/g,'+').replace(/_/g,'/');
-    const json = JSON.parse(Buffer.from(b64,'base64').toString('utf8'));
-    if (!json || !json.uid) return res.status(401).json({status:401,error:'missing_or_invalid_token'});
-    const uid = String(json.uid);
-    if (!req.query) req.query = {};
-    req.query.user_id = uid;
-    req.headers['x-user-id'] = uid;
+
+    const auth = await resolveRequestAuth(req);
+    if (!auth || !auth.userId) {
+      return res.status(401).json({status:401,error:'missing_or_invalid_token'});
+    }
+
+    applyResolvedAuth(req, res, auth);
     return next();
-  }catch(_e){
+  }catch(error){
+    console.error('[uid_inject_db][auth_failed]', error?.status || 502, error?.message || error);
+    const status = Number(error?.status) || 401;
+    if (status >= 500) return res.status(status).json({status,error:'auth_resolution_failed'});
     return res.status(401).json({status:401,error:'missing_or_invalid_token'});
   }
 };
