@@ -229,7 +229,10 @@ async function main() {
   assert.ok(metadata.agent_auth);
   assert.equal(metadata.revocation_endpoint, 'https://intervals.stas.run/gw/oauth/revoke');
   assert.ok(metadata.grant_types_supported.includes(AGENT_AUTH_GRANT_TYPE));
-  assert.deepEqual(metadata.agent_auth.scopes_supported, [AGENT_AUTH_SCOPE]);
+  assert.equal(metadata.agent_auth.identity_endpoint, 'https://intervals.stas.run/gw/agent/identity');
+  assert.equal(metadata.agent_auth.register_uri, metadata.agent_auth.identity_endpoint);
+  assert.deepEqual(metadata.agent_auth.scopes_supported, ['stas.mcp.read']);
+  assert.equal(AGENT_AUTH_SCOPE, 'stas.mcp.read');
 
   const server = await startServer(makeApp());
   const address = server.address();
