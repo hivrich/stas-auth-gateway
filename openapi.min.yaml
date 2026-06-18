@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
-  title: STAS Gateway (Minimal)
-  version: 0.1.1
+  title: STAS Gateway
+  version: 1.0.0
 servers:
 - url: https://intervals.stas.run
 components:
@@ -13,18 +13,25 @@ components:
           authorizationUrl: https://intervals.stas.run/gw/oauth/authorize
           tokenUrl: https://intervals.stas.run/gw/oauth/token
           scopes:
-            read:me: Read
-            icu: ICU
-            workouts:write: Write
+            ACTIVITY:WRITE: Read and write activities
+            WELLNESS:WRITE: Read and write wellness data
+            CALENDAR:WRITE: Read and write planned workouts
+            CHATS:WRITE: Read and write chats
+            LIBRARY:WRITE: Read and write workout library
+            SETTINGS:WRITE: Read and write athlete settings
 security:
 - oauth2:
-  - read:me
-  - icu
-  - workouts:write
+  - ACTIVITY:WRITE
+  - WELLNESS:WRITE
+  - CALENDAR:WRITE
+  - CHATS:WRITE
+  - LIBRARY:WRITE
+  - SETTINGS:WRITE
 paths:
   /gw/healthz:
     get:
       summary: Health
+      operationId: healthzGet
       responses:
         '200':
           description: OK
@@ -42,13 +49,7 @@ paths:
   /gw/api/db/user_summary:
     get:
       summary: User summary (uid from Bearer)
-      parameters:
-      - name: user_id
-        in: query
-        required: false
-        schema:
-          type: string
-          pattern: ^[0-9]+$
+      operationId: dbUserSummaryGet
       responses:
         '200':
           description: User summary
@@ -59,17 +60,46 @@ paths:
                 additionalProperties: true
         '401':
           description: Unauthorized
+  /gw/api/db/activities:
+    get:
+      summary: List activities (uid from Bearer)
+      operationId: dbActivitiesGet
+      parameters:
+      - name: days
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 365
+      - name: from
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+      responses:
+        '200':
+          description: Array of activities
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                additionalProperties: true
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+        '401':
+          description: Unauthorized
   /gw/api/db/activity_detail:
     get:
       summary: Activity detail (uid from Bearer)
+      operationId: dbActivityDetailGet
       parameters:
       - name: training_id
         in: query
@@ -98,6 +128,7 @@ paths:
   /gw/icu/events:
     get:
       summary: ICU events (uid from Bearer)
+      operationId: icuEventsGet
       parameters:
       - name: days
         in: query
@@ -106,6 +137,18 @@ paths:
           type: integer
           minimum: 1
           maximum: 365
+      - name: oldest
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+      - name: newest
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
       responses:
         '200':
           description: Events array
@@ -118,11 +161,3 @@ paths:
                   additionalProperties: true
         '401':
           description: Unauthorized
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                additionalProperties: true

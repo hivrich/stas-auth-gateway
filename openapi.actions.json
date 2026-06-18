@@ -12,7 +12,7 @@
   ],
   "security": [
     {
-      "oauth2": ["read:me", "icu", "workouts:write"]
+      "oauth2": ["ACTIVITY:WRITE", "WELLNESS:WRITE", "CALENDAR:WRITE", "CHATS:WRITE", "LIBRARY:WRITE", "SETTINGS:WRITE"]
     }
   ],
   "paths": {
@@ -468,12 +468,15 @@
         "type": "oauth2",
         "flows": {
           "authorizationCode": {
-            "authorizationUrl": "https://stas.run/api/gpt/oauth/authorize",
-            "tokenUrl": "https://stas.run/api/gpt/oauth/token",
+            "authorizationUrl": "https://intervals.stas.run/gw/oauth/authorize",
+            "tokenUrl": "https://intervals.stas.run/gw/oauth/token",
             "scopes": {
-              "read:me": "Read profile",
-              "icu": "Access ICU proxy",
-              "workouts:write": "Write workouts"
+              "ACTIVITY:WRITE": "Read and write activities",
+              "WELLNESS:WRITE": "Read and write wellness data",
+              "CALENDAR:WRITE": "Read and write planned workouts",
+              "CHATS:WRITE": "Read and write chats",
+              "LIBRARY:WRITE": "Read and write workout library",
+              "SETTINGS:WRITE": "Read and write athlete settings"
             }
           }
         }
@@ -508,7 +511,7 @@
           },
           "user_id": {
             "type": "string",
-            "description": "STAS user id from JWT"
+            "description": "Intervals athlete id resolved from OAuth token"
           },
           "email": {
             "type": "string"
@@ -712,7 +715,12 @@
                 },
                 "description": {
                   "type": "string",
-                  "description": "Structured multi-line description"
+                  "description": "Structured multi-line description. For structured workouts, use native Intervals.icu workout text lines, for example '- 10m Z2 HR'. HR-only workouts must use HR targets such as Z2 HR, not pace or power."
+                },
+                "target": {
+                  "type": "string",
+                  "enum": ["AUTO", "POWER", "HR", "PACE"],
+                  "description": "Optional Intervals workout target. Use HR for heart-rate-only structured workouts, PACE for pace-led run workouts, and POWER for power-led workouts. If omitted, STAS infers it from description when possible."
                 },
                 "color": {
                   "type": "string",

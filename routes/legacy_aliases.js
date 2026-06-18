@@ -1,17 +1,21 @@
 'use strict';
 const express = require('express');
 const http = require('http');
+const { getRequestSource } = require('../lib/request-source');
 
 const r = express.Router();
 
-function fetchJSON(path, auth, timeoutMs = 5000){
+function fetchJSON(path, auth, source, timeoutMs = 5000){
   return new Promise((resolve) => {
     const req = http.request({
       hostname: '127.0.0.1',
-      port: 3338,
+      port: Number(process.env.PORT) || 3337,
       path,
       method: 'GET',
-      headers: { 'Authorization': auth || '' },
+      headers: {
+        'Authorization': auth || '',
+        'x-stas-source': source || 'gpt',
+      },
       timeout: timeoutMs,
     }, (res) => {
       let buf = '';
@@ -32,7 +36,7 @@ function fetchJSON(path, auth, timeoutMs = 5000){
 // Нормализуем в объект с { ok:true, user_summary:[...] }
 r.get('/user_summary', async (req, res) => {
   const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-  const { status, json } = await fetchJSON('/gw/api/db/user_summary' + qs, req.headers.authorization);
+  const { status, json } = await fetchJSON('/gw/api/db/user_summary' + qs, req.headers.authorization, getRequestSource(req));
 
   // уже правильный объект с ok:true
   if (json && typeof json === 'object' && json.ok === true) {
@@ -57,7 +61,7 @@ r.get('/user_summary', async (req, res) => {
 // Гарантируем массив
 r.get('/trainings', async (req, res) => {
   const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-  const { status, json } = await fetchJSON('/gw/api/db/activities' + qs, req.headers.authorization);
+  const { status, json } = await fetchJSON('/gw/api/db/activities' + qs, req.headers.authorization, getRequestSource(req));
 
   if (Array.isArray(json)) return res.json(json);
   if (json && Array.isArray(json.activities)) return res.json(json.activities);
@@ -70,7 +74,7 @@ r.get('/trainings', async (req, res) => {
 // /gw/icu/plan — passthrough, но гарантируем массив/[]
 r.get('/icu/plan', async (req, res) => {
   const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-  const { status, json } = await fetchJSON('/gw/icu/plan' + qs, req.headers.authorization, 6000);
+  const { status, json } = await fetchJSON('/gw/icu/plan' + qs, req.headers.authorization, getRequestSource(req), 6000);
   if (status === 200 && Array.isArray(json)) return res.json(json);
   if (status === 504 || status === 502 || json === null) return res.json([]);
   return res.status(status === 200 ? 200 : status).json(Array.isArray(json) ? json : []);

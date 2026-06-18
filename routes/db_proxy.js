@@ -1,21 +1,11 @@
 const express = require('express');
 const router  = express.Router();
+const { getRequestUserId } = require('../lib/request-auth');
+const { buildStasSourceHeaders } = require('../lib/request-source');
 
 // === Config to STAS DB Bridge ===
 const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
 const STAS_KEY  = process.env.STAS_KEY  ;
-
-// === Helpers ===
-function uidFromBearer(req) {
-  const auth = String(req.headers['authorization'] || '');
-  const m = auth.match(/^Bearer\s+t_([A-Za-z0-9\-_]+)$/);
-  if (!m) return null;
-  try {
-    const b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
-    const json = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
-    return json && json.uid ? String(json.uid) : null;
-  } catch (_e) { return null; }
-}
 
 function safeJSON(text, fallback=null) {
   try { return JSON.parse(text); } catch { return fallback; }
@@ -29,7 +19,7 @@ router.use(async (req, res) => {
   // Ensure user_id (берём из Bearer, если клиент не прислал — мидлвар на /gw это уже делает, но подстрахуемся)
   const q = new URLSearchParams(req.query || {});
   if (!q.get('user_id')) {
-    const uid = uidFromBearer(req);
+    const uid = getRequestUserId(req);
     if (!uid) return res.status(401).json({ status: 401, error: 'missing_or_invalid_token' });
     q.set('user_id', uid);
   }
@@ -43,9 +33,24 @@ router.use(async (req, res) => {
   const timer = setTimeout(() => ac.abort('timeout'), 5000);
 
   try {
+    const headers = buildStasSourceHeaders(req, {
+      'X-API-Key': STAS_KEY,
+      'Accept': 'application/json',
+    });
+    const method = req.method || 'GET';
+    const fetchOptions = {
+      method,
+      headers,
+      signal: ac.signal,
+    };
+
+    if (method !== 'GET' && method !== 'HEAD' && req.body !== undefined) {
+      headers['Content-Type'] = 'application/json';
+      fetchOptions.body = JSON.stringify(req.body);
+    }
+
     const r = await fetch(url, {
-      headers: { 'X-API-Key': STAS_KEY, 'Accept': 'application/json' },
-      signal: ac.signal
+      ...fetchOptions,
     });
     const bodyText = await r.text();
     let body = bodyText;
@@ -57,7 +62,8 @@ router.use(async (req, res) => {
   } catch (e) {
     const ms = Date.now() - started;
     console.error(`[db_proxy][ERR] ${e?.message || e} after ${ms}ms`);
-    const status = e === 'timeout' || String(e.message||'').includes('aborted') ? 504 : 502;
+    const msg = String(e?.message || e || '');
+    const status = msg.includes('aborted') || msg.includes('timeout') ? 504 : 502;
     res.status(status).json({ error: status === 504 ? 'gateway_timeout' : 'bad_gateway' });
   } finally {
     clearTimeout(timer);
