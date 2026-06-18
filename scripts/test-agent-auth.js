@@ -231,6 +231,9 @@ async function main() {
   assert.ok(metadata.grant_types_supported.includes(AGENT_AUTH_GRANT_TYPE));
   assert.equal(metadata.agent_auth.identity_endpoint, 'https://intervals.stas.run/gw/agent/identity');
   assert.equal(metadata.agent_auth.register_uri, metadata.agent_auth.identity_endpoint);
+  assert.equal(metadata.agent_auth.claim_endpoint, 'https://intervals.stas.run/gw/agent/identity/claim');
+  assert.equal(metadata.agent_auth.claim_uri, metadata.agent_auth.claim_endpoint);
+  assert.deepEqual(metadata.agent_auth.anonymous.credential_types_supported, ['bearer']);
   assert.deepEqual(metadata.agent_auth.scopes_supported, ['stas.mcp.read']);
   assert.equal(AGENT_AUTH_SCOPE, 'stas.mcp.read');
 
