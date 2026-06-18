@@ -9,6 +9,9 @@ const stas        = require('./routes/stas');
 const icu         = require('./routes/icu');
 const openapi     = require('./routes/openapi');
 const oauth       = require('./routes/oauth');
+const agent       = require('./routes/agent');
+const agentReadOnlyGuard = require('./middleware/agent_read_only');
+const { buildOAuthAuthorizationServerMetadata } = require('./lib/oauth-metadata');
 const { buildStasSourceHeaders } = require('./lib/request-source');
 
 const PORT = process.env.PORT || 3337;
@@ -27,25 +30,13 @@ app.get('/gw/version', (_req, res) => res.json({ name: 'stas-auth-gateway', vers
 
 app.get('/.well-known/oauth-authorization-server', (req, res) => {
   const origin = `${req.protocol}://${req.get('host')}`;
-  const methods = ['client_secret_basic', 'client_secret_post'];
-  if (process.env.INTERVALS_CLIENT_ID && process.env.INTERVALS_CLIENT_SECRET) {
-    methods.push('none');
-  }
-
-  res.json({
-    issuer: origin,
-    authorization_endpoint: `${origin}/gw/oauth/authorize`,
-    token_endpoint: `${origin}/gw/oauth/token`,
-    registration_endpoint: `${origin}/gw/oauth/register`,
-    response_types_supported: ['code'],
-    grant_types_supported: ['authorization_code'],
-    code_challenge_methods_supported: ['S256', 'plain'],
-    token_endpoint_auth_methods_supported: methods,
-  });
+  res.json(buildOAuthAuthorizationServerMetadata(origin));
 });
 
 app.use('/gw', openapi);
+app.use('/gw', agent);
 app.use('/gw', bearerUid());
+app.use('/gw', agentReadOnlyGuard());
 require("./routes/icu_post_passthru_gw")(app);
 require("./routes/icu_post_real_gw")(app);
 require("./routes/icu_delete_exact_gw")(app);

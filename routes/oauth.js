@@ -3,6 +3,12 @@ const crypto = require('node:crypto');
 const router  = express.Router();
 const { resolveDirectIntervalsAuth } = require('../lib/request-auth');
 const { resolveOauthSource } = require('../lib/request-source');
+const {
+  AGENT_AUTH_GRANT_TYPE,
+  isAgentAuthConfigured,
+  pollAgentClaimToken,
+  revokeAgentAccessToken,
+} = require('../lib/agent-auth');
 
 const INTERVALS_AUTH_URL = 'https://intervals.icu/oauth/authorize';
 const INTERVALS_TOKEN_URL = 'https://intervals.icu/api/oauth/token';
@@ -336,9 +342,39 @@ router.get('/oauth/callback', (req, res) => {
   }));
 });
 
+router.post('/oauth/revoke', (req, res) => {
+  if (!isAgentAuthConfigured()) {
+    return res.status(503).json({ error: 'service_unavailable', reason: 'agent_auth_not_configured' });
+  }
+
+  const token = trimToString(req.body?.token || req.body?.access_token);
+  if (token) revokeAgentAccessToken(token);
+  return res.json({ ok: true });
+});
+
 router.post('/oauth/token', async (req, res) => {
   try {
     const b = Object.assign({}, req.body || {});
+    const grantType = trimToString(b.grant_type);
+
+    if (grantType === AGENT_AUTH_GRANT_TYPE) {
+      if (!isAgentAuthConfigured()) {
+        return res.status(503).json({ error: 'service_unavailable', reason: 'agent_auth_not_configured' });
+      }
+
+      const claimToken = trimToString(b.claim_token);
+      if (!claimToken) return res.status(400).json({ error: 'invalid_request' });
+
+      const result = pollAgentClaimToken(claimToken);
+      if (!result.ok) {
+        const body = { error: result.error };
+        if (result.interval) body.interval = result.interval;
+        return res.status(result.status || 400).json(body);
+      }
+
+      return res.json(result.body);
+    }
+
     const code = trimToString(b.code || b.authorization_code);
     if (!code) return res.status(400).json({ error: 'invalid_grant' });
 
