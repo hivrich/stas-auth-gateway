@@ -1,8 +1,8 @@
 {
-  "client_id": "chatgpt-actions",
-  "client_secret": "your-client-secret-here",
+  "client_id": "INTERVALS_CLIENT_ID",
+  "client_secret": "INTERVALS_CLIENT_SECRET",
   "authorization_url": "https://intervals.stas.run/gw/oauth/authorize",
-  "token_url": "https://intervals.stas.run/gw/oauth/token", 
-  "scope": "read:me icu workouts:write",
+  "token_url": "https://intervals.stas.run/gw/oauth/token",
+  "scope": "ACTIVITY:WRITE,WELLNESS:WRITE,CALENDAR:WRITE,CHATS:WRITE,LIBRARY:WRITE,SETTINGS:WRITE",
   "token_exchange_method": "default"
 }

@@ -37,9 +37,13 @@ r.get('/icu/plan/_probe_open', async (req,res)=>{
 
     const url  = `${ICU_BASE}/athlete/${encodeURIComponent(athlete)}/events?oldest=${encodeURIComponent(oldest)}&newest=${encodeURIComponent(newest)}`;
     res.set('X-ICU-URL', url);
-    const auth = 'Basic ' + Buffer.from(`API_KEY:${apiKey}`).toString('base64');
 
-    const rr = await fetch(url, { headers: { Authorization: auth } });
+    // Try Bearer (OAuth token) first, fallback to Basic (API key)
+    let rr = await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` } });
+    if (rr.status === 401 || rr.status === 403) {
+      const auth = 'Basic ' + Buffer.from(`API_KEY:${apiKey}`).toString('base64');
+      rr = await fetch(url, { headers: { Authorization: auth } });
+    }
     res.set('X-ICU-Http', String(rr.status));
     if (!rr.ok) {
       const txt = await rr.text().catch(()=> '');

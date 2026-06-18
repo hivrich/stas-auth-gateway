@@ -42,7 +42,11 @@ r.get('/icu/plan', async (req,res)=>{
     if(!api_key || !athlete_id){ res.set('X-ICU-Status','skip-no-creds'); return res.json([]); }
 
     const url = `${ICU_BASE}/athlete/${encodeURIComponent(athlete_id)}/events?oldest=${encodeURIComponent(oldest)}&newest=${encodeURIComponent(newest)}`;
-    const rr  = await fetch(url, { headers: { Authorization: 'Basic ' + Buffer.from('API_KEY:'+api_key).toString('base64') }});
+    // Try Bearer (OAuth token) first, fallback to Basic (API key)
+    let rr = await fetch(url, { headers: { Authorization: `Bearer ${api_key}` }});
+    if (rr.status === 401 || rr.status === 403) {
+      rr = await fetch(url, { headers: { Authorization: 'Basic ' + Buffer.from('API_KEY:'+api_key).toString('base64') }});
+    }
     res.set('X-ICU-Http', String(rr.status));
     if(!rr.ok){ const txt = await rr.text().catch(()=> ''); res.set('X-ICU-Status','icu-error'); return res.status(502).json({ ok:false, source:'icu', status: rr.status, body: (txt||'').slice(0,400) }); }
 

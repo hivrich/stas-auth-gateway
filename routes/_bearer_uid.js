@@ -1,10 +1,14 @@
 /**
  * Global Bearer→UID middleware for /gw/*
- * Requires: Authorization: Bearer t_<base64url>{"uid":"<digits>"}
- * Sets: req.query.user_id, req.user_id, x-user-id
+ * Supports:
+ * - Legacy gateway Bearer t_<base64url>{"uid":"..."}
+ * - Direct Intervals OAuth Bearer tokens
+ * Sets: req.query.user_id, req.user_id, req.intervals_token, x-user-id
  */
+const { applyResolvedAuth, getBearerToken, resolveRequestAuth } = require('../lib/request-auth');
+
 module.exports = function () {
-  return function (req, res, next) {
+  return async function (req, res, next) {
     // bypass for auth/health/openapi/version (учитываем и полный, и «срезанный» путь)
     const ou = String(req.originalUrl || '');
     const p  = String(req.path || req.url || '');
@@ -13,31 +17,29 @@ module.exports = function () {
     }
 
     const bad = () => res.status(401).json({ status: 401, error: 'missing_or_invalid_token' });
+    const authRequired = () => res.status(401).json({
+      status: 401,
+      error: 'auth_required',
+      message: 'Требуется переподключение. Попросите пользователя заново войти через Intervals.icu',
+    });
+
     try {
-      const auth = String(req.headers['authorization'] || '');
-      if (!auth.startsWith('Bearer ')) return bad();
-      const tok = auth.slice(7).trim();
-      if (!tok.startsWith('t_')) return bad();
+      const token = getBearerToken(req);
+      if (!token) return bad();
 
-      const b64 = tok.slice(2).replace(/-/g, '+').replace(/_/g, '/');
-      let uid = null;
-      try {
-        const parsed = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
-        uid = parsed && parsed.uid ? String(parsed.uid) : null;
-      } catch {}
-      if (!uid || !/^[0-9]+$/.test(uid)) return bad();
+      const auth = await resolveRequestAuth(req);
+      if (!auth) {
+        return token.startsWith('t_') ? bad() : authRequired();
+      }
 
-      // wipe client-provided user_id and set ours
-      const q = Object.assign({}, req.query);
-      delete q.user_id;
-      q.user_id = uid;
-      req.query   = q;
-      req.user_id = uid;
-      req.headers['x-user-id'] = uid;
-
+      applyResolvedAuth(req, res, auth);
       return next();
-    } catch {
-      return bad();
+    } catch (error) {
+      if (error?.status === 401) return authRequired();
+      return res.status(error?.status || 502).json({
+        status: error?.status || 502,
+        error: 'user_sync_failed',
+      });
     }
   };
 };

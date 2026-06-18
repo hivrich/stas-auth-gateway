@@ -4,11 +4,16 @@ module.exports = function oauthPage() {
     const accept = String(req.headers['accept'] || '');
     const isAuthorize = ou.startsWith('/gw/oauth/authorize') || ou === '/oauth/authorize';
     const hasUid = /[?&](uid|user_id)=\d+/.test(ou);
+    const searchParams = new URL('http://x' + ou).searchParams;
+    const scope = searchParams.get('scope') || '';
+    const redirectUri = String(searchParams.get('redirect_uri') || '').toLowerCase();
+    const isIntervalsScope = /\b(?:ACTIVITY|WELLNESS|CALENDAR|CHATS|LIBRARY|SETTINGS):(?:READ|WRITE)\b/.test(scope);
+    const isClaudeCallback = redirectUri.includes('claude.ai/api/mcp/auth_callback') || redirectUri.includes('claude.com/api/mcp/auth_callback');
 
-    if (!isAuthorize || hasUid) return next();         // отдаём в реальный oauth-роутер
+    if (!isAuthorize || hasUid || isIntervalsScope || isClaudeCallback) return next();         // отдаём в реальный oauth-роутер
 
     // соберём исходные параметры, чтобы вернуть их при сабмите
-    const q = new URL('http://x' + ou).searchParams;
+    const q = searchParams;
     const qp = ['response_type','client_id','redirect_uri','state','scope']
       .map(k => q.get(k) ? `${k}=${encodeURIComponent(q.get(k))}` : '')
       .filter(Boolean)

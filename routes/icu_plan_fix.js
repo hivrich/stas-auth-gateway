@@ -102,12 +102,15 @@ r.get('/icu/plan', async (req, res) => {
       return res.json([]);
     }
 
-    // 2) ICU fetch
+    // 2) ICU fetch — Bearer (OAuth) first, fallback to Basic (API key)
     res.set('X-ICU-Where','fetch');
     const url  = `${ICU_BASE}/athlete/${encodeURIComponent(athlete)}/events?oldest=${encodeURIComponent(oldest)}&newest=${encodeURIComponent(newest)}`;
-    const auth = 'Basic ' + Buffer.from(`API_KEY:${apiKey}`).toString('base64');
 
-    const rr = await fetch(url, { headers: { Authorization: auth } });
+    let rr = await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` } });
+    if (rr.status === 401 || rr.status === 403) {
+      const auth = 'Basic ' + Buffer.from(`API_KEY:${apiKey}`).toString('base64');
+      rr = await fetch(url, { headers: { Authorization: auth } });
+    }
     res.set('X-ICU-Http', String(rr.status));
     if (!rr.ok) {
       const body = await rr.text().catch(()=> '');

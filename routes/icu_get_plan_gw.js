@@ -32,7 +32,11 @@ module.exports = app => {
       if (newest) u.searchParams.set('newest', newest);
       u.searchParams.set('includePlanned', 'true');
 
-      const r = await fetch(u, { headers: { Authorization: b64(api_key), Accept:'application/json' } });
+      // Try Bearer (OAuth token) first, fallback to Basic (API key)
+      let r = await fetch(u, { headers: { Authorization: `Bearer ${api_key}`, Accept:'application/json' } });
+      if (r.status === 401 || r.status === 403) {
+        r = await fetch(u, { headers: { Authorization: b64(api_key), Accept:'application/json' } });
+      }
       const t = await r.text();
       if (!r.ok) return res.status(r.status).json({ status:r.status, error:'icu_upstream_error', detail:t });
       res.type('application/json').send(t);
