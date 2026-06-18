@@ -1,5 +1,6 @@
 const express = require('express');
 const { getIcuRequestAuth } = require('../lib/icu-request-auth');
+const { applyInferredWorkoutTarget } = require('../lib/structured_workout_target');
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const WEEKLY_REVIEW_RE = /^note:(\d{4}-\d{2}-\d{2})(:weekly-review-w(\d{1,2})(?::.*)?)$/i;
@@ -207,6 +208,7 @@ module.exports = function(app){
         const isWeeklyReview = normalizeWeeklyReviewNote(normalized);
         const isWeeklySummary = !isWeeklyReview && normalizeWeeklySummaryNote(normalized);
         if (!isWeeklyReview && !isWeeklySummary && normalized.for_week === true) normalizeForWeekEvent(normalized);
+        applyInferredWorkoutTarget(normalized);
         return normalized;
       });
       const url = `${API_BASE}/athlete/${encodeURIComponent(auth.athleteId)}/events/bulk?upsert=true`;
