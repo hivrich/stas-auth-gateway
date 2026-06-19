@@ -34,10 +34,6 @@ const dbProxyHandler = dbProxy.stack?.[0]?.handle;
 
 assert.strictEqual(typeof dbProxyHandler, 'function', 'db_proxy handler not found');
 
-function makeLegacyToken(uid) {
-  return `t_${Buffer.from(JSON.stringify({ uid })).toString('base64url')}`;
-}
-
 function makeReq(query, userId, options = {}) {
   const path = options.path || '/activity_detail';
   const method = options.method || 'GET';
@@ -56,7 +52,8 @@ function makeReq(query, userId, options = {}) {
   };
 
   if (userId) {
-    req.headers.authorization = `Bearer ${makeLegacyToken(userId)}`;
+    req.auth = { userId: String(userId), authMode: 'test', source: 'gpt' };
+    req.user_id = String(userId);
   }
   if (options.body !== undefined) {
     req.headers['content-type'] = options.contentType || 'application/json';
@@ -167,7 +164,7 @@ async function main() {
     assert.strictEqual(forwarded.searchParams.get('user_id'), 'user-42');
     assert.strictEqual(hit.headers['X-API-Key'], 'test-stas-key');
 
-    response = await runRequest({ training_id: 'train-456', user_id: 'explicit-7' }, 'user-42');
+    response = await runRequest({ training_id: 'train-456', user_id: 'explicit-7', uid: 'uid-7' }, 'user-42');
     assert.strictEqual(response.statusCode, 200);
 
     assert.strictEqual(upstreamHits.length, 2);
@@ -175,9 +172,10 @@ async function main() {
     forwarded = new URL(hit.url);
     assert.strictEqual(forwarded.pathname, '/api/db/activity_detail');
     assert.strictEqual(forwarded.searchParams.get('training_id'), 'train-456');
-    assert.strictEqual(forwarded.searchParams.get('user_id'), 'explicit-7');
+    assert.strictEqual(forwarded.searchParams.get('user_id'), 'user-42');
+    assert.strictEqual(forwarded.searchParams.has('uid'), false);
 
-    response = await runRequest({ training_id: 'train-789' });
+    response = await runRequest({ training_id: 'train-789', user_id: 'query-only' });
     assert.strictEqual(response.statusCode, 401);
     assert.deepStrictEqual(response.jsonBody, { status: 401, error: 'missing_or_invalid_token' });
     assert.strictEqual(upstreamHits.length, 2);

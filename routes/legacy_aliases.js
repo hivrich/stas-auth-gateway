@@ -10,10 +10,10 @@ const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
 async function fetchDbJSON(endpoint, req, timeoutMs = 5000) {
   const url = new URL(`/api/db/${endpoint}`, STAS_BASE);
   const qs = new URLSearchParams(req.query || {});
-  if (!qs.get('user_id')) {
-    const uid = getRequestUserId(req);
-    if (uid) qs.set('user_id', uid);
-  }
+  const uid = getRequestUserId(req);
+  if (!uid) return { status: 401, json: { status: 401, error: 'missing_or_invalid_token' } };
+  qs.delete('uid');
+  qs.set('user_id', uid);
   for (const [key, value] of qs.entries()) {
     if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, value);
   }
@@ -70,7 +70,9 @@ r.get('/user_summary', async (req, res) => {
 // /gw/trainings  ==> /gw/api/db/activities
 // Гарантируем массив
 r.get('/trainings', async (req, res) => {
-  const { json } = await fetchDbJSON('trainings', req);
+  const { status, json } = await fetchDbJSON('trainings', req);
+
+  if (status === 401) return res.status(401).json(json);
 
   if (Array.isArray(json)) return res.json(json);
   if (json && Array.isArray(json.activities)) return res.json(json.activities);

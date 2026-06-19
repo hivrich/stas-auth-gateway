@@ -1,12 +1,28 @@
 const express = require('express');
 const { pipeProxy } = require('../helpers/simpleProxy');
+const { getRequestUserId } = require('../lib/request-auth');
 
 const STAS_BASE = process.env.STAS_INTERNAL_BASE_URL || 'http://127.0.0.1:3336';
 const STAS_KEY  = process.env.STAS_API_KEY || '';
 const router = express.Router();
 
+function rewriteIdentityQuery(value, uid) {
+  if (!value) return value;
+  const parsed = new URL(value, 'http://gateway.local');
+  parsed.searchParams.delete('uid');
+  parsed.searchParams.set('user_id', uid);
+  return `${parsed.pathname}${parsed.search}`;
+}
+
 function requireUserId(req, res, next) {
-  if (!req.query.user_id) return res.status(400).json({ error: 'user_id (integer) is required' });
+  const uid = getRequestUserId(req);
+  if (!uid) return res.status(401).json({ status: 401, error: 'missing_or_invalid_token' });
+  const query = { ...(req.query || {}) };
+  delete query.uid;
+  query.user_id = uid;
+  req.query = query;
+  req.url = rewriteIdentityQuery(req.url, uid);
+  req.originalUrl = rewriteIdentityQuery(req.originalUrl, uid);
   next();
 }
 
@@ -33,8 +49,9 @@ router.get('/api/db/user_summary', async (req, res) => {
     const { URLSearchParams } = require('node:url');
     const fs = require('fs');
     const qs = new URLSearchParams();
-    const uid = (req.user_id) || (req.bearer && req.bearer.uid) || req.query.user_id;
-    if (uid) qs.set('user_id', String(uid));
+    const uid = getRequestUserId(req);
+    if (!uid) return res.status(401).json({ status: 401, error: 'missing_or_invalid_token' });
+    qs.set('user_id', String(uid));
     const env = fs.readFileSync('/opt/stas-db-bridge/.env','utf8');
     const apikey = (env.split(/\r?\n/).find(x=>/^API_KEY=/.test(x))||'').split('=',2)[1].trim();
     const r = await fetch(`http://127.0.0.1:3336/api/db/user_summary?${qs.toString()}`, { headers: { 'X-API-Key': apikey }});

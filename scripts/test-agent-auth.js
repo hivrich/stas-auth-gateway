@@ -11,6 +11,7 @@ const OLD_ENV = {
   AGENT_AUTH_TOKEN_TTL_SECONDS: process.env.AGENT_AUTH_TOKEN_TTL_SECONDS,
   AGENT_AUTH_CLAIM_TTL_MS: process.env.AGENT_AUTH_CLAIM_TTL_MS,
   AGENT_AUTH_CODE_ATTEMPT_LIMIT: process.env.AGENT_AUTH_CODE_ATTEMPT_LIMIT,
+  GATEWAY_BASE_URL: process.env.GATEWAY_BASE_URL,
   INTERVALS_CLIENT_ID: process.env.INTERVALS_CLIENT_ID,
   INTERVALS_CLIENT_SECRET: process.env.INTERVALS_CLIENT_SECRET,
   STAS_BASE: process.env.STAS_BASE,
@@ -33,6 +34,8 @@ const {
   AGENT_INTERVALS_READ_SCOPE,
   AGENT_TOKEN_PREFIX,
   __testing,
+  isAgentAuthConfigured,
+  isUsableAgentAuthSecret,
 } = require('../lib/agent-auth');
 const agentRouter = require('../routes/agent');
 const oauthRouter = require('../routes/oauth');
@@ -214,6 +217,8 @@ async function request(baseUrl, path, options = {}) {
 }
 
 async function main() {
+  delete process.env.GATEWAY_BASE_URL;
+
   process.env.AGENT_AUTH_ENABLED = 'false';
   delete process.env.AGENT_AUTH_TOKEN_SECRET;
   let metadata = buildOAuthAuthorizationServerMetadata('https://intervals.stas.run');
@@ -222,7 +227,31 @@ async function main() {
   assert.equal(metadata.revocation_endpoint, undefined);
 
   process.env.AGENT_AUTH_ENABLED = 'true';
-  process.env.AGENT_AUTH_TOKEN_SECRET = 'test-agent-auth-secret-not-for-production-32chars';
+  process.env.AGENT_AUTH_TOKEN_SECRET = 'short';
+  assert.equal(isUsableAgentAuthSecret(process.env.AGENT_AUTH_TOKEN_SECRET), false);
+  assert.equal(isAgentAuthConfigured(), false);
+  metadata = buildOAuthAuthorizationServerMetadata('https://intervals.stas.run');
+  assert.deepEqual(metadata.grant_types_supported, ['authorization_code']);
+  assert.equal(metadata.agent_auth, undefined);
+
+  for (const placeholderSecret of [
+    'placeholder',
+    'generate-with-openssl-rand-base64-32',
+    'your-agent-auth-token-secret-that-is-long',
+    'todo-replace-me-agent-auth-token-secret',
+  ]) {
+    process.env.AGENT_AUTH_TOKEN_SECRET = placeholderSecret;
+    assert.equal(isUsableAgentAuthSecret(process.env.AGENT_AUTH_TOKEN_SECRET), false);
+    assert.equal(isAgentAuthConfigured(), false);
+    metadata = buildOAuthAuthorizationServerMetadata('https://intervals.stas.run');
+    assert.deepEqual(metadata.grant_types_supported, ['authorization_code']);
+    assert.equal(metadata.agent_auth, undefined);
+  }
+
+  process.env.AGENT_AUTH_ENABLED = 'true';
+  process.env.AGENT_AUTH_TOKEN_SECRET = 'hJ8sQ2vN5wR7xL0mC9pT4zA6bE3yU1kF';
+  assert.equal(isUsableAgentAuthSecret(process.env.AGENT_AUTH_TOKEN_SECRET), true);
+  assert.equal(isAgentAuthConfigured(), true);
   __testing.reset();
 
   metadata = buildOAuthAuthorizationServerMetadata('https://intervals.stas.run');
@@ -236,6 +265,18 @@ async function main() {
   assert.deepEqual(metadata.agent_auth.anonymous.credential_types_supported, ['bearer']);
   assert.deepEqual(metadata.agent_auth.scopes_supported, ['stas.mcp.read']);
   assert.equal(AGENT_AUTH_SCOPE, 'stas.mcp.read');
+
+  metadata = buildOAuthAuthorizationServerMetadata('http://127.0.0.1:3337');
+  assert.equal(metadata.issuer, 'http://127.0.0.1:3337');
+  assert.equal(metadata.agent_auth.identity_endpoint, 'http://127.0.0.1:3337/gw/agent/identity');
+
+  process.env.GATEWAY_BASE_URL = 'https://intervals.stas.run';
+  metadata = buildOAuthAuthorizationServerMetadata('http://bridge-api:3001');
+  assert.equal(metadata.issuer, 'https://intervals.stas.run');
+  assert.equal(metadata.authorization_endpoint, 'https://intervals.stas.run/gw/oauth/authorize');
+  assert.equal(metadata.token_endpoint, 'https://intervals.stas.run/gw/oauth/token');
+  assert.equal(metadata.agent_auth.identity_endpoint, 'https://intervals.stas.run/gw/agent/identity');
+  assert.equal(JSON.stringify(metadata).includes('bridge-api'), false);
 
   const server = await startServer(makeApp());
   const address = server.address();

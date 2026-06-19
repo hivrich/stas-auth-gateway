@@ -2,7 +2,12 @@ const express = require('express');
 const crypto = require('node:crypto');
 const router  = express.Router();
 const { resolveDirectIntervalsAuth } = require('../lib/request-auth');
-const { resolveOauthSource } = require('../lib/request-source');
+const {
+  getClaudeOauthClientId,
+  isAllowedChatGptRedirectUri,
+  isAllowedClaudeRedirectUri,
+  resolveOauthSource,
+} = require('../lib/request-source');
 const {
   AGENT_AUTH_GRANT_TYPE,
   isAgentAuthConfigured,
@@ -17,15 +22,160 @@ const INTERVALS_SCOPE_RE = /\b(?:ACTIVITY|WELLNESS|CALENDAR|CHATS|LIBRARY|SETTIN
 const DEFAULT_INTERVALS_SCOPE = 'ACTIVITY:WRITE,WELLNESS:WRITE,CALENDAR:WRITE,CHATS:WRITE,LIBRARY:WRITE,SETTINGS:WRITE';
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const OAUTH_CODE_TTL_MS = 10 * 60 * 1000;
-const CLAUDE_CALLBACK_PATHS = new Set(['/api/mcp/auth_callback']);
-const CLAUDE_ALLOWED_HOSTS = new Set(['claude.ai', 'claude.com']);
-const CHATGPT_ALLOWED_HOSTS = new Set(['chat.openai.com', 'chatgpt.com']);
-const CHATGPT_CALLBACK_PATH_RE = /^\/aip\/g-[^/]+\/oauth\/callback$/;
+const BRIDGE_PKCE_METHOD = 'S256';
+const PKCE_CHALLENGE_RE = /^[A-Za-z0-9_-]{43,128}$/;
+const PKCE_VERIFIER_RE = /^[A-Za-z0-9._~-]{43,128}$/;
+const OAUTH_STATE_DEV_SECRET = 'stas-oauth-state-dev-secret';
+const PLACEHOLDER_OAUTH_STATE_SECRETS = new Set([
+  'changeme',
+  'change-me',
+  'change_me',
+  'dev',
+  'development',
+  'placeholder',
+  'replace-me',
+  'replace_me',
+  'secret',
+  'stas-oauth-state-dev-secret',
+  'test',
+]);
+const PLACEHOLDER_OAUTH_STATE_SECRET_MARKERS = [
+  'change-me',
+  'changeme',
+  'generate-with',
+  'openssl',
+  'placeholder',
+  'replace-me',
+  'todo',
+  'your-',
+];
+
+// Local one-process stores only. Multi-instance deploys need Redis/DB-backed state.
+const pendingBridgeStates = new Map();
 const pendingBridgeCodes = new Map();
 
 function trimToString(value) {
   if (value === null || value === undefined) return '';
   return String(value).trim();
+}
+
+function hashPrefix(value) {
+  const raw = trimToString(value);
+  if (!raw) return null;
+  return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 12);
+}
+
+function normalizedLogKey(key) {
+  return trimToString(key).replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+}
+
+function isSensitiveLogKey(key) {
+  const normalized = normalizedLogKey(key);
+  if (normalized.startsWith('has_')) return false;
+
+  return new Set([
+    'access_token',
+    'authorization_code',
+    'client_secret',
+    'code',
+    'code_verifier',
+    'claim_token',
+    'legacy_token',
+    'refresh_token',
+    'state',
+    'token',
+  ]).has(normalized)
+    || normalized.endsWith('_secret')
+    || normalized.endsWith('_token')
+    || normalized.endsWith('_verifier');
+}
+
+function isRedirectUriLogKey(key) {
+  const normalized = normalizedLogKey(key);
+  return normalized === 'redirect_uri'
+    || normalized === 'redirect_uris'
+    || normalized.endsWith('_redirect_uri')
+    || normalized.endsWith('_redirect_uris');
+}
+
+function summarizeRedirectUri(uri) {
+  const raw = trimToString(uri);
+  if (!raw) return null;
+
+  try {
+    const url = new URL(raw);
+    return {
+      origin: url.origin,
+      pathHash: hashPrefix(url.pathname),
+      hasQuery: Boolean(url.search),
+      hasHash: Boolean(url.hash),
+    };
+  } catch {
+    return {
+      invalid: true,
+      valueHash: hashPrefix(raw),
+    };
+  }
+}
+
+function sanitizeLogValue(key, value) {
+  if (isSensitiveLogKey(key)) {
+    return value ? { redacted: true, hash: hashPrefix(value) } : null;
+  }
+
+  if (isRedirectUriLogKey(key)) {
+    if (Array.isArray(value)) return value.map((item) => summarizeRedirectUri(item));
+    return summarizeRedirectUri(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => (
+      item && typeof item === 'object' ? sanitizeLogFields(item) : item
+    ));
+  }
+
+  if (value && typeof value === 'object') {
+    return sanitizeLogFields(value);
+  }
+
+  return value;
+}
+
+function sanitizeLogFields(fields) {
+  const out = {};
+  for (const [key, value] of Object.entries(fields || {})) {
+    out[key] = sanitizeLogValue(key, value);
+  }
+  return out;
+}
+
+function logOauth(level, event, fields) {
+  try {
+    const method = console[level] || console.log;
+    method.call(console, event, JSON.stringify(sanitizeLogFields(fields)));
+  } catch {}
+}
+
+function summarizeUpstreamOAuthError(payload, text) {
+  const error = payload && typeof payload === 'object' && typeof payload.error === 'string'
+    ? payload.error
+    : null;
+  return {
+    error,
+    bodyHash: hashPrefix(text),
+  };
+}
+
+function envFlagEnabled(...names) {
+  return names.some((name) => /^(1|true|yes|on)$/i.test(trimToString(process.env[name])));
+}
+
+function isLegacyStasIdOauthEnabled() {
+  return envFlagEnabled('ENABLE_LEGACY_STAS_ID_OAUTH', 'LEGACY_STAS_ID_OAUTH_ENABLED');
+}
+
+function isLegacyStasIdTokenExchangeEnabled() {
+  return envFlagEnabled('ENABLE_LEGACY_STAS_ID_TOKEN_EXCHANGE', 'LEGACY_STAS_ID_TOKEN_EXCHANGE_ENABLED');
 }
 
 function isIntervalsScope(scope) {
@@ -66,31 +216,7 @@ function getIntervalsCallbackUrl() {
 }
 
 function getClaudeClientId() {
-  return trimToString(process.env.CLAUDE_OAUTH_CLIENT_ID) || 'claude-public-client';
-}
-
-function isAllowedClaudeRedirectUri(uri) {
-  const raw = trimToString(uri);
-  if (!raw) return false;
-
-  try {
-    const url = new URL(raw);
-    return url.protocol === 'https:' && CLAUDE_ALLOWED_HOSTS.has(url.hostname) && CLAUDE_CALLBACK_PATHS.has(url.pathname);
-  } catch {
-    return false;
-  }
-}
-
-function isAllowedChatGptRedirectUri(uri) {
-  const raw = trimToString(uri);
-  if (!raw) return false;
-
-  try {
-    const url = new URL(raw);
-    return url.protocol === 'https:' && CHATGPT_ALLOWED_HOSTS.has(url.hostname) && CHATGPT_CALLBACK_PATH_RE.test(url.pathname);
-  } catch {
-    return false;
-  }
+  return getClaudeOauthClientId();
 }
 
 function getClaudeIntervalsAuthConfig() {
@@ -106,20 +232,59 @@ function getClaudeIntervalsAuthConfig() {
   return { clientId, clientSecret };
 }
 
+function isProductionRuntime() {
+  return trimToString(process.env.NODE_ENV).toLowerCase() === 'production';
+}
+
+function isUsableProductionStateSecret(secret) {
+  const raw = trimToString(secret);
+  const normalized = raw.toLowerCase();
+  return raw.length >= 32
+    && !PLACEHOLDER_OAUTH_STATE_SECRETS.has(normalized)
+    && !PLACEHOLDER_OAUTH_STATE_SECRET_MARKERS.some((marker) => normalized.includes(marker));
+}
+
+function makeOauthConfigError(message) {
+  const error = new Error(message);
+  error.status = 500;
+  return error;
+}
+
+function getOauthStateSecret() {
+  const explicitSecret = trimToString(process.env.OAUTH_STATE_SECRET);
+  if (explicitSecret) {
+    if (isProductionRuntime() && !isUsableProductionStateSecret(explicitSecret)) {
+      throw makeOauthConfigError('oauth_state_secret_not_configured');
+    }
+    return explicitSecret;
+  }
+
+  const clientSecretFallback = getServerIntervalsClientSecret();
+  if (clientSecretFallback) {
+    if (isProductionRuntime() && !isUsableProductionStateSecret(clientSecretFallback)) {
+      throw makeOauthConfigError('oauth_state_secret_not_configured');
+    }
+    return clientSecretFallback;
+  }
+
+  if (isProductionRuntime()) {
+    throw makeOauthConfigError('oauth_state_secret_not_configured');
+  }
+
+  return OAUTH_STATE_DEV_SECRET;
+}
+
 function base64url(input) {
   return Buffer.from(input).toString('base64url');
 }
 
 function hmac(value) {
-  const secret = getServerIntervalsClientSecret() || process.env.OAUTH_STATE_SECRET || 'stas-oauth-state-dev-secret';
+  const secret = getOauthStateSecret();
   return crypto.createHmac('sha256', secret).update(value).digest('base64url');
 }
 
 function signState(payload) {
-  const body = base64url(JSON.stringify({
-    ...payload,
-    exp: Date.now() + OAUTH_STATE_TTL_MS,
-  }));
+  const body = base64url(JSON.stringify(payload));
   return `${body}.${hmac(body)}`;
 }
 
@@ -152,6 +317,42 @@ function cleanupBridgeCodes() {
   }
 }
 
+function cleanupBridgeStates() {
+  const now = Date.now();
+  for (const [stateId, record] of pendingBridgeStates.entries()) {
+    if (!record || Number(record.expiresAt) <= now) pendingBridgeStates.delete(stateId);
+  }
+}
+
+function createBridgeState(record) {
+  cleanupBridgeStates();
+  const stateId = crypto.randomBytes(24).toString('base64url');
+  const expiresAt = Date.now() + OAUTH_STATE_TTL_MS;
+  pendingBridgeStates.set(stateId, {
+    ...record,
+    expiresAt,
+  });
+  return signState({
+    jti: stateId,
+    exp: expiresAt,
+  });
+}
+
+function takeBridgeState(state) {
+  const payload = readSignedState(state);
+  if (!payload) return null;
+
+  const stateId = trimToString(payload.jti || payload.nonce);
+  if (!stateId) return null;
+
+  cleanupBridgeStates();
+  const record = pendingBridgeStates.get(stateId);
+  if (!record) return null;
+  pendingBridgeStates.delete(stateId);
+  if (Number(record.expiresAt) <= Date.now()) return null;
+  return record;
+}
+
 function createBridgeCode(record) {
   cleanupBridgeCodes();
   const code = `gpt_${crypto.randomBytes(24).toString('base64url')}`;
@@ -169,6 +370,47 @@ function takeBridgeCode(code) {
   pendingBridgeCodes.delete(code);
   if (Number(record.expiresAt) <= Date.now()) return null;
   return record;
+}
+
+function readBridgePkce(codeChallenge, codeChallengeMethod) {
+  const challenge = trimToString(codeChallenge);
+  const method = trimToString(codeChallengeMethod) || (challenge ? BRIDGE_PKCE_METHOD : '');
+
+  if (!challenge || method !== BRIDGE_PKCE_METHOD || !PKCE_CHALLENGE_RE.test(challenge)) {
+    return null;
+  }
+
+  return {
+    codeChallenge: challenge,
+    codeChallengeMethod: BRIDGE_PKCE_METHOD,
+  };
+}
+
+function s256ChallengeForVerifier(codeVerifier) {
+  return crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+}
+
+function timingSafeStringEqual(a, b) {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function verifyBridgePkce(bridgeRecord, codeVerifier) {
+  if (!bridgeRecord || bridgeRecord.codeChallengeMethod !== BRIDGE_PKCE_METHOD || !bridgeRecord.codeChallenge) {
+    return { ok: false, error: 'invalid_grant' };
+  }
+
+  const verifier = trimToString(codeVerifier);
+  if (!verifier) return { ok: false, error: 'invalid_request' };
+  if (!PKCE_VERIFIER_RE.test(verifier)) return { ok: false, error: 'invalid_grant' };
+
+  const expected = s256ChallengeForVerifier(verifier);
+  if (!timingSafeStringEqual(expected, bridgeRecord.codeChallenge)) {
+    return { ok: false, error: 'invalid_grant' };
+  }
+
+  return { ok: true };
 }
 
 function appendParams(uri, params) {
@@ -204,7 +446,11 @@ router.post('/oauth/register', (req, res) => {
     token_endpoint_auth_method: 'none',
   };
 
-  console.log('[oauth][register]', JSON.stringify({ redirectUris, clientId: response.client_id }));
+  logOauth('log', '[oauth][register]', {
+    redirectUris,
+    redirectUriCount: redirectUris.length,
+    clientId: response.client_id,
+  });
   return res.status(201).json(response);
 });
 
@@ -221,6 +467,10 @@ router.get('/oauth/authorize', (req, res, next) => {
     const uid = q.uid || q.user_id || '';
 
     if (isIntervalsScope(scope) || source === 'claude') {
+      if (!source) {
+        return res.status(400).json({ error: 'invalid_request' });
+      }
+
       const isAllowedExternalRedirect = source === 'claude'
         ? isAllowedClaudeRedirectUri(redirect_uri)
         : isAllowedChatGptRedirectUri(redirect_uri);
@@ -233,15 +483,22 @@ router.get('/oauth/authorize', (req, res, next) => {
         return res.status(400).json({ error: 'invalid_request' });
       }
 
+      const pkce = readBridgePkce(codeChallenge, codeChallengeMethod);
+      if (!pkce) {
+        return res.status(400).json({ error: 'invalid_request' });
+      }
+
       const effectiveScope = isIntervalsScope(scope) ? scope : DEFAULT_INTERVALS_SCOPE;
       const intervalsRedirectUri = getIntervalsCallbackUrl();
-      const bridgeState = signState({
+      const bridgeState = createBridgeState({
         source,
         redirectUri: redirect_uri,
         originalState: state,
         effectiveClientId,
         scope: effectiveScope,
         intervalsRedirectUri,
+        codeChallenge: pkce.codeChallenge,
+        codeChallengeMethod: pkce.codeChallengeMethod,
       });
       const url = new URL(INTERVALS_AUTH_URL);
       url.searchParams.set('client_id', effectiveClientId);
@@ -249,24 +506,32 @@ router.get('/oauth/authorize', (req, res, next) => {
       url.searchParams.set('response_type', trimToString(q.response_type) || 'code');
       if (effectiveScope) url.searchParams.set('scope', effectiveScope);
       url.searchParams.set('state', bridgeState);
-      if (codeChallenge) url.searchParams.set('code_challenge', codeChallenge);
-      if (codeChallengeMethod) url.searchParams.set('code_challenge_method', codeChallengeMethod);
+      url.searchParams.set('code_challenge', pkce.codeChallenge);
+      url.searchParams.set('code_challenge_method', pkce.codeChallengeMethod);
 
-      console.log('[oauth][authorize]', JSON.stringify({
+      logOauth('log', '[oauth][authorize]', {
         source,
-        redirect_uri,
+        redirectUri: redirect_uri,
         intervalsRedirectUri,
         requestedClientId: requestedClientId || null,
         effectiveClientId,
         usedServerClientFallback: useServerClientForChatGpt,
-        hasCodeChallenge: Boolean(codeChallenge),
-        codeChallengeMethod: codeChallengeMethod || null,
-      }));
+        hasCodeChallenge: true,
+        codeChallengeMethod: pkce.codeChallengeMethod,
+      });
 
       return res.redirect(302, url.toString());
     }
 
     if (!/^[0-9]+$/.test(String(uid))) return next();
+
+    if (!isLegacyStasIdOauthEnabled()) {
+      return res.status(400).json({ error: 'legacy_stas_id_oauth_disabled' });
+    }
+
+    if (!isAllowedChatGptRedirectUri(redirect_uri)) {
+      return res.status(400).json({ error: 'invalid_redirect_uri' });
+    }
 
     const payload = JSON.stringify({ uid: String(uid), ts: Date.now() });
     const code = 'c_' + Buffer.from(payload, 'utf8').toString('base64')
@@ -275,11 +540,18 @@ router.get('/oauth/authorize', (req, res, next) => {
       .replace(/=+$/, '');
     const sep = redirect_uri.includes('?') ? '&' : '?';
     const url = `${redirect_uri}${sep}code=${encodeURIComponent(code)}${state ? `&state=${encodeURIComponent(state)}` : ''}`;
-    try { console.log('[oauth][302]', url); } catch {}
+    logOauth('log', '[oauth][302]', {
+      redirectUri: redirect_uri,
+      hasCode: true,
+      hasState: Boolean(state),
+    });
     return res.redirect(302, url);
   } catch (error) {
     if (error && error.status) {
-      console.error('[oauth][authorize][config_error]', error.message || error);
+      logOauth('error', '[oauth][authorize][config_error]', {
+        status: error.status,
+        error: error.message || 'server_error',
+      });
       return res.status(error.status).json({ error: error.message || 'server_error' });
     }
 
@@ -289,12 +561,29 @@ router.get('/oauth/authorize', (req, res, next) => {
 
 router.get('/oauth/callback', (req, res) => {
   const q = req.query || {};
-  const stateRecord = readSignedState(q.state);
+  let stateRecord = null;
+  try {
+    stateRecord = takeBridgeState(q.state);
+  } catch (error) {
+    if (error && error.status) {
+      logOauth('error', '[oauth][callback][config_error]', {
+        status: error.status,
+        error: error.message || 'server_error',
+      });
+      return res.status(error.status).json({ error: error.message || 'server_error' });
+    }
+
+    return res.status(500).json({ error: 'server_error' });
+  }
+
   if (!stateRecord) {
     return res.status(400).json({ error: 'invalid_state' });
   }
 
-  const source = stateRecord.source === 'claude' ? 'claude' : 'gpt';
+  const source = stateRecord.source;
+  if (source !== 'claude' && source !== 'gpt') {
+    return res.status(400).json({ error: 'invalid_state' });
+  }
   const redirectUri = trimToString(stateRecord.redirectUri);
   const isAllowedExternalRedirect = source === 'claude'
     ? isAllowedClaudeRedirectUri(redirectUri)
@@ -328,13 +617,15 @@ router.get('/oauth/callback', (req, res) => {
     originalState: trimToString(stateRecord.originalState),
     effectiveClientId: trimToString(stateRecord.effectiveClientId),
     intervalsRedirectUri: trimToString(stateRecord.intervalsRedirectUri) || getIntervalsCallbackUrl(),
+    codeChallenge: trimToString(stateRecord.codeChallenge),
+    codeChallengeMethod: trimToString(stateRecord.codeChallengeMethod),
   });
 
-  console.log('[oauth][callback]', JSON.stringify({
+  logOauth('log', '[oauth][callback]', {
     source,
     redirectUri,
     effectiveClientId: stateRecord.effectiveClientId || null,
-  }));
+  });
 
   return res.redirect(302, appendParams(redirectUri, {
     code: bridgeCode,
@@ -395,8 +686,21 @@ router.post('/oauth/token', async (req, res) => {
         redirectUri,
       });
 
+      if (!source) {
+        return res.status(400).json({ error: 'invalid_request' });
+      }
+
       if (bridgeRecord && requestedRedirectUri && requestedRedirectUri !== bridgeRecord.redirectUri) {
         return res.status(400).json({ error: 'invalid_grant', error_description: 'redirect_uri mismatch' });
+      }
+
+      if (!bridgeRecord && redirectUri) {
+        const isAllowedExternalRedirect = source === 'claude'
+          ? isAllowedClaudeRedirectUri(redirectUri)
+          : isAllowedChatGptRedirectUri(redirectUri);
+        if (!isAllowedExternalRedirect) {
+          return res.status(400).json({ error: 'invalid_grant', error_description: 'invalid redirect_uri' });
+        }
       }
 
       const useServerClientForChatGpt = source === 'gpt' && isAllowedChatGptRedirectUri(redirectUri) && (!requestedClientId || !requestedClientSecret);
@@ -412,6 +716,13 @@ router.post('/oauth/token', async (req, res) => {
 
       if (bridgeRecord && bridgeRecord.effectiveClientId && clientId !== bridgeRecord.effectiveClientId) {
         return res.status(400).json({ error: 'invalid_client' });
+      }
+
+      if (bridgeRecord) {
+        const pkce = verifyBridgePkce(bridgeRecord, codeVerifier);
+        if (!pkce.ok) {
+          return res.status(400).json({ error: pkce.error });
+        }
       }
 
       const form = new URLSearchParams();
@@ -438,7 +749,7 @@ router.post('/oauth/token', async (req, res) => {
         if (codeVerifier) form.set('code_verifier', codeVerifier);
       }
 
-      console.log('[oauth][token][request]', JSON.stringify(upstreamPayload));
+      logOauth('log', '[oauth][token][request]', upstreamPayload);
 
       const upstream = await fetch(INTERVALS_TOKEN_URL, {
         method: 'POST',
@@ -459,7 +770,10 @@ router.post('/oauth/token', async (req, res) => {
       }
 
       if (!upstream.ok) {
-        console.error('[oauth][token][intervals_error]', upstream.status, text);
+        logOauth('error', '[oauth][token][intervals_error]', {
+          status: upstream.status,
+          ...summarizeUpstreamOAuthError(payload, text),
+        });
         if (payload && typeof payload === 'object') {
           return res.status(upstream.status).json(payload);
         }
@@ -474,7 +788,10 @@ router.post('/oauth/token', async (req, res) => {
         try {
           await resolveDirectIntervalsAuth(response.access_token, { source });
         } catch (error) {
-          console.error('[oauth][token][user_sync_failed]', error?.status || 502, error?.message || error);
+          logOauth('error', '[oauth][token][user_sync_failed]', {
+            status: error?.status || 502,
+            error: error?.code || error?.message || 'user_sync_failed',
+          });
           return res.status(error?.status || 502).json({ error: 'user_sync_failed' });
         }
       }
@@ -482,24 +799,20 @@ router.post('/oauth/token', async (req, res) => {
       return res.json(response);
     }
 
-    let uid = null;
-    try {
-      const json = Buffer.from(code.slice(2).replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
-      const obj = JSON.parse(json);
-      uid = obj && obj.uid ? String(obj.uid) : null;
-    } catch {}
-    if (!uid || !/^[0-9]+$/.test(uid)) return res.status(400).json({ error: 'invalid_uid' });
+    if (!isLegacyStasIdTokenExchangeEnabled()) {
+      return res.status(400).json({ error: 'legacy_token_exchange_disabled' });
+    }
 
-    const now = Math.floor(Date.now() / 1000);
-    const acc = JSON.stringify({ uid, ts: now });
-    const tok = 't_' + Buffer.from(acc, 'utf8').toString('base64')
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=+$/, '');
-    return res.json({ access_token: tok, token_type: 'Bearer', expires_in: 2592000, scope: String(b.scope || '') });
+    return res.status(400).json({
+      error: 'legacy_token_exchange_removed',
+      error_description: 'Legacy c_ authorization codes can no longer be exchanged for unsigned t_ tokens.',
+    });
   } catch (error) {
     if (error && error.status) {
-      console.error('[oauth][token][config_error]', error.message || error);
+      logOauth('error', '[oauth][token][config_error]', {
+        status: error.status,
+        error: error.message || 'server_error',
+      });
       return res.status(error.status).json({ error: error.message || 'server_error' });
     }
 

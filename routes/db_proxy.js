@@ -26,13 +26,13 @@ router.use(async (req, res) => {
   const rest = req.path.replace(/^\/+/, '');          // e.g. "trainings"
   const url  = new URL(`/api/db/${rest}`, STAS_BASE);
 
-  // Ensure user_id (берём из Bearer, если клиент не прислал — мидлвар на /gw это уже делает, но подстрахуемся)
+  // Always use authenticated identity; query user_id/uid must not override it.
+  const uid = getRequestUserId(req);
+  if (!uid) return res.status(401).json({ status: 401, error: 'missing_or_invalid_token' });
+
   const q = new URLSearchParams(req.query || {});
-  if (!q.get('user_id')) {
-    const uid = getRequestUserId(req);
-    if (!uid) return res.status(401).json({ status: 401, error: 'missing_or_invalid_token' });
-    q.set('user_id', uid);
-  }
+  q.delete('uid');
+  q.set('user_id', uid);
   for (const [k, v] of q.entries()) url.searchParams.set(k, v);
 
   const started = Date.now();

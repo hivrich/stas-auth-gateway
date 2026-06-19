@@ -2,7 +2,7 @@ const { applyResolvedAuth, resolveRequestAuth } = require('../lib/request-auth')
 
 /**
  * Global Bearer auth middleware for /gw/*.
- * Supports both legacy local t_ tokens and direct Intervals OAuth access tokens.
+ * Supports direct Intervals OAuth tokens; legacy local t_ tokens require an explicit compat flag.
  */
 module.exports = function () {
   return async function (req, res, next) {
@@ -14,9 +14,6 @@ module.exports = function () {
       p.startsWith('/oauth') ||
       p === '/healthz' ||
       p === '/openapi.json' ||
-      p === '/openapi.yaml' ||
-      p === '/openapi.min.json' ||
-      p === '/openapi.min.yaml' ||
       p === '/openapi.actions.json' ||
       p === '/version'
     ) {

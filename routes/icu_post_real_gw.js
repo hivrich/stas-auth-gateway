@@ -1,22 +1,11 @@
 'use strict';
 const { Pool } = require('pg');
+const { getRequestUserId } = require('../lib/request-auth');
 let pool; const getPool = () => pool ?? (pool = new Pool({ connectionString: process.env.STAS_PGURL }));
 
 const yes = v => /^(1|true|yes|on)$/i.test((v ?? '').toString());
 const normAthlete = v => (v ? (String(v).trim().startsWith('i') ? String(v).trim() : `i${String(v).trim()}`) : null);
 const b64 = key => `Basic ${Buffer.from(`API_KEY:${key}`).toString('base64')}`;
-
-function uidFromBearer(req){
-  try{
-    const h = String(req.get('authorization')||'');
-    const m = h.match(/^bearer\s+t_([A-Za-z0-9\-_]+)/i);
-    if(!m) return null;
-    const raw = Buffer.from(m[1].replace(/-/g,'+').replace(/_/g,'/'),'base64').toString();
-    const obj = JSON.parse(raw);
-    const u = String(obj?.uid ?? '');
-    return /^\d+$/.test(u) ? u : null;
-  }catch{ return null; }
-}
 
 const RL_MAX = Number(process.env.RATE_LIMIT_EVENTS || 5);
 const RL_WIN = Number(process.env.RATE_WINDOW_MS || 60_000);
@@ -27,11 +16,10 @@ module.exports = app => {
   console.log('[v2][load] icu_post_real_gw');
 
   app.post('/gw/icu/events', async (req, res) => {
-    const hasAuth = /^bearer\s+/i.test(req.get('authorization')||'');
-    const uid = res.locals.user_id || req.query?.user_id || uidFromBearer(req);
+    const uid = getRequestUserId(req);
     const events = Array.isArray(req.body?.events) ? req.body.events : [];
 
-    if (!hasAuth || !uid) return res.status(401).json({ status:401, error:'missing_or_invalid_token' });
+    if (!uid) return res.status(401).json({ status:401, error:'missing_or_invalid_token' });
     if (!events.length)   return res.status(400).json({ status:400, error:'no_events' });
 
     const dry = yes(req.query?.dry_run);

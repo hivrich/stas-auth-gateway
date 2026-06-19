@@ -61,6 +61,8 @@ global.fetch = async (url, options = {}) => {
   }
 
   if (parsed.origin === 'https://intervals.icu' && parsed.pathname === '/api/v1/athlete/0/events') {
+    assert.equal(parsed.searchParams.get('user_id'), null);
+    assert.equal(parsed.searchParams.get('uid'), null);
     return jsonResponse(broadCalendar);
   }
 
@@ -113,24 +115,26 @@ async function main() {
   try {
     let response = await request(
       baseUrl,
-      '/gw/icu/events?external_id_prefix=test%3A&oldest=2026-06-18&newest=2026-06-19&dry_run=true',
+      '/gw/icu/events?external_id_prefix=test%3A&oldest=2026-06-18&newest=2026-06-19&dry_run=true&user_id=999&uid=888',
       { method: 'DELETE' },
     );
     assert.equal(response.status, 200);
     assert.equal(response.body.dry_run, true);
+    assert.equal(response.body.uid, '15487');
     assert.deepEqual(response.body.to_delete.ids, ['116577024']);
 
     response = await request(
       baseUrl,
-      '/gw/icu/events?external_id=test%3Awrite-check%3A2026-06-18&oldest=2026-06-18&newest=2026-06-19&dry_run=true',
+      '/gw/icu/events?external_id=test%3Awrite-check%3A2026-06-18&oldest=2026-06-18&newest=2026-06-19&dry_run=true&user_id=999',
       { method: 'DELETE' },
     );
     assert.equal(response.status, 200);
+    assert.equal(response.body.uid, '15487');
     assert.deepEqual(response.body.to_delete.ids, ['116577024']);
 
     response = await request(
       baseUrl,
-      '/gw/icu/events?external_id_prefix=test%3A&oldest=2026-06-18&newest=2026-06-19&dry_run=false',
+      '/gw/icu/events?external_id_prefix=test%3A&oldest=2026-06-18&newest=2026-06-19&dry_run=false&user_id=999',
       { method: 'DELETE' },
     );
     assert.equal(response.status, 200);

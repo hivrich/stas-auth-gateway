@@ -1,11 +1,89 @@
+# Git/worktree metadata
 .git
+.git/
+.gitignore
+.gitattributes
+
+# Local agent/tooling state
+.codex/
+.claude/
+CLAUDE.md
+AGENTS.md
+
+# Dependencies and generated build output
 node_modules
-npm-debug.log
-*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm/
+.cache/
+coverage/
+dist/
+build/
+
+# Env files, credentials, and private material
 .env
 .env.*
-.private
-.secrets
 deploy/.env.deploy
+deploy/.env.*
+.private
+.private/
+.private/**
+.secrets
+.secrets/
+.secrets/**
+.stas_key.current
 *.key
 *.pem
+*.p12
+*.pfx
+*.crt
+*.cert
+
+# Local logs and runtime leftovers
+logs/
+log/
+var/log/
+*.log
+*.pid
+
+# Temp files, backups, and archives
+tmp/
+temp/
+.tmp/
+*.tmp
+*.bak
+*.backup
+*.old
+*.orig
+*.swp
+*.swo
+*~
+backups/
+backup/
+deploy-backups/
+deploy/backups/
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+*.rar
+*.gz
+
+# Deploy/runtime artifacts that should not enter image builds
+deploy/
+docker-compose*.rendered*
+docker-compose*.secrets*
+*.local
+
+# Stale generated schemas and static OAuth pages.
+# Runtime serves openapi.actions.json through routes/openapi.js and renders
+# OAuth authorize HTML from middleware/oauth_page.js.
+openapi.json
+openapi.yaml
+openapi.min.json
+openapi.min.yaml
+public/oauth-authorize.html
+public/oauth_authorize.html

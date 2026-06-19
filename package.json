@@ -11,7 +11,10 @@
     "test:legacy-aliases": "node scripts/test-legacy-aliases.js",
     "test:oauth": "node scripts/test-oauth-flow.js",
     "test:db-proxy": "node scripts/test-db-proxy.js",
-    "test:agent-auth": "node scripts/test-agent-auth.js"
+    "test:agent-auth": "node scripts/test-agent-auth.js",
+    "test:route-order": "node scripts/test-server-route-order.js",
+    "test:openapi-contract": "node scripts/test-openapi-contract.js",
+    "test:oauth-metadata-parity": "node scripts/test-oauth-metadata-parity.js"
   },
   "keywords": [
     "oauth",

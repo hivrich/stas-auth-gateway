@@ -7,6 +7,7 @@ const express = require('express');
 process.env.STAS_KEY = process.env.STAS_KEY || 'test-stas-key';
 process.env.STAS_BASE = process.env.STAS_BASE || 'http://stas.local.test';
 
+const { __testing: requestAuthTesting, getRequestUserId } = require('../lib/request-auth');
 const bearerUid = require('../routes/_bearer_uid');
 const uidInjectDb = require('../routes/_uid_inject_db');
 const dbProxy = require('../routes/db_proxy');
@@ -47,6 +48,7 @@ global.fetch = async (url, options = {}) => {
   }
 
   if (parsed.origin === 'http://stas.local.test' && parsed.pathname === '/api/db/activity_detail') {
+    assert.equal(parsed.searchParams.get('uid'), null);
     return jsonResponse({ ok: true, user_id: parsed.searchParams.get('user_id') });
   }
 
@@ -78,7 +80,7 @@ function makeApp() {
   const app = express();
   app.use('/gw', bearerUid());
   app.get('/gw/api/me', (req, res) => {
-    const uid = req.user_id || req.query.user_id;
+    const uid = getRequestUserId(req);
     if (!uid) return res.status(401).json({ status: 401, error: 'missing_or_invalid_token' });
     res.json({ ok: true, user_id: String(uid), auth_mode: req.auth?.authMode || null });
   });
@@ -106,22 +108,57 @@ async function request(baseUrl, path, token) {
 }
 
 async function main() {
+  const oldEnableLegacyTBearer = process.env.ENABLE_LEGACY_T_BEARER;
+  const oldLegacyTBearerCompat = process.env.LEGACY_T_BEARER_COMPAT_ENABLED;
+  delete process.env.ENABLE_LEGACY_T_BEARER;
+  delete process.env.LEGACY_T_BEARER_COMPAT_ENABLED;
+  requestAuthTesting.clearDirectTokenCache();
+
   const server = await startServer(makeApp());
   const address = server.address();
   const baseUrl = `http://${address.address}:${address.port}`;
 
   try {
     let response = await request(baseUrl, '/gw/api/me', makeLegacyToken('108'));
-    assert.equal(response.status, 200);
-    assert.equal(response.body.user_id, '108');
-    assert.equal(response.body.auth_mode, 'legacy');
+    assert.equal(response.status, 401);
+    assert.equal(response.body.error, 'missing_or_invalid_token');
+    assert.equal(upstreamHits.length, 0);
+
+    response = await request(baseUrl, '/gw/api/me?user_id=999&uid=888');
+    assert.equal(response.status, 401);
+    assert.equal(response.body.error, 'missing_or_invalid_token');
+    assert.equal(upstreamHits.length, 0);
 
     response = await request(baseUrl, '/gw/api/me', 'intervals-access-token');
     assert.equal(response.status, 200);
     assert.equal(response.body.user_id, '15487');
     assert.equal(response.body.auth_mode, 'intervals');
 
-    response = await request(baseUrl, '/gw/api/db/activity_detail?training_id=train-1', 'intervals-access-token');
+    response = await request(baseUrl, '/gw/api/me?user_id=999&uid=888', 'intervals-access-token');
+    assert.equal(response.status, 200);
+    assert.equal(response.body.user_id, '15487');
+    assert.equal(response.body.auth_mode, 'intervals');
+    const directCacheKeys = requestAuthTesting.getDirectTokenCacheKeys();
+    assert.deepEqual(directCacheKeys, [requestAuthTesting.makeDirectTokenCacheKey('intervals-access-token')]);
+    assert.equal(directCacheKeys.includes('intervals-access-token'), false);
+    assert.match(directCacheKeys[0], /^sha256:[a-f0-9]{64}$/);
+
+    const hitsBeforeLegacyFlag = upstreamHits.length;
+    process.env.ENABLE_LEGACY_T_BEARER = '1';
+    response = await request(baseUrl, '/gw/api/me', makeLegacyToken('108'));
+    assert.equal(response.status, 401);
+    assert.equal(response.body.error, 'missing_or_invalid_token');
+    assert.equal(upstreamHits.length, hitsBeforeLegacyFlag);
+    delete process.env.ENABLE_LEGACY_T_BEARER;
+
+    process.env.LEGACY_T_BEARER_COMPAT_ENABLED = 'true';
+    response = await request(baseUrl, '/gw/api/me', makeLegacyToken('108'));
+    assert.equal(response.status, 401);
+    assert.equal(response.body.error, 'missing_or_invalid_token');
+    assert.equal(upstreamHits.length, hitsBeforeLegacyFlag);
+    delete process.env.LEGACY_T_BEARER_COMPAT_ENABLED;
+
+    response = await request(baseUrl, '/gw/api/db/activity_detail?training_id=train-1&user_id=999&uid=888', 'intervals-access-token');
     assert.equal(response.status, 200);
     assert.equal(response.body.user_id, '15487');
 
@@ -129,25 +166,24 @@ async function main() {
     assert.equal(response.status, 200);
     assert.deepEqual(response.body, []);
 
-    response = await request(baseUrl, '/gw/icu/events?days=7', makeLegacyToken('108'));
-    assert.equal(response.status, 200);
-    assert.deepEqual(response.body, []);
-
     const ensureHit = upstreamHits.find((hit) => new URL(hit.url).pathname === '/api/db/ensure-intervals-user');
     assert.ok(ensureHit, 'expected ensure-intervals-user call for direct Intervals token');
 
-    const directEventsHit = upstreamHits.find((hit) => new URL(hit.url).pathname === '/api/v1/athlete/0/events');
-    assert.equal(directEventsHit?.headers.Authorization, 'Bearer intervals-access-token');
+    const directEventsHits = upstreamHits.filter((hit) => new URL(hit.url).pathname === '/api/v1/athlete/0/events');
+    assert.equal(directEventsHits.length, 1);
+    assert.equal(directEventsHits[0].headers.Authorization, 'Bearer intervals-access-token');
 
-    const legacyEventsHits = upstreamHits.filter((hit) => new URL(hit.url).pathname === '/api/v1/athlete/i15487/events');
-    assert.equal(legacyEventsHits.length, 2);
-    assert.match(legacyEventsHits[0].headers.Authorization || '', /^Bearer /);
-    assert.match(legacyEventsHits[1].headers.Authorization || '', /^Basic /);
+    const legacyCredentialHits = upstreamHits.filter((hit) => new URL(hit.url).pathname === '/api/db/icu_creds');
+    assert.equal(legacyCredentialHits.length, 0);
 
-    console.log('ok - bearer auth accepts legacy and direct Intervals tokens');
+    console.log('ok - bearer auth rejects unsigned legacy t_ tokens even when compat flags are enabled');
   } finally {
     server.close();
     global.fetch = originalFetch;
+    if (oldEnableLegacyTBearer === undefined) delete process.env.ENABLE_LEGACY_T_BEARER;
+    else process.env.ENABLE_LEGACY_T_BEARER = oldEnableLegacyTBearer;
+    if (oldLegacyTBearerCompat === undefined) delete process.env.LEGACY_T_BEARER_COMPAT_ENABLED;
+    else process.env.LEGACY_T_BEARER_COMPAT_ENABLED = oldLegacyTBearerCompat;
   }
 }
 

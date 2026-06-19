@@ -20,7 +20,7 @@ router.get('/events', async (req, res) => {
     // Проксируем ICU events «как есть»
     const qs = new URLSearchParams();
     for (const [k,v] of Object.entries(req.query || {})) {
-      // никакого user_id из query
+      if (k === 'user_id' || k === 'uid') continue;
       if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
     }
     if (!qs.has('days') && !qs.has('oldest') && !qs.has('newest')) qs.set('days','7');

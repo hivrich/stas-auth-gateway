@@ -13,8 +13,8 @@ const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
 router.get('/trainings', async (req, res) => {
   try {
     const { URLSearchParams } = require('node:url');
-    const uid = getRequestUserId(req) || req.query.user_id || null;
-    if (!uid) return res.json([]);
+    const uid = getRequestUserId(req);
+    if (!uid) return res.status(401).json({ status: 401, error: 'missing_or_invalid_token' });
 
     const qs = new URLSearchParams();
     qs.set('user_id', String(uid));

@@ -2,12 +2,11 @@ const { applyResolvedAuth, resolveRequestAuth } = require('../lib/request-auth')
 
 /**
  * UID injector for /gw/api/db/*.
- * The global /gw middleware normally sets user_id already; this is a fallback.
+ * The global /gw middleware normally sets user_id already; this re-applies
+ * resolved auth and deliberately ignores any query-provided identity.
  */
 module.exports = async function(req, res, next){
   try{
-    if (req.query && req.query.user_id) return next();
-
     const auth = await resolveRequestAuth(req);
     if (!auth || !auth.userId) {
       return res.status(401).json({status:401,error:'missing_or_invalid_token'});
