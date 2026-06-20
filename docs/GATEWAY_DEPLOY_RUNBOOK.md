@@ -191,6 +191,7 @@ Local checks before deploy:
 npm run test:route-order
 npm run test:openapi-contract
 npm run test:oauth
+npm run test:icu-post
 npm run test:bearer-auth
 npm run test:db-proxy
 npm run test:agent-auth

@@ -8,6 +8,7 @@
     "dev": "node server.js",
     "test:bearer-auth": "node scripts/test-bearer-auth.js",
     "test:delete-safety": "node scripts/test-delete-safety.js",
+    "test:icu-post": "node scripts/test-icu-post-oauth.js",
     "test:legacy-aliases": "node scripts/test-legacy-aliases.js",
     "test:oauth": "node scripts/test-oauth-flow.js",
     "test:db-proxy": "node scripts/test-db-proxy.js",
