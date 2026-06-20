@@ -170,6 +170,32 @@ async function main() {
   const badRequiredReferences = findBadRequiredReferences(gatewaySchema);
   assert.deepEqual(badRequiredReferences, [], 'object schemas must not require missing properties');
 
+  const createEventsPost = gatewaySchema.paths['/gw/icu/events'].post;
+  const createEventsParams = createEventsPost.parameters || [];
+  const dryRunParam = createEventsParams.find((param) => (
+    param.name === 'dry_run' && param.in === 'query'
+  ));
+  assert.ok(dryRunParam, 'POST /gw/icu/events must expose dry_run as a query parameter');
+  assert.equal(dryRunParam.required, true, 'POST /gw/icu/events dry_run query parameter must be required');
+  assert.equal(
+    createEventsPost.requestBody.content['application/json'].schema.$ref,
+    '#/components/schemas/CreatePlannedWorkoutsRequest',
+    'POST /gw/icu/events body schema must stay separate from dry_run query parameter'
+  );
+  const bulkCreateResult = gatewaySchema.components.schemas.BulkCreateResult;
+  assert.equal(bulkCreateResult.properties.dry_run.type, 'boolean');
+  assert.equal(bulkCreateResult.properties.errors.type, 'array');
+  assert.deepEqual(
+    bulkCreateResult.required,
+    ['ok'],
+    'BulkCreateResult must not require fields that are absent from dry-run previews or dedupe responses'
+  );
+  assert.equal(
+    bulkCreateResult.additionalProperties,
+    true,
+    'BulkCreateResult must allow upstream diagnostic fields such as events or icu'
+  );
+
   const gatewaySha = sha256(gatewayBytes);
   const productSha = sha256(productBytes);
   const byteEquivalent = gatewayBytes.equals(productBytes);

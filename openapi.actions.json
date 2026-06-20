@@ -705,7 +705,18 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "Required. false writes to Intervals.icu; true validates/previews only without creating events."
+          }
+        ]
       }
     },
     "/gw/trainings": {
@@ -1544,7 +1555,7 @@
                 },
                 "description": {
                   "type": "string",
-                  "description": "Structured multi-line description"
+                  "description": "Structured multi-line description. For structured workouts, use native Intervals.icu workout text lines, for example '- 10m Z2 HR'. HR-only workouts must use HR targets such as Z2 HR, not pace or power."
                 },
                 "color": {
                   "type": "string",
@@ -1572,7 +1583,21 @@
                 },
                 "external_id": {
                   "type": "string",
-                  "description": "Unique ID for upsert/dedupe, e.g. plan:2026-03-11:easy-run or note:2026-03-11:illness"
+                  "description": "Stable unique ID for upsert/update, e.g. plan:2026-03-11:easy-run or note:2026-03-11:illness. Reuse the same value when editing an existing event."
+                },
+                "for_week": {
+                  "type": "boolean",
+                  "description": "For NOTE only: mark the note as applying to the whole week."
+                },
+                "target": {
+                  "type": "string",
+                  "enum": [
+                    "AUTO",
+                    "POWER",
+                    "HR",
+                    "PACE"
+                  ],
+                  "description": "Optional Intervals workout target. Use HR for heart-rate-only structured workouts, PACE for pace-led run workouts, and POWER for power-led workouts. If omitted, STAS infers it from description when possible."
                 }
               },
               "required": [
@@ -1594,6 +1619,12 @@
           "ok": {
             "type": "boolean"
           },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "count": {
+            "type": "integer"
+          },
           "created": {
             "type": "integer"
           },
@@ -1605,15 +1636,31 @@
             "items": {
               "type": "string"
             }
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {},
+              "additionalProperties": true
+            }
+          },
+          "icu": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {},
+              "additionalProperties": true
+            }
+          },
+          "reason": {
+            "type": "string"
           }
         },
         "required": [
-          "ok",
-          "created",
-          "skipped",
-          "errors"
+          "ok"
         ],
-        "additionalProperties": false
+        "additionalProperties": true
       },
       "TrainingFull": {
         "type": "object",
