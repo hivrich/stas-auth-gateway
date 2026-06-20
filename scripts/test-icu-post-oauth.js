@@ -4,8 +4,8 @@
 const assert = require('node:assert/strict');
 const express = require('express');
 
-process.env.STAS_KEY = process.env.STAS_KEY || 'test-stas-key';
-process.env.STAS_BASE = process.env.STAS_BASE || 'http://stas.local.test';
+process.env.STAS_KEY = 'test-stas-key';
+process.env.STAS_BASE = 'http://stas.local.test';
 
 const bearerUid = require('../routes/_bearer_uid');
 const attachIcuPostExact = require('../lib/icu_post_exact');
