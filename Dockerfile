@@ -11,6 +11,7 @@ COPY helpers ./helpers
 COPY lib ./lib
 COPY middleware ./middleware
 COPY routes ./routes
+COPY scripts/test-oauth-flow.js ./scripts/test-oauth-flow.js
 
 ENV PORT=3001
 EXPOSE 3001
