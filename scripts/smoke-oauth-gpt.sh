@@ -4,8 +4,10 @@ set -euo pipefail
 BASE_URL="${GW_BASE_URL:-https://intervals.stas.run}"
 CALLBACK="${GW_CHATGPT_CALLBACK:-https://chat.openai.com/aip/g-0e683685e67e111ebd51aa7d6b2be34f380bb37f/oauth/callback}"
 SCOPE="${GW_INTERVALS_SCOPE:-ACTIVITY:WRITE,WELLNESS:WRITE,CALENDAR:WRITE,CHATS:WRITE,LIBRARY:WRITE,SETTINGS:WRITE}"
+CODE_VERIFIER="${GW_PKCE_VERIFIER:-stas-gpt-smoke-verifier-2026-06-20}"
+CODE_CHALLENGE="$(node -e "const crypto=require('crypto'); process.stdout.write(crypto.createHash('sha256').update(process.argv[1]).digest('base64url'))" "$CODE_VERIFIER")"
 
-authorize_url="${BASE_URL}/gw/oauth/authorize?response_type=code&client_id=&redirect_uri=$(node -e "process.stdout.write(encodeURIComponent(process.argv[1]))" "$CALLBACK")&state=smoke&scope=$(node -e "process.stdout.write(encodeURIComponent(process.argv[1]))" "$SCOPE")"
+authorize_url="${BASE_URL}/gw/oauth/authorize?response_type=code&client_id=&redirect_uri=$(node -e "process.stdout.write(encodeURIComponent(process.argv[1]))" "$CALLBACK")&state=smoke&scope=$(node -e "process.stdout.write(encodeURIComponent(process.argv[1]))" "$SCOPE")&code_challenge=${CODE_CHALLENGE}&code_challenge_method=S256"
 
 headers="$(mktemp)"
 body="$(mktemp)"
