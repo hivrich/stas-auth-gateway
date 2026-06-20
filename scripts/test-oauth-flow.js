@@ -154,8 +154,12 @@ global.fetch = async (url, options = {}) => {
     assert.equal(form.get('client_id'), 'test-intervals-client');
     assert.equal(form.get('client_secret'), 'test-intervals-secret');
     assert.equal(form.get('redirect_uri'), INTERVALS_CALLBACK);
-    assert.equal(form.get('code_verifier'), DEFAULT_PKCE_VERIFIER);
     assert.match(form.get('code'), /^intervals-code/);
+    if (form.get('code') === 'intervals-code-no-pkce') {
+      assert.equal(form.has('code_verifier'), false);
+    } else {
+      assert.equal(form.get('code_verifier'), DEFAULT_PKCE_VERIFIER);
+    }
     if (form.get('code') === 'intervals-code-secret-leak') {
       return jsonResponse({
         error: 'invalid_grant',
@@ -355,6 +359,23 @@ async function main() {
     assert.equal(bridgeCodeReplay.status, 400);
     assert.match(bridgeCodeReplay.body, /invalid_grant/);
 
+    const noPkceBridge = await issueBridgeCode(baseUrl, {
+      pkce: false,
+      upstreamCode: 'intervals-code-no-pkce',
+    });
+    assert.equal(noPkceBridge.authorizeLocation.searchParams.has('code_challenge'), false);
+    assert.equal(noPkceBridge.authorizeLocation.searchParams.has('code_challenge_method'), false);
+    const noPkceExchange = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      json: {
+        grant_type: 'authorization_code',
+        code: noPkceBridge.bridgeCode,
+        redirect_uri: CHATGPT_CALLBACK,
+      },
+    });
+    assert.equal(noPkceExchange.status, 200);
+    assert.equal(JSON.parse(noPkceExchange.body).access_token, RAW_INTERVALS_TOKEN);
+
     const missingVerifier = await issueBridgeCode(baseUrl, { upstreamCode: 'intervals-code-missing-verifier' });
     const beforeMissingVerifierHits = tokenExchangeHitCount();
     const missingVerifierExchange = await request(baseUrl, '/gw/oauth/token', {
@@ -410,8 +431,18 @@ async function main() {
     assert.match(plainPkceAuthorize.body, /invalid_request/);
 
     const missingPkceAuthorize = await request(baseUrl, buildAuthorizePath({ pkce: false }));
-    assert.equal(missingPkceAuthorize.status, 400);
-    assert.match(missingPkceAuthorize.body, /invalid_request/);
+    assert.equal(missingPkceAuthorize.status, 302);
+    const missingPkceLocation = new URL(missingPkceAuthorize.location);
+    assert.equal(missingPkceLocation.searchParams.has('code_challenge'), false);
+    assert.equal(missingPkceLocation.searchParams.has('code_challenge_method'), false);
+
+    const missingPkceClaudeAuthorize = await request(baseUrl, buildAuthorizePath({
+      clientId: 'claude-public-client',
+      redirectUri: CLAUDE_CALLBACK,
+      pkce: false,
+    }));
+    assert.equal(missingPkceClaudeAuthorize.status, 400);
+    assert.match(missingPkceClaudeAuthorize.body, /invalid_request/);
 
     const savedNodeEnv = process.env.NODE_ENV;
     const savedOauthStateSecret = process.env.OAUTH_STATE_SECRET;

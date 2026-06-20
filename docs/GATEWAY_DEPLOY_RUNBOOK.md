@@ -70,7 +70,7 @@ Stop before any deploy unless all of these are true:
 
 - User has explicitly approved the deploy.
 - Local validation passes.
-- OAuth bridge remains `S256`-only; no `plain` PKCE compatibility is enabled.
+- OAuth bridge accepts `S256` when PKCE is sent; no `plain` PKCE compatibility is enabled. The ChatGPT no-PKCE callback exception must stay covered by OAuth tests.
 - `GATEWAY_BASE_URL` is set to the public canonical gateway URL, currently `https://intervals.stas.run`, so OAuth metadata never advertises the internal compose host.
 - Legacy STAS-ID HTML and legacy token exchange flags are intentionally default-off.
 - If Agent Auth is enabled, `AGENT_AUTH_TOKEN_SECRET` is set to a non-placeholder value of at least 32 characters.

@@ -668,7 +668,7 @@
             }
           }
         },
-        "description": "Safe delete selector. Prefer exact id for cleanup of a known single event. Otherwise use exact external_id. Use external_id_prefix only together with oldest and newest. The gateway filters returned events by external_id before dry-run and before real delete, so unrelated plan:* events are not selected when deleting test:*."
+        "description": "Safe delete selector. Prefer exact id, or exact external_id. Use external_id_prefix only with oldest/newest for confirmed window replacement. Gateway re-filters by external_id before dry-run and real delete."
       },
       "post": {
         "operationId": "createPlannedWorkoutsGw",

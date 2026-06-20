@@ -38,7 +38,7 @@
 
 ## Current local security behavior
 
-- OAuth bridge accepts PKCE `S256` only. `plain` and missing PKCE are rejected.
+- OAuth bridge accepts PKCE `S256` only when PKCE is sent. `plain` is rejected. ChatGPT callbacks may omit PKCE; Claude still requires it.
 - Production OAuth state signing fails closed if the state secret is missing or left as a placeholder.
 - Legacy STAS-ID HTML and legacy `c_... -> t_...` token exchange are default-off compatibility flags.
 - `/gw/oauth/authorize`, `/gw/oauth/callback`, `/gw/oauth/register`, `/gw/oauth/revoke` and `/gw/oauth/token` are rate-limited in-process and do not receive broad wildcard CORS headers.

@@ -372,9 +372,16 @@ function takeBridgeCode(code) {
   return record;
 }
 
-function readBridgePkce(codeChallenge, codeChallengeMethod) {
+function readBridgePkce(codeChallenge, codeChallengeMethod, options = {}) {
   const challenge = trimToString(codeChallenge);
   const method = trimToString(codeChallengeMethod) || (challenge ? BRIDGE_PKCE_METHOD : '');
+
+  if (!challenge && !method && options.allowMissing === true) {
+    return {
+      codeChallenge: '',
+      codeChallengeMethod: '',
+    };
+  }
 
   if (!challenge || method !== BRIDGE_PKCE_METHOD || !PKCE_CHALLENGE_RE.test(challenge)) {
     return null;
@@ -397,6 +404,15 @@ function timingSafeStringEqual(a, b) {
 }
 
 function verifyBridgePkce(bridgeRecord, codeVerifier) {
+  if (
+    bridgeRecord &&
+    bridgeRecord.source === 'gpt' &&
+    !bridgeRecord.codeChallenge &&
+    !bridgeRecord.codeChallengeMethod
+  ) {
+    return { ok: true };
+  }
+
   if (!bridgeRecord || bridgeRecord.codeChallengeMethod !== BRIDGE_PKCE_METHOD || !bridgeRecord.codeChallenge) {
     return { ok: false, error: 'invalid_grant' };
   }
@@ -483,7 +499,8 @@ router.get('/oauth/authorize', (req, res, next) => {
         return res.status(400).json({ error: 'invalid_request' });
       }
 
-      const pkce = readBridgePkce(codeChallenge, codeChallengeMethod);
+      const allowMissingPkce = source === 'gpt' && !codeChallenge && !codeChallengeMethod;
+      const pkce = readBridgePkce(codeChallenge, codeChallengeMethod, { allowMissing: allowMissingPkce });
       if (!pkce) {
         return res.status(400).json({ error: 'invalid_request' });
       }
@@ -506,8 +523,10 @@ router.get('/oauth/authorize', (req, res, next) => {
       url.searchParams.set('response_type', trimToString(q.response_type) || 'code');
       if (effectiveScope) url.searchParams.set('scope', effectiveScope);
       url.searchParams.set('state', bridgeState);
-      url.searchParams.set('code_challenge', pkce.codeChallenge);
-      url.searchParams.set('code_challenge_method', pkce.codeChallengeMethod);
+      if (pkce.codeChallenge) {
+        url.searchParams.set('code_challenge', pkce.codeChallenge);
+        url.searchParams.set('code_challenge_method', pkce.codeChallengeMethod);
+      }
 
       logOauth('log', '[oauth][authorize]', {
         source,
@@ -516,8 +535,8 @@ router.get('/oauth/authorize', (req, res, next) => {
         requestedClientId: requestedClientId || null,
         effectiveClientId,
         usedServerClientFallback: useServerClientForChatGpt,
-        hasCodeChallenge: true,
-        codeChallengeMethod: pkce.codeChallengeMethod,
+        hasCodeChallenge: Boolean(pkce.codeChallenge),
+        codeChallengeMethod: pkce.codeChallengeMethod || null,
       });
 
       return res.redirect(302, url.toString());
