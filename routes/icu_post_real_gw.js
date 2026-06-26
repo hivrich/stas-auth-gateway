@@ -1,5 +1,6 @@
 'use strict';
 const { Pool } = require('pg');
+const { normalizeEventDateTimes } = require('../lib/icu_event_normalize');
 const { getRequestUserId } = require('../lib/request-auth');
 let pool; const getPool = () => pool ?? (pool = new Pool({ connectionString: process.env.STAS_PGURL }));
 
@@ -40,9 +41,13 @@ module.exports = app => {
       const base = process.env.ICU_BASE_URL || process.env.ICU_API_BASE_URL || 'https://intervals.icu/api/v1';
       const url  = `${base}/athlete/${athlete}/events/bulk?upsert=true` + (dry ? '&dry_run=true' : '');
 
-      const payload = events.map(e => (e && !e.external_id && e.externalId)
-        ? (({ externalId, ...rest }) => ({ ...rest, external_id: externalId }))(e)
-        : e);
+      const payload = events.map(e => {
+        const normalized = (e && !e.external_id && e.externalId)
+          ? (({ externalId, ...rest }) => ({ ...rest, external_id: externalId }))(e)
+          : (e && typeof e === 'object' ? { ...e } : e);
+        normalizeEventDateTimes(normalized);
+        return normalized;
+      });
 
       // Bearer (OAuth) → fallback на Basic (API_KEY)
       let r = await fetch(url, {

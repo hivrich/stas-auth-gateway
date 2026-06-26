@@ -1,4 +1,5 @@
 const express = require('express');
+const { normalizeEventDateTimes } = require('../lib/icu_event_normalize');
 const { getIcuRequestAuth } = require('../lib/icu-request-auth');
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -200,6 +201,7 @@ module.exports = function(app){
       // Intervals.icu должен обновлять событие с тем же external_id, а не создавать дубль.
       const payloadArr = events.map(ev => {
         const normalized = { category:'WORKOUT', ...ev };
+        normalizeEventDateTimes(normalized);
         if (normalized.externalId) {
           normalized.external_id = normalized.external_id || normalized.externalId;
           delete normalized.externalId;
