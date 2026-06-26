@@ -1,6 +1,7 @@
 const express = require('express');
 const { getIcuRequestAuth } = require('../lib/icu-request-auth');
 const { applyInferredWorkoutTarget } = require('../lib/structured_workout_target');
+const { normalizeEventDateTimes } = require('../lib/icu_event_normalize');
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const WEEKLY_REVIEW_RE = /^note:(\d{4}-\d{2}-\d{2})(:weekly-review-w(\d{1,2})(?::.*)?)$/i;
@@ -201,6 +202,7 @@ module.exports = function(app){
       // Intervals.icu должен обновлять событие с тем же external_id, а не создавать дубль.
       const payloadArr = events.map(ev => {
         const normalized = { category:'WORKOUT', ...ev };
+        normalizeEventDateTimes(normalized);
         if (normalized.externalId) {
           normalized.external_id = normalized.external_id || normalized.externalId;
           delete normalized.externalId;

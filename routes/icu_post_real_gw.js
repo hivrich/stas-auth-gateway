@@ -1,6 +1,7 @@
 'use strict';
 const { getIcuRequestAuth } = require('../lib/icu-request-auth');
 const { applyInferredWorkoutTarget } = require('../lib/structured_workout_target');
+const { normalizeEventDateTimes } = require('../lib/icu_event_normalize');
 
 const yes = v => /^(1|true|yes|on)$/i.test((v ?? '').toString());
 const normAthlete = v => (v ? (String(v).trim().startsWith('i') ? String(v).trim() : `i${String(v).trim()}`) : null);
@@ -40,6 +41,7 @@ module.exports = app => {
         const normalized = (e && !e.external_id && e.externalId)
           ? (({ externalId, ...rest }) => ({ ...rest, external_id: externalId }))(e)
           : { ...e };
+        normalizeEventDateTimes(normalized);
         return applyInferredWorkoutTarget(normalized);
       });
 

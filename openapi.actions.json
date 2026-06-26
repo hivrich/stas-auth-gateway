@@ -693,11 +693,11 @@
                 },
                 "start_date_local": {
                   "type": "string",
-                  "description": "Local start datetime, e.g. 2026-02-16T09:00:00"
+                  "description": "Local start datetime without timezone suffix, e.g. 2026-02-16T09:00:00"
                 },
                 "end_date_local": {
                   "type": "string",
-                  "description": "Local end datetime. For NOTE all-day: next day T00:00:00"
+                  "description": "Local end datetime without timezone suffix. For NOTE all-day: next day T00:00:00"
                 },
                 "category": {
                   "type": "string",
@@ -710,7 +710,7 @@
                 },
                 "type": {
                   "type": "string",
-                  "enum": ["Run", "Ride", "Swim", "Workout", "WeightTraining", "Other"],
+                  "enum": ["Run", "Ride", "Swim", "Workout", "WeightTraining", "Yoga", "Pilates", "Stretching", "Walk", "Hike", "Elliptical", "NordicSki", "HighIntensityIntervalTraining", "Other"],
                   "description": "Title Case activity type. Required for WORKOUT. Omit for NOTE."
                 },
                 "description": {
@@ -733,7 +733,7 @@
                 },
                 "icu_training_load": {
                   "type": "integer",
-                  "description": "Estimated training load. For WORKOUT only, omit for NOTE."
+                  "description": "Estimated training load. For WORKOUT only, omit for NOTE. Intervals.icu may store load but return icu_atl/icu_ctl as null or exclude/partially weight non-cardio/support types in Fitness/Fatigue depending on athlete settings."
                 },
                 "duration_minutes": {
                   "type": "integer",
