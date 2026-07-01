@@ -6,6 +6,8 @@ const { buildStasSourceHeaders } = require('../lib/request-source');
 // === Config to STAS DB Bridge ===
 const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
 const STAS_KEY  = process.env.STAS_KEY  ;
+const DEFAULT_DB_PROXY_TIMEOUT_MS = 5000;
+const ACTIVITY_DETAIL_TIMEOUT_MS = 40000;
 
 function safeJSON(text, fallback=null) {
   try { return JSON.parse(text); } catch { return fallback; }
@@ -19,6 +21,15 @@ function requestBodyForFetch(req) {
   if (req.body === undefined) return undefined;
   if (Buffer.isBuffer(req.body) || typeof req.body === 'string') return req.body;
   return JSON.stringify(req.body);
+}
+
+function getDbProxyTimeoutMs(method, path) {
+  const normalizedMethod = String(method || 'GET').toUpperCase();
+  const normalizedPath = `/${String(path || '').replace(/^\/+/, '')}`;
+  if (normalizedMethod === 'GET' && normalizedPath === '/activity_detail') {
+    return ACTIVITY_DETAIL_TIMEOUT_MS;
+  }
+  return DEFAULT_DB_PROXY_TIMEOUT_MS;
 }
 
 // === Main proxy for /gw/api/db/* ===
@@ -38,9 +49,10 @@ router.use(async (req, res) => {
   const started = Date.now();
   console.log(`[db_proxy][REQ] ${req.method} ${req.originalUrl} → ${url.toString()}`);
 
-  // fetch with 5s timeout (AbortController)
+  // Most DB proxy calls stay short; activity_detail can wait on live activity/stream fetches.
+  const timeoutMs = getDbProxyTimeoutMs(req.method, req.path);
   const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort('timeout'), 5000);
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
 
   try {
     const method = String(req.method || 'GET').toUpperCase();
@@ -70,7 +82,7 @@ router.use(async (req, res) => {
   } catch (e) {
     const ms = Date.now() - started;
     console.error(`[db_proxy][ERR] ${e?.message || e} after ${ms}ms`);
-    const status = e === 'timeout' || String(e.message||'').includes('aborted') ? 504 : 502;
+    const status = e?.name === 'AbortError' || String(e.message||'').includes('aborted') ? 504 : 502;
     res.status(status).json({ error: status === 504 ? 'gateway_timeout' : 'bad_gateway' });
   } finally {
     clearTimeout(timer);
@@ -78,3 +90,8 @@ router.use(async (req, res) => {
 });
 
 module.exports = router;
+module.exports.__testing = {
+  ACTIVITY_DETAIL_TIMEOUT_MS,
+  DEFAULT_DB_PROXY_TIMEOUT_MS,
+  getDbProxyTimeoutMs,
+};

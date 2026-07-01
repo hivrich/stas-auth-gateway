@@ -85,11 +85,11 @@
         "summary": "Get trainings from STAS DB",
         "responses": {
           "200": {
-            "description": "Trainings list payload",
+            "description": "Trainings array",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TrainingsResponse"
+                  "$ref": "#/components/schemas/TrainingsListResponse"
                 }
               }
             }
@@ -722,7 +722,8 @@
     "/gw/trainings": {
       "get": {
         "operationId": "getFullTrainings",
-        "summary": "Get full trainings (with splits/intervals) from STAS DB bridge",
+        "summary": "Get trainings with optional intervals/signals",
+        "description": "Returns a bare array. full=true may include intervals, splits, and work signals where available; rawData, raw streams, and route coordinates are not included.",
         "parameters": [
           {
             "name": "oldest",
@@ -785,12 +786,12 @@
               "type": "boolean",
               "default": true
             },
-            "description": "Default true for Actions; send true/full=1 to include intervals and splits."
+            "description": "Include intervals, splits, and work signals where available; rawData, raw streams, and route are not included."
           }
         ],
         "responses": {
           "200": {
-            "description": "Full trainings list",
+            "description": "Trainings array",
             "content": {
               "application/json": {
                 "schema": {
@@ -801,6 +802,26 @@
           },
           "401": {
             "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream error, auth error, or invalid upstream response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Upstream timeout",
             "content": {
               "application/json": {
                 "schema": {
@@ -911,6 +932,12 @@
           },
           "message": {
             "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "upstream_status": {
+            "type": "integer"
           },
           "details": {
             "type": "object",
@@ -1863,8 +1890,22 @@
           "totals": {
             "$ref": "#/components/schemas/ActivityDetailTotals"
           },
+          "redactions": {
+            "type": "array",
+            "description": "Confirms that raw source payloads, raw streams, route coordinates, and latlng were omitted.",
+            "items": {
+              "type": "string"
+            }
+          },
           "intervalsDetailed": {
             "$ref": "#/components/schemas/ActivityDetailListSection"
+          },
+          "workIntervalsSummary": {
+            "type": "array",
+            "description": "Compact protected summary of work and recovery intervals. This stays complete even when detailed intervals are reduced by response-size limits.",
+            "items": {
+              "$ref": "#/components/schemas/ActivityDetailWorkIntervalSummaryItem"
+            }
           },
           "lapsDetailed": {
             "$ref": "#/components/schemas/ActivityDetailListSection"
@@ -1928,7 +1969,9 @@
         "required": [
           "overview",
           "totals",
+          "redactions",
           "intervalsDetailed",
+          "workIntervalsSummary",
           "lapsDetailed",
           "splitsDetailed",
           "bestEfforts",
@@ -2250,6 +2293,134 @@
         },
         "required": [
           "items"
+        ],
+        "additionalProperties": true
+      },
+      "ActivityDetailWorkIntervalSummaryItem": {
+        "type": "object",
+        "description": "One compact workout interval summary item.",
+        "properties": {
+          "index": {
+            "type": "integer"
+          },
+          "label": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "warmup",
+              "work",
+              "recovery",
+              "cooldown",
+              "unknown"
+            ]
+          },
+          "durationSec": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "distanceM": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "startTimeSec": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "endTimeSec": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "avgSpeedMps": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "paceSecPerKm": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "avgHr": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "minHr": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "maxHr": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "avgPower": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "maxPower": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "avgCadence": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "elevationGainM": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "avgGradePct": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "sourceType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "index",
+          "label",
+          "type",
+          "durationSec",
+          "avgHr",
+          "maxHr",
+          "avgPower",
+          "maxPower",
+          "avgCadence",
+          "source"
         ],
         "additionalProperties": true
       },
@@ -2603,6 +2774,9 @@
           "intervals": {
             "$ref": "#/components/schemas/ActivityDetailGenericObject"
           },
+          "workIntervalsSummary": {
+            "$ref": "#/components/schemas/ActivityDetailWorkIntervalsDataQuality"
+          },
           "laps": {
             "$ref": "#/components/schemas/ActivityDetailGenericObject"
           },
@@ -2622,11 +2796,39 @@
         },
         "additionalProperties": true
       },
+      "ActivityDetailWorkIntervalsDataQuality": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "quality": {
+            "type": "string",
+            "enum": [
+              "high",
+              "medium",
+              "low",
+              "none",
+              "unavailable"
+            ]
+          },
+          "available": {
+            "type": "integer"
+          },
+          "workBlocks": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": true
+      },
       "ActivityDetailLimits": {
         "type": "object",
         "properties": {
           "intervals": {
             "type": "integer"
+          },
+          "workIntervalsSummary": {
+            "$ref": "#/components/schemas/ActivityDetailWorkIntervalsLimitSummary"
           },
           "laps": {
             "type": "integer"
@@ -2644,6 +2846,34 @@
             "$ref": "#/components/schemas/ActivityDetailGenericObject"
           }
         },
+        "additionalProperties": true
+      },
+      "ActivityDetailWorkIntervalsLimitSummary": {
+        "type": "object",
+        "properties": {
+          "available": {
+            "type": "integer"
+          },
+          "returned": {
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "policy": {
+            "type": "string",
+            "enum": [
+              "all",
+              "uniform_sample"
+            ]
+          }
+        },
+        "required": [
+          "available",
+          "returned",
+          "truncated",
+          "policy"
+        ],
         "additionalProperties": true
       },
       "ActivityDetailSizeEstimate": {

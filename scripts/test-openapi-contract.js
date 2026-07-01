@@ -170,6 +170,34 @@ async function main() {
   const badRequiredReferences = findBadRequiredReferences(gatewaySchema);
   assert.deepEqual(badRequiredReferences, [], 'object schemas must not require missing properties');
 
+  const dbTrainings = gatewaySchema.paths['/gw/api/db/trainings'].get;
+  assert.equal(
+    dbTrainings.responses['200'].content['application/json'].schema.$ref,
+    '#/components/schemas/TrainingsListResponse',
+    '/gw/api/db/trainings must document the runtime bare-array response'
+  );
+
+  const gwTrainings = gatewaySchema.paths['/gw/trainings'].get;
+  assert.equal(
+    gwTrainings.responses['200'].content['application/json'].schema.$ref,
+    '#/components/schemas/TrainingsListResponse',
+    '/gw/trainings success schema must stay a bare array'
+  );
+  for (const status of ['502', '504']) {
+    assert.equal(
+      gwTrainings.responses[status].content['application/json'].schema.$ref,
+      '#/components/schemas/ErrorResponse',
+      `/gw/trainings ${status} must document typed JSON errors`
+    );
+  }
+  assert.equal(
+    stableStringify(gwTrainings).toLowerCase().includes('full raw'),
+    false,
+    '/gw/trainings descriptions must not promise full raw data'
+  );
+  assert.equal(gatewaySchema.components.schemas.ErrorResponse.properties.retryable.type, 'boolean');
+  assert.equal(gatewaySchema.components.schemas.ErrorResponse.properties.upstream_status.type, 'integer');
+
   const createEventsPost = gatewaySchema.paths['/gw/icu/events'].post;
   const createEventsParams = createEventsPost.parameters || [];
   const dryRunParam = createEventsParams.find((param) => (
