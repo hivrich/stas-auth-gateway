@@ -837,7 +837,7 @@
       "get": {
         "operationId": "getUserSummaryGw",
         "summary": "Get full user summary via gateway in up to two parts",
-        "description": "First call this action without part or with part=1. If status=complete, the summary is ready. If status=partial and parts=2, immediately call this same action with part=2 and expectedVersion=summaryVersion, then merge the top-level data fields from both responses. On 409 with status=version_mismatch, restart with part=1. Never make more than two calls for one summaryVersion.",
+        "description": "Call without part (or part=1). If status=complete, use data. If status=partial and parts=2, call again with part=2 and expectedVersion=summaryVersion; merge the top-level data fields. On 409/version_mismatch, restart at part=1. Make at most two calls per summaryVersion.",
         "parameters": [
           {
             "name": "part",

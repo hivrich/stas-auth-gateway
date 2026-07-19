@@ -200,6 +200,12 @@ async function main() {
   assert.equal(gatewaySchema.components.schemas.ErrorResponse.properties.retryable.type, 'boolean');
   assert.equal(gatewaySchema.components.schemas.ErrorResponse.properties.upstream_status.type, 'integer');
 
+  const userSummaryV2 = gatewaySchema.paths['/gw/api/db/user_summary/v2'].get;
+  assert.ok(
+    userSummaryV2.description.length <= 300,
+    'GPT Actions operation description must not exceed 300 characters'
+  );
+
   const createEventsPost = gatewaySchema.paths['/gw/icu/events'].post;
   const createEventsParams = createEventsPost.parameters || [];
   const dryRunParam = createEventsParams.find((param) => (
