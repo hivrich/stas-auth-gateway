@@ -833,17 +833,43 @@
         }
       }
     },
-    "/gw/user_summary": {
+    "/gw/api/db/user_summary/v2": {
       "get": {
         "operationId": "getUserSummaryGw",
-        "summary": "Get full user summary via gateway (profile, metrics, trainings, pace journal, condition)",
+        "summary": "Get full user summary via gateway in up to two parts",
+        "description": "First call this action without part or with part=1. If status=complete, the summary is ready. If status=partial and parts=2, immediately call this same action with part=2 and expectedVersion=summaryVersion, then merge the top-level data fields from both responses. On 409 with status=version_mismatch, restart with part=1. Never make more than two calls for one summaryVersion.",
+        "parameters": [
+          {
+            "name": "part",
+            "in": "query",
+            "required": false,
+            "description": "Optional part number. Omit this parameter or use 1 for the first call; use 2 only after a partial response.",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                1,
+                2
+              ],
+              "default": 1
+            }
+          },
+          {
+            "name": "expectedVersion",
+            "in": "query",
+            "required": false,
+            "description": "Required when part=2. Use the summaryVersion returned by the first partial response.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "User summary payload",
+            "description": "Complete summary or one part of a two-part summary",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserSummaryResponse"
+                  "$ref": "#/components/schemas/UserSummaryV2Response"
                 }
               }
             }
@@ -854,6 +880,46 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSummaryV2InvalidRequestResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Small error response when the summary is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSummaryV2SmallErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The summary version changed; restart with part=1",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSummaryV2VersionMismatchResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The summary cannot fit into two parts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSummaryV2TooLargeResponse"
                 }
               }
             }
@@ -982,6 +1048,144 @@
         "required": [
           "ok",
           "user_summary"
+        ],
+        "additionalProperties": false
+      },
+      "UserSummaryV2Response": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/UserSummaryV2CompleteResponse"
+          },
+          {
+            "$ref": "#/components/schemas/UserSummaryV2PartialResponse"
+          }
+        ]
+      },
+      "UserSummaryV2CompleteResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "complete"
+            ]
+          },
+          "summaryVersion": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "status",
+          "summaryVersion",
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "UserSummaryV2PartialResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "partial"
+            ]
+          },
+          "summaryVersion": {
+            "type": "string"
+          },
+          "part": {
+            "type": "integer",
+            "enum": [
+              1,
+              2
+            ]
+          },
+          "parts": {
+            "type": "integer",
+            "enum": [
+              2
+            ]
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "status",
+          "summaryVersion",
+          "part",
+          "parts",
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "UserSummaryV2InvalidRequestResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "invalid_request"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "UserSummaryV2SmallErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": false
+      },
+      "UserSummaryV2VersionMismatchResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "version_mismatch"
+            ]
+          },
+          "summaryVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "summaryVersion"
+        ],
+        "additionalProperties": false
+      },
+      "UserSummaryV2TooLargeResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "too_large"
+            ]
+          },
+          "summaryVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "summaryVersion"
         ],
         "additionalProperties": false
       },
