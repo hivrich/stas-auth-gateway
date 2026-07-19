@@ -10,7 +10,9 @@ const path = require('node:path');
 const { createApp } = require('../server');
 
 const gatewaySchemaPath = path.resolve(__dirname, '..', 'openapi.actions.json');
-const productSchemaPath = path.resolve(__dirname, '..', '..', 'stas.run', 'product', 'gpt-actions-current.json');
+const productSchemaPath = process.env.STAS_PRODUCT_ACTIONS_SCHEMA
+  ? path.resolve(process.env.STAS_PRODUCT_ACTIONS_SCHEMA)
+  : path.resolve(__dirname, '..', '..', 'stas.run', 'product', 'gpt-actions-current.json');
 
 const expectedActionsPaths = [
   '/gw/api/me',
@@ -24,7 +26,7 @@ const expectedActionsPaths = [
   '/gw/api/db/profile_changes/{changeId}/restore',
   '/gw/icu/events',
   '/gw/trainings',
-  '/gw/user_summary',
+  '/gw/api/db/user_summary/v2',
   '/gw/strategy',
 ];
 
