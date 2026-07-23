@@ -277,13 +277,17 @@ async function expectTrainingsError(mode, expectedStatus, expectedError, expecte
 async function main() {
   try {
     assert.strictEqual(dbProxy.__testing.getDbProxyTimeoutMs('GET', '/activity_detail'), 40000);
-    assert.strictEqual(dbProxy.__testing.getDbProxyTimeoutMs('POST', '/activity_detail'), 5000);
-    assert.strictEqual(dbProxy.__testing.getDbProxyTimeoutMs('GET', '/trainings'), 5000);
+    assert.strictEqual(dbProxy.__testing.getDbProxyTimeoutMs('GET', '/user_summary/v2'), 15000);
+    assert.strictEqual(dbProxy.__testing.getDbProxyTimeoutMs('GET', 'user_summary/v2'), 15000);
+    assert.strictEqual(dbProxy.__testing.getDbProxyTimeoutMs('GET', '/user_summary'), 10000);
+    assert.strictEqual(dbProxy.__testing.getDbProxyTimeoutMs('POST', '/user_summary/v2'), 10000);
+    assert.strictEqual(dbProxy.__testing.getDbProxyTimeoutMs('POST', '/activity_detail'), 10000);
+    assert.strictEqual(dbProxy.__testing.getDbProxyTimeoutMs('GET', '/trainings'), 10000);
 
     let observed = await runRequestWithObservedTimeout({ training_id: 'train-123' }, 'user-42');
     let response = observed.response;
     assert.strictEqual(response.statusCode, 200);
-    assert.ok(observed.delays.includes(40000), 'activity_detail should use longer timeout');
+    assert.deepStrictEqual(observed.delays, [40000]);
     const payload = JSON.parse(response.body);
     assert.strictEqual(payload.ok, true);
 
@@ -323,7 +327,7 @@ async function main() {
     });
     response = observed.response;
     assert.strictEqual(response.statusCode, 200);
-    assert.ok(observed.delays.includes(5000), 'generic db proxy routes should keep default timeout');
+    assert.deepStrictEqual(observed.delays, [10000]);
 
     assert.strictEqual(upstreamHits.length, 3);
     hit = upstreamHits[2];
@@ -337,6 +341,14 @@ async function main() {
       structured: { rules: { trainingsPerWeek: 5 } },
       previousHash: 'hash-123',
     });
+
+    observed = await runRequestWithObservedTimeout({}, 'user-42', { path: '/user_summary/v2' });
+    assert.strictEqual(observed.response.statusCode, 200);
+    assert.deepStrictEqual(observed.delays, [15000]);
+
+    observed = await runRequestWithObservedTimeout({}, 'user-42', { path: '/unlisted_route' });
+    assert.strictEqual(observed.response.statusCode, 200);
+    assert.deepStrictEqual(observed.delays, [10000]);
 
     upstreamHits.length = 0;
 
