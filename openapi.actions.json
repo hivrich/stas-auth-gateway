@@ -168,6 +168,45 @@
         }
       }
     },
+    "/gw/api/db/goals/current": {
+      "get": {
+        "operationId": "getCurrentGoalsStartsResults",
+        "summary": "Get current bounded goals, starts, and results",
+        "description": "Read-only current state only. It does not sync, match, confirm, or change anything. The server returns the existing P08 AnalysisProjection without an envelope: at most 16 items and at most 12 KB UTF-8 at runtime.",
+        "responses": {
+          "200": {
+            "description": "Current bounded goals, starts, and results projection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisProjectionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Current goals projection is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/gw/api/db/profile_sections": {
       "get": {
         "operationId": "readProfileSections",
@@ -1011,6 +1050,82 @@
             "additionalProperties": true
           }
         },
+        "additionalProperties": false
+      },
+      "AnalysisProjectionResponse": {
+        "type": "object",
+        "description": "Exact P08 current-state projection. The server enforces a 12 KB UTF-8 response budget.",
+        "properties": {
+          "version": { "type": "integer", "const": 1 },
+          "dataVersion": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "asOfDate": { "type": "string", "format": "date" },
+          "items": { "type": "array", "maxItems": 16, "items": { "$ref": "#/components/schemas/AnalysisProjectionItem" } },
+          "bestResults": { "$ref": "#/components/schemas/AnalysisProjectionBestResults" },
+          "omittedCount": { "type": "integer", "minimum": 0 },
+          "limitations": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["version", "dataVersion", "asOfDate", "items", "bestResults", "omittedCount", "limitations"],
+        "additionalProperties": false
+      },
+      "AnalysisProjectionItem": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "kind": { "type": "string", "enum": ["general", "event"] },
+          "status": { "type": "string", "enum": ["active", "archived", "unknown"] },
+          "position": { "type": "integer" },
+          "label": { "type": "string", "description": "Server-truncated user text." },
+          "target": { "type": ["string", "null"], "description": "Server-truncated user text." },
+          "date": { "type": ["string", "null"], "format": "date" },
+          "timezone": { "type": ["string", "null"] },
+          "sport": { "type": ["string", "null"] },
+          "distanceMeters": { "type": ["integer", "null"] },
+          "priority": { "type": "string", "enum": ["A", "B", "C", "unknown"] },
+          "lifecycle": { "type": ["string", "null"], "enum": ["upcoming", "awaiting_result", "completed", "cancelled", "dns", "archived", "unknown", null] },
+          "syncState": { "type": ["string", "null"], "enum": ["pending", "synced", "conflict", "error", "delete_pending", "deleted", "unknown", null] },
+          "raceResultId": { "type": ["string", "null"], "format": "uuid" },
+          "resultStatus": { "type": ["string", "null"], "enum": ["pending", "observed", "confirmed", "invalidated", "unknown", null] },
+          "evidence": { "type": ["object", "null"], "properties": { "activeCount": { "type": "integer", "minimum": 0 }, "invalidatedCount": { "type": "integer", "minimum": 0 }, "roles": { "type": "array", "items": { "type": "string", "enum": ["primary", "candidate", "supporting", "manual"] } }, "levels": { "type": "array", "items": { "type": "string", "enum": ["exact", "high_confidence", "provisional", "ambiguous", "unlinked", "invalidated", "unknown"] } } }, "required": ["activeCount", "invalidatedCount", "roles", "levels"], "additionalProperties": false },
+          "results": { "$ref": "#/components/schemas/AnalysisProjectionResults" },
+          "limitations": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["id", "kind", "status", "position", "label", "target", "date", "timezone", "sport", "distanceMeters", "priority", "lifecycle", "syncState", "raceResultId", "resultStatus", "evidence", "results", "limitations"],
+        "additionalProperties": false
+      },
+      "AnalysisProjectionResults": {
+        "type": "object",
+        "properties": {
+          "observedMoving": { "anyOf": [{ "$ref": "#/components/schemas/AnalysisProjectionResultLane" }, { "type": "null" }] },
+          "observedElapsed": { "anyOf": [{ "$ref": "#/components/schemas/AnalysisProjectionResultLane" }, { "type": "null" }] },
+          "officialChip": { "anyOf": [{ "$ref": "#/components/schemas/AnalysisProjectionResultLane" }, { "type": "null" }] },
+          "officialGun": { "anyOf": [{ "$ref": "#/components/schemas/AnalysisProjectionResultLane" }, { "type": "null" }] },
+          "manual": { "anyOf": [{ "$ref": "#/components/schemas/AnalysisProjectionResultLane" }, { "type": "null" }] }
+        },
+        "required": ["observedMoving", "observedElapsed", "officialChip", "officialGun", "manual"],
+        "additionalProperties": false
+      },
+      "AnalysisProjectionResultLane": {
+        "type": "object",
+        "properties": {
+          "seconds": { "type": "integer", "minimum": 1 },
+          "source": { "type": "string", "enum": ["observed_moving", "observed_elapsed", "official_chip", "official_gun", "manual"] },
+          "evidenceLevel": { "type": "string", "enum": ["exact", "high_confidence", "provisional", "ambiguous", "unlinked", "invalidated", "unknown"] },
+          "confidence": { "type": "string", "enum": ["high", "medium", "low", "unknown"] },
+          "limitations": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["seconds", "source", "evidenceLevel", "confidence", "limitations"],
+        "additionalProperties": false
+      },
+      "AnalysisProjectionBestResults": {
+        "type": "object",
+        "properties": {
+          "current": { "type": "array", "maxItems": 16, "items": { "type": "object", "properties": { "semanticKey": { "type": ["string", "null"] }, "distance": { "type": "string" }, "seconds": { "type": ["integer", "null"] }, "date": { "type": ["string", "null"], "format": "date" }, "source": { "type": "string", "const": "user_claimed_legacy" }, "resultKind": { "type": "string", "const": "legacy_unspecified" }, "limitations": { "type": "array", "items": { "type": "string" } } }, "required": ["semanticKey", "distance", "seconds", "date", "source", "resultKind", "limitations"], "additionalProperties": false } },
+          "accepted": { "type": "array", "maxItems": 16, "items": { "type": "object", "properties": { "semanticKey": { "type": "string" }, "resultKind": { "type": "string", "enum": ["observed_moving", "observed_elapsed", "official_chip", "official_gun", "manual"] }, "seconds": { "type": "integer", "minimum": 1 } }, "required": ["semanticKey", "resultKind", "seconds"], "additionalProperties": false } },
+          "derivedBestKnown": { "type": "array", "maxItems": 16, "items": { "type": "object", "properties": { "semanticKey": { "type": "string" }, "raceResultId": { "type": ["string", "null"], "format": "uuid" }, "resultKind": { "type": "string", "enum": ["observed_moving", "observed_elapsed", "official_chip", "official_gun", "manual"] }, "seconds": { "type": "integer", "minimum": 1 }, "date": { "type": ["string", "null"], "format": "date" }, "status": { "type": "string", "enum": ["detected", "improvement", "not_improvement", "not_comparable"] }, "evidenceLevel": { "type": "string", "enum": ["exact", "high_confidence", "provisional", "ambiguous", "unlinked", "invalidated", "unknown"] }, "confidence": { "type": "string", "enum": ["high", "medium", "low", "unknown"] }, "limitations": { "type": "array", "items": { "type": "string" } } }, "required": ["semanticKey", "raceResultId", "resultKind", "seconds", "date", "status", "evidenceLevel", "confidence", "limitations"], "additionalProperties": false } },
+          "manual": { "type": "array", "maxItems": 16, "items": { "type": "object", "properties": { "sport": { "type": "string", "enum": ["run", "ride", "swim"] }, "distanceMeters": { "type": "integer", "minimum": 1 }, "seconds": { "type": "integer", "minimum": 1 }, "actualDate": { "type": "string", "format": "date" } }, "required": ["sport", "distanceMeters", "seconds", "actualDate"], "additionalProperties": false } },
+          "omittedCount": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["current", "accepted", "derivedBestKnown", "manual", "omittedCount"],
         "additionalProperties": false
       },
       "MeResponse": {

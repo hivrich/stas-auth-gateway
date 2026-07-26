@@ -19,6 +19,7 @@ const expectedActionsPaths = [
   '/gw/api/db/user_summary',
   '/gw/api/db/trainings',
   '/gw/api/db/activity_detail',
+  '/gw/api/db/goals/current',
   '/gw/api/db/profile_sections',
   '/gw/api/db/profile_sections/preview',
   '/gw/api/db/profile_sections/commit',
@@ -28,6 +29,18 @@ const expectedActionsPaths = [
   '/gw/trainings',
   '/gw/api/db/user_summary/v2',
   '/gw/strategy',
+];
+
+// Frozen from the P08 AnalysisProjection interfaces and the P11 bridge-route
+// fixture in stas.run. This covers every nested response field, type,
+// nullability, enum, required list, and additionalProperties boundary.
+const expectedAnalysisProjectionSchemaHash = 'bc28e3554610b7725eda461e0022482bcbc04704a4446be4a872c92e53c62268';
+const analysisProjectionSchemaNames = [
+  'AnalysisProjectionResponse',
+  'AnalysisProjectionItem',
+  'AnalysisProjectionResults',
+  'AnalysisProjectionResultLane',
+  'AnalysisProjectionBestResults',
 ];
 
 function sha256(buffer) {
@@ -139,7 +152,7 @@ async function main() {
   }
 
   const pathNames = Object.keys(gatewaySchema.paths || {});
-  assert.equal(pathNames.length, expectedActionsPaths.length, 'canonical schema must expose exactly 13 Actions paths');
+  assert.equal(pathNames.length, expectedActionsPaths.length, 'canonical schema must expose exactly 14 Actions paths');
   assert.deepEqual(
     [...pathNames].sort(),
     [...expectedActionsPaths].sort(),
@@ -177,6 +190,27 @@ async function main() {
     dbTrainings.responses['200'].content['application/json'].schema.$ref,
     '#/components/schemas/TrainingsListResponse',
     '/gw/api/db/trainings must document the runtime bare-array response'
+  );
+
+  const currentGoals = gatewaySchema.paths['/gw/api/db/goals/current'];
+  assert.deepEqual(Object.keys(currentGoals), ['get'], '/gw/api/db/goals/current must stay GET-only');
+  assert.equal(currentGoals.get.security, undefined, 'current goals must inherit the adjacent OAuth2 security requirement');
+  assert.equal(
+    currentGoals.get.responses['200'].content['application/json'].schema.$ref,
+    '#/components/schemas/AnalysisProjectionResponse',
+    'current goals must document the exact bounded P08 projection'
+  );
+  const currentProjection = gatewaySchema.components.schemas.AnalysisProjectionResponse;
+  assert.equal(currentProjection.properties.items.maxItems, 16, 'current goals items must be capped at 16');
+  assert.match(currentProjection.description, /12 KB UTF-8/, 'current goals must document the runtime 12 KB UTF-8 bound');
+  const frozenAnalysisProjectionSchema = Object.fromEntries(analysisProjectionSchemaNames.map((name) => [
+    name,
+    gatewaySchema.components.schemas[name],
+  ]));
+  assert.equal(
+    sha256(Buffer.from(stableStringify(frozenAnalysisProjectionSchema))),
+    expectedAnalysisProjectionSchemaHash,
+    'current goals must keep the exact frozen P08/P11 bounded response contract'
   );
 
   const gwTrainings = gatewaySchema.paths['/gw/trainings'].get;
@@ -235,9 +269,8 @@ async function main() {
   const gatewaySha = sha256(gatewayBytes);
   const productSha = sha256(productBytes);
   const byteEquivalent = gatewayBytes.equals(productBytes);
-  if (byteEquivalent) {
-    assert.equal(gatewaySha, productSha, 'byte-equivalent schemas must have matching SHA-256');
-  }
+  assert.equal(byteEquivalent, true, 'stas.run product Actions schema must be byte-identical to gateway openapi.actions.json');
+  assert.equal(gatewaySha, productSha, 'byte-identical schemas must have matching SHA-256');
 
   console.log(`ok - OpenAPI contract canonicalized (gateway=${gatewaySha}, product=${productSha}, byteEqual=${byteEquivalent})`);
 }
