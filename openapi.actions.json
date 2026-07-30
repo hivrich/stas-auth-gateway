@@ -140,50 +140,11 @@
         }
       }
     },
-    "/gw/api/db/goals/current": {
-      "get": {
-        "operationId": "getCurrentGoalsStartsResults",
-        "summary": "Get current bounded goals, starts, and results",
-        "description": "Read-only current state only. It does not sync, match, confirm, or change anything. The server returns the existing P08 AnalysisProjection without an envelope: at most 16 items and at most 12 KB UTF-8 at runtime.",
-        "responses": {
-          "200": {
-            "description": "Current bounded goals, starts, and results projection",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnalysisProjectionResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or invalid token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Current goals projection is unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/gw/api/db/profile_sections": {
       "get": {
         "operationId": "readProfileSections",
         "summary": "Read profile memory sections",
-        "description": "Read current profile, goals, and rules with hashes. Use before preview so the saved hash is fresh. This does not write anything.",
+        "description": "Read current rules and profile memory with hashes. Goals and results are available only through getEditableGoalsResults.",
         "responses": {
           "200": {
             "description": "Profile sections payload",
@@ -198,7 +159,7 @@
                     "sections": {
                       "type": "array",
                       "items": {
-                        "$ref": "#/components/schemas/ProfileSection"
+                        "$ref": "#/components/schemas/ActiveProfileSection"
                       }
                     }
                   },
@@ -228,7 +189,7 @@
       "post": {
         "operationId": "previewProfileSectionChange",
         "summary": "Preview a profile memory change",
-        "description": "Preview one rules/profile memory change. Goals, starts, calendar links, and results must use previewGoalResultChange. Never saves; commit only after exact confirmation.",
+        "description": "Preview one rules/profile memory change. Identical normalized text returns noChange=true and creates no history record. Goals and results use previewGoalResultChange.",
         "requestBody": {
           "required": true,
           "content": {
@@ -245,7 +206,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProfileWriteResult"
+                  "$ref": "#/components/schemas/ProfileSectionPreviewResult"
                 }
               }
             }
@@ -365,8 +326,8 @@
     "/gw/api/db/profile_changes": {
       "get": {
         "operationId": "readProfileChangeHistory",
-        "summary": "Read profile memory change history",
-        "description": "Read profile/goals/rules change history. This is read-only. Use before restore decisions, not as permission to restore.",
+        "summary": "Read compact profile change history",
+        "description": "Read a compact paginated history index. Full texts and hashes are omitted; use readProfileChangeDetail for one selected record.",
         "parameters": [
           {
             "name": "section",
@@ -379,8 +340,7 @@
                 "goals",
                 "rules"
               ]
-            },
-            "description": "Optional profile section filter."
+            }
           },
           {
             "name": "status",
@@ -396,8 +356,7 @@
                 "conflict",
                 "rejected"
               ]
-            },
-            "description": "Optional change status filter."
+            }
           },
           {
             "name": "limit",
@@ -406,34 +365,28 @@
             "schema": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 100
+              "maximum": 20,
+              "default": 10
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
             },
-            "description": "Maximum number of changes to return."
+            "description": "nextCursor from the previous page."
           }
         ],
         "responses": {
           "200": {
-            "description": "Profile change history",
+            "description": "Compact profile change history",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "ok": {
-                      "type": "boolean"
-                    },
-                    "changes": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/ProfileMemoryChange"
-                      }
-                    }
-                  },
-                  "required": [
-                    "ok",
-                    "changes"
-                  ],
-                  "additionalProperties": false
+                  "$ref": "#/components/schemas/ProfileMemoryHistoryPage"
                 }
               }
             }
@@ -455,7 +408,7 @@
       "post": {
         "operationId": "restoreProfileChange",
         "summary": "Restore a profile memory change",
-        "description": "Restore a committed profile/goals/rules change. Call only after showing exact restore text and getting explicit user confirmation.",
+        "description": "Restore one committed change only after readProfileChangeDetail and explicit confirmation of the exact previous text.",
         "parameters": [
           {
             "name": "changeId",
@@ -1259,6 +1212,56 @@
           }
         }
       }
+    },
+    "/gw/api/db/profile_changes/{changeId}": {
+      "get": {
+        "operationId": "readProfileChangeDetail",
+        "summary": "Read one profile change in full",
+        "description": "Load exact old/new text and hashes for one record selected from readProfileChangeHistory. This is read-only.",
+        "parameters": [
+          {
+            "name": "changeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Full profile change record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileMemoryChangeDetailResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Profile change not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1306,259 +1309,6 @@
             "additionalProperties": true
           }
         },
-        "additionalProperties": false
-      },
-      "AnalysisProjectionResponse": {
-        "type": "object",
-        "description": "Exact P08 current-state projection. The server enforces a 12 KB UTF-8 response budget.",
-        "properties": {
-          "version": {
-            "type": "integer",
-            "const": 1
-          },
-          "dataVersion": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "asOfDate": {
-            "type": "string",
-            "format": "date"
-          },
-          "items": {
-            "type": "array",
-            "maxItems": 16,
-            "items": {
-              "$ref": "#/components/schemas/AnalysisProjectionItem"
-            }
-          },
-          "bestResults": {
-            "$ref": "#/components/schemas/AnalysisProjectionBestResults"
-          },
-          "omittedCount": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "limitations": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "version",
-          "dataVersion",
-          "asOfDate",
-          "items",
-          "bestResults",
-          "omittedCount",
-          "limitations"
-        ],
-        "additionalProperties": false
-      },
-      "AnalysisProjectionItem": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "kind": {
-            "type": "string",
-            "enum": [
-              "general",
-              "event"
-            ]
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "active",
-              "archived",
-              "unknown"
-            ]
-          },
-          "position": {
-            "type": "integer"
-          },
-          "label": {
-            "type": "string",
-            "description": "Server-truncated user text."
-          },
-          "target": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Server-truncated user text."
-          },
-          "date": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date"
-          },
-          "timezone": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "sport": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "distanceMeters": {
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "priority": {
-            "type": "string",
-            "enum": [
-              "A",
-              "B",
-              "C",
-              "unknown"
-            ]
-          },
-          "lifecycle": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "enum": [
-              "upcoming",
-              "awaiting_result",
-              "completed",
-              "cancelled",
-              "dns",
-              "archived",
-              "unknown",
-              null
-            ]
-          },
-          "syncState": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "enum": [
-              "pending",
-              "synced",
-              "conflict",
-              "error",
-              "delete_pending",
-              "deleted",
-              "unknown",
-              null
-            ]
-          },
-          "raceResultId": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
-          "resultStatus": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "enum": [
-              "pending",
-              "observed",
-              "confirmed",
-              "invalidated",
-              "unknown",
-              null
-            ]
-          },
-          "evidence": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "properties": {
-              "activeCount": {
-                "type": "integer",
-                "minimum": 0
-              },
-              "invalidatedCount": {
-                "type": "integer",
-                "minimum": 0
-              },
-              "roles": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "enum": [
-                    "primary",
-                    "candidate",
-                    "supporting",
-                    "manual"
-                  ]
-                }
-              },
-              "levels": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "enum": [
-                    "exact",
-                    "high_confidence",
-                    "provisional",
-                    "ambiguous",
-                    "unlinked",
-                    "invalidated",
-                    "unknown"
-                  ]
-                }
-              }
-            },
-            "required": [
-              "activeCount",
-              "invalidatedCount",
-              "roles",
-              "levels"
-            ],
-            "additionalProperties": false
-          },
-          "results": {
-            "$ref": "#/components/schemas/AnalysisProjectionResults"
-          },
-          "limitations": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "id",
-          "kind",
-          "status",
-          "position",
-          "label",
-          "target",
-          "date",
-          "timezone",
-          "sport",
-          "distanceMeters",
-          "priority",
-          "lifecycle",
-          "syncState",
-          "raceResultId",
-          "resultStatus",
-          "evidence",
-          "results",
-          "limitations"
-        ],
         "additionalProperties": false
       },
       "AnalysisProjectionResults": {
@@ -1675,234 +1425,6 @@
           "evidenceLevel",
           "confidence",
           "limitations"
-        ],
-        "additionalProperties": false
-      },
-      "AnalysisProjectionBestResults": {
-        "type": "object",
-        "properties": {
-          "current": {
-            "type": "array",
-            "maxItems": 16,
-            "items": {
-              "type": "object",
-              "properties": {
-                "semanticKey": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "distance": {
-                  "type": "string"
-                },
-                "seconds": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                },
-                "date": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "format": "date"
-                },
-                "source": {
-                  "type": "string",
-                  "const": "user_claimed_legacy"
-                },
-                "resultKind": {
-                  "type": "string",
-                  "const": "legacy_unspecified"
-                },
-                "limitations": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                }
-              },
-              "required": [
-                "semanticKey",
-                "distance",
-                "seconds",
-                "date",
-                "source",
-                "resultKind",
-                "limitations"
-              ],
-              "additionalProperties": false
-            }
-          },
-          "accepted": {
-            "type": "array",
-            "maxItems": 16,
-            "items": {
-              "type": "object",
-              "properties": {
-                "semanticKey": {
-                  "type": "string"
-                },
-                "resultKind": {
-                  "type": "string",
-                  "enum": [
-                    "observed_moving",
-                    "observed_elapsed",
-                    "official_chip",
-                    "official_gun",
-                    "manual"
-                  ]
-                },
-                "seconds": {
-                  "type": "integer",
-                  "minimum": 1
-                }
-              },
-              "required": [
-                "semanticKey",
-                "resultKind",
-                "seconds"
-              ],
-              "additionalProperties": false
-            }
-          },
-          "derivedBestKnown": {
-            "type": "array",
-            "maxItems": 16,
-            "items": {
-              "type": "object",
-              "properties": {
-                "semanticKey": {
-                  "type": "string"
-                },
-                "raceResultId": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "format": "uuid"
-                },
-                "resultKind": {
-                  "type": "string",
-                  "enum": [
-                    "observed_moving",
-                    "observed_elapsed",
-                    "official_chip",
-                    "official_gun",
-                    "manual"
-                  ]
-                },
-                "seconds": {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                "date": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "format": "date"
-                },
-                "status": {
-                  "type": "string",
-                  "enum": [
-                    "detected",
-                    "improvement",
-                    "not_improvement",
-                    "not_comparable"
-                  ]
-                },
-                "evidenceLevel": {
-                  "type": "string",
-                  "enum": [
-                    "exact",
-                    "high_confidence",
-                    "provisional",
-                    "ambiguous",
-                    "unlinked",
-                    "invalidated",
-                    "unknown"
-                  ]
-                },
-                "confidence": {
-                  "type": "string",
-                  "enum": [
-                    "high",
-                    "medium",
-                    "low",
-                    "unknown"
-                  ]
-                },
-                "limitations": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                }
-              },
-              "required": [
-                "semanticKey",
-                "raceResultId",
-                "resultKind",
-                "seconds",
-                "date",
-                "status",
-                "evidenceLevel",
-                "confidence",
-                "limitations"
-              ],
-              "additionalProperties": false
-            }
-          },
-          "manual": {
-            "type": "array",
-            "maxItems": 16,
-            "items": {
-              "type": "object",
-              "properties": {
-                "sport": {
-                  "type": "string",
-                  "enum": [
-                    "run",
-                    "ride",
-                    "swim"
-                  ]
-                },
-                "distanceMeters": {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                "seconds": {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                "actualDate": {
-                  "type": "string",
-                  "format": "date"
-                }
-              },
-              "required": [
-                "sport",
-                "distanceMeters",
-                "seconds",
-                "actualDate"
-              ],
-              "additionalProperties": false
-            }
-          },
-          "omittedCount": {
-            "type": "integer",
-            "minimum": 0
-          }
-        },
-        "required": [
-          "current",
-          "accepted",
-          "derivedBestKnown",
-          "manual",
-          "omittedCount"
         ],
         "additionalProperties": false
       },
@@ -2350,46 +1872,6 @@
             "description": "Additional durable profile context. Do not use for firstName."
           }
         }
-      },
-      "ProfileMemoryStructuredGoals": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "date": {
-                  "type": "string",
-                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-                  "description": "Optional exact goal date in YYYY-MM-DD. Omit when unknown; approximate dates are not supported."
-                },
-                "goal": {
-                  "type": "string",
-                  "description": "Required goal or event, for example 5 км, 10 км, regularity, health, cycling event, or triathlon."
-                },
-                "targetResult": {
-                  "type": "string",
-                  "description": "Target result or measurable outcome. Omit when unknown; server writes `не указано`."
-                },
-                "comment": {
-                  "type": "string",
-                  "description": "Short durable context: role, preparation depth, taper/risk note, or season meaning. Omit when unknown; server writes `не указано`."
-                }
-              },
-              "required": [
-                "goal"
-              ]
-            },
-            "description": "Flat goals list in the same shape as the web profile card. Every dated race is a real goal by default; do not demote goals into lower-value categories.",
-            "minItems": 1
-          }
-        },
-        "required": [
-          "items"
-        ]
       },
       "ProfileMemoryStructuredRules": {
         "type": "object",
@@ -4072,13 +3554,22 @@
         "additionalProperties": true
       },
       "GoalResultEditCommand": {
+        "description": "One canonical command. Choose command.type only from the listed oneOf variants; aliases such as create, update, delete, add_goal, or update_goal are invalid.",
+        "discriminator": {
+          "propertyName": "type"
+        },
         "oneOf": [
           {
             "type": "object",
             "additionalProperties": false,
+            "description": "Canonical general_create command. Send this exact command.type and no alias.",
             "properties": {
               "type": {
-                "const": "general_create"
+                "type": "string",
+                "enum": [
+                  "general_create"
+                ],
+                "description": "Use exactly \"general_create\" as command.type."
               },
               "operationId": {
                 "type": "string",
@@ -4149,9 +3640,14 @@
           {
             "type": "object",
             "additionalProperties": false,
+            "description": "Canonical general_update command. Send this exact command.type and no alias.",
             "properties": {
               "type": {
-                "const": "general_update"
+                "type": "string",
+                "enum": [
+                  "general_update"
+                ],
+                "description": "Use exactly \"general_update\" as command.type."
               },
               "operationId": {
                 "type": "string",
@@ -4226,9 +3722,14 @@
           {
             "type": "object",
             "additionalProperties": false,
+            "description": "Canonical general_archive command. Send this exact command.type and no alias.",
             "properties": {
               "type": {
-                "const": "general_archive"
+                "type": "string",
+                "enum": [
+                  "general_archive"
+                ],
+                "description": "Use exactly \"general_archive\" as command.type."
               },
               "operationId": {
                 "type": "string",
@@ -4248,9 +3749,14 @@
           {
             "type": "object",
             "additionalProperties": false,
+            "description": "Canonical start_create command. Send this exact command.type and no alias.",
             "properties": {
               "type": {
-                "const": "start_create"
+                "type": "string",
+                "enum": [
+                  "start_create"
+                ],
+                "description": "Use exactly \"start_create\" as command.type."
               },
               "operationId": {
                 "type": "string",
@@ -4329,9 +3835,14 @@
           {
             "type": "object",
             "additionalProperties": false,
+            "description": "Canonical start_update command. Send this exact command.type and no alias.",
             "properties": {
               "type": {
-                "const": "start_update"
+                "type": "string",
+                "enum": [
+                  "start_update"
+                ],
+                "description": "Use exactly \"start_update\" as command.type."
               },
               "operationId": {
                 "type": "string",
@@ -4417,9 +3928,14 @@
           {
             "type": "object",
             "additionalProperties": false,
+            "description": "Canonical start_delete command. Send this exact command.type and no alias.",
             "properties": {
               "type": {
-                "const": "start_delete"
+                "type": "string",
+                "enum": [
+                  "start_delete"
+                ],
+                "description": "Use exactly \"start_delete\" as command.type."
               },
               "operationId": {
                 "type": "string",
@@ -4439,9 +3955,14 @@
           {
             "type": "object",
             "additionalProperties": false,
+            "description": "Canonical start_cancel command. Send this exact command.type and no alias.",
             "properties": {
               "type": {
-                "const": "start_cancel"
+                "type": "string",
+                "enum": [
+                  "start_cancel"
+                ],
+                "description": "Use exactly \"start_cancel\" as command.type."
               },
               "operationId": {
                 "type": "string",
@@ -4461,9 +3982,14 @@
           {
             "type": "object",
             "additionalProperties": false,
+            "description": "Canonical start_dns command. Send this exact command.type and no alias.",
             "properties": {
               "type": {
-                "const": "start_dns"
+                "type": "string",
+                "enum": [
+                  "start_dns"
+                ],
+                "description": "Use exactly \"start_dns\" as command.type."
               },
               "operationId": {
                 "type": "string",
@@ -4483,9 +4009,14 @@
           {
             "type": "object",
             "additionalProperties": false,
+            "description": "Canonical result_set command. Send this exact command.type and no alias.",
             "properties": {
               "type": {
-                "const": "result_set"
+                "type": "string",
+                "enum": [
+                  "result_set"
+                ],
+                "description": "Use exactly \"result_set\" as command.type."
               },
               "operationId": {
                 "type": "string",
@@ -4524,9 +4055,14 @@
           {
             "type": "object",
             "additionalProperties": false,
+            "description": "Canonical result_link_activity command. Send this exact command.type and no alias.",
             "properties": {
               "type": {
-                "const": "result_link_activity"
+                "type": "string",
+                "enum": [
+                  "result_link_activity"
+                ],
+                "description": "Use exactly \"result_link_activity\" as command.type."
               },
               "operationId": {
                 "type": "string",
@@ -4551,9 +4087,14 @@
           {
             "type": "object",
             "additionalProperties": false,
+            "description": "Canonical result_detach_activity command. Send this exact command.type and no alias.",
             "properties": {
               "type": {
-                "const": "result_detach_activity"
+                "type": "string",
+                "enum": [
+                  "result_detach_activity"
+                ],
+                "description": "Use exactly \"result_detach_activity\" as command.type."
               },
               "operationId": {
                 "type": "string",
@@ -4573,9 +4114,14 @@
           {
             "type": "object",
             "additionalProperties": false,
+            "description": "Canonical manual_result_create command. Send this exact command.type and no alias.",
             "properties": {
               "type": {
-                "const": "manual_result_create"
+                "type": "string",
+                "enum": [
+                  "manual_result_create"
+                ],
+                "description": "Use exactly \"manual_result_create\" as command.type."
               },
               "operationId": {
                 "type": "string",
@@ -4616,9 +4162,14 @@
           {
             "type": "object",
             "additionalProperties": false,
+            "description": "Canonical manual_result_update command. Send this exact command.type and no alias.",
             "properties": {
               "type": {
-                "const": "manual_result_update"
+                "type": "string",
+                "enum": [
+                  "manual_result_update"
+                ],
+                "description": "Use exactly \"manual_result_update\" as command.type."
               },
               "operationId": {
                 "type": "string",
@@ -4664,9 +4215,14 @@
           {
             "type": "object",
             "additionalProperties": false,
+            "description": "Canonical manual_result_delete command. Send this exact command.type and no alias.",
             "properties": {
               "type": {
-                "const": "manual_result_delete"
+                "type": "string",
+                "enum": [
+                  "manual_result_delete"
+                ],
+                "description": "Use exactly \"manual_result_delete\" as command.type."
               },
               "operationId": {
                 "type": "string",
@@ -4686,9 +4242,14 @@
           {
             "type": "object",
             "additionalProperties": false,
+            "description": "Canonical legacy_result_convert command. Send this exact command.type and no alias.",
             "properties": {
               "type": {
-                "const": "legacy_result_convert"
+                "type": "string",
+                "enum": [
+                  "legacy_result_convert"
+                ],
+                "description": "Use exactly \"legacy_result_convert\" as command.type."
               },
               "operationId": {
                 "type": "string",
@@ -4739,9 +4300,14 @@
           {
             "type": "object",
             "additionalProperties": false,
+            "description": "Canonical legacy_result_delete command. Send this exact command.type and no alias.",
             "properties": {
               "type": {
-                "const": "legacy_result_delete"
+                "type": "string",
+                "enum": [
+                  "legacy_result_delete"
+                ],
+                "description": "Use exactly \"legacy_result_delete\" as command.type."
               },
               "operationId": {
                 "type": "string",
@@ -5285,6 +4851,193 @@
             "$ref": "#/components/schemas/ProfileMemoryStructuredProfile"
           }
         }
+      },
+      "ActiveProfileSection": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "section": {
+            "type": "string",
+            "enum": [
+              "profile",
+              "rules"
+            ]
+          },
+          "targetField": {
+            "type": "string",
+            "enum": [
+              "info",
+              "rules"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "hash": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "section",
+          "targetField",
+          "text",
+          "hash",
+          "enabled"
+        ]
+      },
+      "ProfileMemoryChangeSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "section": {
+            "type": "string",
+            "enum": [
+              "profile",
+              "goals",
+              "rules"
+            ]
+          },
+          "targetField": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "gpt",
+              "claude"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "previewed",
+              "committed",
+              "restored",
+              "expired",
+              "conflict",
+              "rejected"
+            ]
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 240
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "committedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "section",
+          "targetField",
+          "source",
+          "status",
+          "summary",
+          "createdAt",
+          "committedAt",
+          "expiresAt"
+        ]
+      },
+      "ProfileMemoryHistoryPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfileMemoryChangeSummary"
+            }
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "changes",
+          "nextCursor"
+        ]
+      },
+      "ProfileMemoryChangeDetailResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "change": {
+            "$ref": "#/components/schemas/ProfileMemoryChange"
+          }
+        },
+        "required": [
+          "change"
+        ]
+      },
+      "ProfileSectionPreviewResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "noChange": {
+            "type": "boolean",
+            "description": "When true, no history record exists and there is nothing to commit."
+          },
+          "change": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileMemoryChange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "section": {
+            "$ref": "#/components/schemas/ActiveProfileSection"
+          }
+        },
+        "required": [
+          "ok",
+          "noChange",
+          "change",
+          "section"
+        ]
       }
     }
   }

@@ -18,7 +18,6 @@ const expectedActionsPaths = [
   '/gw/api/me',
   '/gw/api/db/user_summary',
   '/gw/api/db/activity_detail',
-  '/gw/api/db/goals/current',
   '/gw/api/db/goals/editable',
   '/gw/api/db/goals/activity-candidates',
   '/gw/api/db/goals/changes/preview',
@@ -27,23 +26,12 @@ const expectedActionsPaths = [
   '/gw/api/db/profile_sections/preview',
   '/gw/api/db/profile_sections/commit',
   '/gw/api/db/profile_changes',
+  '/gw/api/db/profile_changes/{changeId}',
   '/gw/api/db/profile_changes/{changeId}/restore',
   '/gw/icu/events',
   '/gw/trainings',
   '/gw/api/db/user_summary/v2',
   '/gw/strategy',
-];
-
-// Frozen from the P08 AnalysisProjection interfaces and the P11 bridge-route
-// fixture in stas.run. This covers every nested response field, type,
-// nullability, enum, required list, and additionalProperties boundary.
-const expectedAnalysisProjectionSchemaHash = 'bc28e3554610b7725eda461e0022482bcbc04704a4446be4a872c92e53c62268';
-const analysisProjectionSchemaNames = [
-  'AnalysisProjectionResponse',
-  'AnalysisProjectionItem',
-  'AnalysisProjectionResults',
-  'AnalysisProjectionResultLane',
-  'AnalysisProjectionBestResults',
 ];
 
 function sha256(buffer) {
@@ -200,26 +188,55 @@ async function main() {
   assert.equal(previewGoalResult.operationId, 'previewGoalResultChange');
   assert.equal(commitGoalResult.operationId, 'commitGoalResultChange');
   assert.equal(gatewaySchema.components.schemas.GoalResultEditCommand.oneOf.length, 16);
+  assert.equal(gatewaySchema.paths['/gw/api/db/goals/current'], undefined, 'retired current-goals path must stay absent');
+  assert.equal(gatewaySchema.components.schemas.AnalysisProjectionResponse, undefined);
 
-  const currentGoals = gatewaySchema.paths['/gw/api/db/goals/current'];
-  assert.deepEqual(Object.keys(currentGoals), ['get'], '/gw/api/db/goals/current must stay GET-only');
-  assert.equal(currentGoals.get.security, undefined, 'current goals must inherit the adjacent OAuth2 security requirement');
+  const commandTypes = gatewaySchema.components.schemas.GoalResultEditCommand.oneOf
+    .flatMap((variant) => variant.properties.type.enum)
+    .sort();
+  assert.deepEqual(commandTypes, [
+    'general_archive',
+    'general_create',
+    'general_update',
+    'legacy_result_convert',
+    'legacy_result_delete',
+    'manual_result_create',
+    'manual_result_delete',
+    'manual_result_update',
+    'result_detach_activity',
+    'result_link_activity',
+    'result_set',
+    'start_cancel',
+    'start_create',
+    'start_delete',
+    'start_dns',
+    'start_update',
+  ]);
+
+  const profileSections = gatewaySchema.paths['/gw/api/db/profile_sections'].get;
+  const activeProfileSection = profileSections.responses['200'].content['application/json']
+    .schema.properties.sections.items.$ref;
+  assert.equal(activeProfileSection, '#/components/schemas/ActiveProfileSection');
+  assert.deepEqual(gatewaySchema.components.schemas.ActiveProfileSection.properties.section.enum, ['profile', 'rules']);
+  assert.equal(gatewaySchema.components.schemas.ProfileMemoryStructuredGoals, undefined);
+
+  const profilePreview = gatewaySchema.paths['/gw/api/db/profile_sections/preview'].post;
   assert.equal(
-    currentGoals.get.responses['200'].content['application/json'].schema.$ref,
-    '#/components/schemas/AnalysisProjectionResponse',
-    'current goals must document the exact bounded P08 projection'
+    profilePreview.responses['200'].content['application/json'].schema.$ref,
+    '#/components/schemas/ProfileSectionPreviewResult'
   );
-  const currentProjection = gatewaySchema.components.schemas.AnalysisProjectionResponse;
-  assert.equal(currentProjection.properties.items.maxItems, 16, 'current goals items must be capped at 16');
-  const frozenAnalysisProjectionSchema = Object.fromEntries(analysisProjectionSchemaNames.map((name) => [
-    name,
-    gatewaySchema.components.schemas[name],
-  ]));
+  assert.match(profilePreview.description, /noChange=true/);
+
+  const profileHistory = gatewaySchema.paths['/gw/api/db/profile_changes'].get;
+  assert.equal(profileHistory.operationId, 'readProfileChangeHistory');
   assert.equal(
-    sha256(Buffer.from(stableStringify(frozenAnalysisProjectionSchema))),
-    expectedAnalysisProjectionSchemaHash,
-    'current goals must keep the exact frozen P08/P11 bounded response contract'
+    profileHistory.responses['200'].content['application/json'].schema.$ref,
+    '#/components/schemas/ProfileMemoryHistoryPage'
   );
+  assert.equal(profileHistory.parameters.find((parameter) => parameter.name === 'limit').schema.maximum, 20);
+  assert.ok(profileHistory.parameters.some((parameter) => parameter.name === 'cursor'));
+  const profileDetail = gatewaySchema.paths['/gw/api/db/profile_changes/{changeId}'].get;
+  assert.equal(profileDetail.operationId, 'readProfileChangeDetail');
 
   const gwTrainings = gatewaySchema.paths['/gw/trainings'].get;
   assert.equal(gwTrainings.operationId, 'getTrainings');
