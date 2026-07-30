@@ -76,6 +76,30 @@ function findBadRequiredReferences(root) {
   return bad;
 }
 
+function findBrokenLocalRefs(root) {
+  const broken = [];
+
+  function resolveLocalRef(ref) {
+    return ref.slice(2).split('/').reduce((value, part) => {
+      const key = part.replaceAll('~1', '/').replaceAll('~0', '~');
+      return value && Object.prototype.hasOwnProperty.call(value, key) ? value[key] : undefined;
+    }, root);
+  }
+
+  function walk(node, location) {
+    if (!node || typeof node !== 'object') return;
+    if (typeof node.$ref === 'string' && node.$ref.startsWith('#/') && resolveLocalRef(node.$ref) === undefined) {
+      broken.push(`${location} points to missing ${node.$ref}`);
+    }
+    for (const [key, value] of Object.entries(node)) {
+      walk(value, `${location}.${key}`);
+    }
+  }
+
+  walk(root, '$');
+  return broken;
+}
+
 async function listen(app) {
   return new Promise((resolve, reject) => {
     const server = http.createServer(app);
@@ -175,6 +199,8 @@ async function main() {
 
   const badRequiredReferences = findBadRequiredReferences(gatewaySchema);
   assert.deepEqual(badRequiredReferences, [], 'object schemas must not require missing properties');
+  const brokenLocalRefs = findBrokenLocalRefs(gatewaySchema);
+  assert.deepEqual(brokenLocalRefs, [], 'all local schema references must resolve');
 
   const editableGoals = gatewaySchema.paths['/gw/api/db/goals/editable'];
   assert.deepEqual(Object.keys(editableGoals), ['get'], 'editable goals must stay GET-only');
@@ -219,6 +245,7 @@ async function main() {
   assert.equal(activeProfileSection, '#/components/schemas/ActiveProfileSection');
   assert.deepEqual(gatewaySchema.components.schemas.ActiveProfileSection.properties.section.enum, ['profile', 'rules']);
   assert.equal(gatewaySchema.components.schemas.ProfileMemoryStructuredGoals, undefined);
+  assert.equal(gatewaySchema.components.schemas.ProfileMemoryStructuredInput, undefined);
 
   const profilePreview = gatewaySchema.paths['/gw/api/db/profile_sections/preview'].post;
   assert.equal(

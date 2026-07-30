@@ -1750,23 +1750,6 @@
         ],
         "additionalProperties": false
       },
-      "ProfileMemoryStructuredInput": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "goals": {
-            "$ref": "#/components/schemas/ProfileMemoryStructuredGoals",
-            "description": "Use only when section is goals. Server builds canonical goals text from the goals list."
-          },
-          "rules": {
-            "$ref": "#/components/schemas/ProfileMemoryStructuredRules"
-          },
-          "profile": {
-            "$ref": "#/components/schemas/ProfileMemoryStructuredProfile"
-          }
-        },
-        "description": "Structured profile memory input. Send only the object matching section. Do not include firstName."
-      },
       "ProfileMemoryStructuredProfile": {
         "type": "object",
         "additionalProperties": false,
