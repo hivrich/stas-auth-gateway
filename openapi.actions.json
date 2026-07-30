@@ -3784,8 +3784,8 @@
                 "anyOf": [
                   {
                     "type": "string",
-                    "minLength": 1,
-                    "maxLength": 500
+                    "pattern": "^\\d{1,3}:[0-5]\\d(?::[0-5]\\d)?$",
+                    "description": "Target time only, formatted as MM:SS or H:MM:SS."
                   },
                   {
                     "type": "null"
@@ -3881,8 +3881,8 @@
                 "anyOf": [
                   {
                     "type": "string",
-                    "minLength": 1,
-                    "maxLength": 500
+                    "pattern": "^\\d{1,3}:[0-5]\\d(?::[0-5]\\d)?$",
+                    "description": "Target time only, formatted as MM:SS or H:MM:SS."
                   },
                   {
                     "type": "null"
@@ -4097,7 +4097,7 @@
           {
             "type": "object",
             "additionalProperties": false,
-            "description": "Canonical manual_result_create command. Send this exact command.type and no alias.",
+            "description": "Create a standalone result. Multiple results for the same sport and distance are allowed.",
             "properties": {
               "type": {
                 "type": "string",
@@ -4145,7 +4145,7 @@
           {
             "type": "object",
             "additionalProperties": false,
-            "description": "Canonical manual_result_update command. Send this exact command.type and no alias.",
+            "description": "Update one existing standalone result. Use the resultPublicId returned in manualResults.",
             "properties": {
               "type": {
                 "type": "string",
