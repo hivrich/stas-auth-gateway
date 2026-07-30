@@ -17,7 +17,6 @@ const productSchemaPath = process.env.STAS_PRODUCT_ACTIONS_SCHEMA
 const expectedActionsPaths = [
   '/gw/api/me',
   '/gw/api/db/user_summary',
-  '/gw/api/db/trainings',
   '/gw/api/db/activity_detail',
   '/gw/api/db/goals/current',
   '/gw/api/db/goals/editable',
@@ -38,7 +37,7 @@ const expectedActionsPaths = [
 // Frozen from the P08 AnalysisProjection interfaces and the P11 bridge-route
 // fixture in stas.run. This covers every nested response field, type,
 // nullability, enum, required list, and additionalProperties boundary.
-const expectedAnalysisProjectionSchemaHash = '9b00379357673a5c64c567e939728e75686e54dd6bfa0846a36e83aba6445b6c';
+const expectedAnalysisProjectionSchemaHash = 'bc28e3554610b7725eda461e0022482bcbc04704a4446be4a872c92e53c62268';
 const analysisProjectionSchemaNames = [
   'AnalysisProjectionResponse',
   'AnalysisProjectionItem',
@@ -156,7 +155,7 @@ async function main() {
   }
 
   const pathNames = Object.keys(gatewaySchema.paths || {});
-  assert.equal(pathNames.length, expectedActionsPaths.length, 'canonical schema must expose exactly 18 Actions paths');
+  assert.equal(pathNames.length, expectedActionsPaths.length, 'canonical schema must expose exactly 17 Actions paths');
   assert.deepEqual(
     [...pathNames].sort(),
     [...expectedActionsPaths].sort(),
@@ -188,13 +187,6 @@ async function main() {
 
   const badRequiredReferences = findBadRequiredReferences(gatewaySchema);
   assert.deepEqual(badRequiredReferences, [], 'object schemas must not require missing properties');
-
-  const dbTrainings = gatewaySchema.paths['/gw/api/db/trainings'].get;
-  assert.equal(
-    dbTrainings.responses['200'].content['application/json'].schema.$ref,
-    '#/components/schemas/TrainingsListResponse',
-    '/gw/api/db/trainings must document the runtime bare-array response'
-  );
 
   const editableGoals = gatewaySchema.paths['/gw/api/db/goals/editable'];
   assert.deepEqual(Object.keys(editableGoals), ['get'], 'editable goals must stay GET-only');
@@ -230,6 +222,12 @@ async function main() {
   );
 
   const gwTrainings = gatewaySchema.paths['/gw/trainings'].get;
+  assert.equal(gwTrainings.operationId, 'getTrainings');
+  assert.equal(
+    gwTrainings.parameters.find((parameter) => parameter.name === 'full')?.schema?.default,
+    false,
+    '/gw/trainings must default to the compact index mode'
+  );
   assert.equal(
     gwTrainings.responses['200'].content['application/json'].schema.$ref,
     '#/components/schemas/TrainingsListResponse',
@@ -246,6 +244,11 @@ async function main() {
     stableStringify(gwTrainings).toLowerCase().includes('full raw'),
     false,
     '/gw/trainings descriptions must not promise full raw data'
+  );
+  assert.equal(
+    gatewaySchema.components.schemas.TrainingFull.properties.listDetail.$ref,
+    '#/components/schemas/TrainingListDetail',
+    'every training item must expose exact list-delivery accounting'
   );
   assert.equal(gatewaySchema.components.schemas.ErrorResponse.properties.retryable.type, 'boolean');
   assert.equal(gatewaySchema.components.schemas.ErrorResponse.properties.upstream_status.type, 'integer');

@@ -51,45 +51,6 @@
         }
       }
     },
-    "/gw/api/db/goals/current": {
-      "get": {
-        "operationId": "getCurrentGoalsStartsResults",
-        "summary": "Get current bounded goals, starts, and results",
-        "description": "Read the existing current-only P08 projection with stable public IDs. This action does not start sync, matching, reconciliation, confirmation, or any provider operation.",
-        "responses": {
-          "200": {
-            "description": "Current bounded goals, starts, and results projection",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnalysisProjectionResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing, invalid, or unresolvable user token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Current compact goals projection is unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/gw/api/db/user_summary": {
       "get": {
         "operationId": "getUserSummary",
@@ -118,39 +79,11 @@
         }
       }
     },
-    "/gw/api/db/trainings": {
-      "get": {
-        "operationId": "getTrainingsFromDB",
-        "summary": "Get trainings from STAS DB",
-        "responses": {
-          "200": {
-            "description": "Trainings array",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TrainingsListResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or invalid token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/gw/api/db/activity_detail": {
       "get": {
         "operationId": "getActivityDetailFromDB",
         "summary": "Get detailed package for one completed training",
-        "description": "Read-only detailed package for one selected completed workout. Use after getTrainingsFromDB or getFullTrainings identifies the exact training_id. Do not batch this action across many workouts. The response omits rawData, route coordinates, latlng, and raw stream arrays.",
+        "description": "Read-only detailed package for one selected completed workout. Use after getTrainings identifies the exact training_id. Do not batch this action across many workouts. The response omits rawData, route coordinates, latlng, and raw stream arrays.",
         "parameters": [
           {
             "name": "training_id",
@@ -196,6 +129,45 @@
           },
           "404": {
             "description": "Training not found for current user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gw/api/db/goals/current": {
+      "get": {
+        "operationId": "getCurrentGoalsStartsResults",
+        "summary": "Get current bounded goals, starts, and results",
+        "description": "Read-only current state only. It does not sync, match, confirm, or change anything. The server returns the existing P08 AnalysisProjection without an envelope: at most 16 items and at most 12 KB UTF-8 at runtime.",
+        "responses": {
+          "200": {
+            "description": "Current bounded goals, starts, and results projection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisProjectionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Current goals projection is unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -760,9 +732,9 @@
     },
     "/gw/trainings": {
       "get": {
-        "operationId": "getFullTrainings",
-        "summary": "Get trainings with optional intervals/signals",
-        "description": "Returns a bare array. full=true may include intervals, splits, and work signals where available; rawData, raw streams, and route coordinates are not included.",
+        "operationId": "getTrainings",
+        "summary": "Get a bounded completed-workout list from STAS",
+        "description": "One size-safe list with two modes. Default mode is a rich index for chronology, load, reports, compact interval/split summaries, and choosing training_id. Set full=true only for analysis-rich comparison across multiple workouts in a bounded date window; it adds a bounded compact interval projection. For one selected workout, call getActivityDetailFromDB instead of full=true. Read each item's listDetail accounting before deciding whether exact detail is needed.",
         "parameters": [
           {
             "name": "oldest",
@@ -823,14 +795,14 @@
             "required": false,
             "schema": {
               "type": "boolean",
-              "default": true
+              "default": false
             },
-            "description": "Include intervals, splits, and work signals where available; rawData, raw streams, and route are not included."
+            "description": "Optional analysis-rich list mode for comparing multiple workouts. It is still compact and size-safe, not raw data and not the detailed view for one workout. Omit it for listing/lookup; use getActivityDetailFromDB after selecting one exact training_id."
           }
         ],
         "responses": {
           "200": {
-            "description": "Trainings array",
+            "description": "Bounded completed-workout list with per-item listDetail accounting",
             "content": {
               "application/json": {
                 "schema": {
@@ -876,7 +848,7 @@
       "get": {
         "operationId": "getUserSummaryGw",
         "summary": "Get full user summary via gateway in up to two parts",
-        "description": "Call part 1. On partial, call part 2 with expectedVersion, merge top-level data, and only then answer. On version_mismatch restart. Use summaryFreshness: stale/refresh_failed means not verified current; null means unavailable, not zero. Max two calls per version.",
+        "description": "Call part 1. On partial, call part 2 with expectedVersion, merge the top-level data, and only then answer. On version_mismatch restart. Use summaryFreshness: stale or refresh_failed means not verified current; null means unavailable, not zero. Make at most two calls per summaryVersion.",
         "parameters": [
           {
             "name": "part",
@@ -1310,54 +1282,6 @@
       }
     },
     "schemas": {
-      "AnalysisProjectionResponse": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "version",
-          "dataVersion",
-          "asOfDate",
-          "items",
-          "bestResults",
-          "omittedCount",
-          "limitations"
-        ],
-        "properties": {
-          "version": {
-            "const": 1
-          },
-          "dataVersion": {
-            "type": "string",
-            "pattern": "^[a-f0-9]{64}$"
-          },
-          "asOfDate": {
-            "type": "string",
-            "format": "date"
-          },
-          "items": {
-            "type": "array",
-            "maxItems": 16,
-            "items": {
-              "type": "object",
-              "description": "Existing P08 current item with stable public IDs, bounded user text, lifecycle, result lanes and limitations."
-            }
-          },
-          "bestResults": {
-            "type": "object",
-            "description": "Existing P08 bounded current, accepted, derived and manual best-result lanes."
-          },
-          "omittedCount": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "limitations": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        }
-      },
       "ErrorResponse": {
         "type": "object",
         "properties": {
@@ -1382,6 +1306,604 @@
             "additionalProperties": true
           }
         },
+        "additionalProperties": false
+      },
+      "AnalysisProjectionResponse": {
+        "type": "object",
+        "description": "Exact P08 current-state projection. The server enforces a 12 KB UTF-8 response budget.",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "const": 1
+          },
+          "dataVersion": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "asOfDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "items": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "$ref": "#/components/schemas/AnalysisProjectionItem"
+            }
+          },
+          "bestResults": {
+            "$ref": "#/components/schemas/AnalysisProjectionBestResults"
+          },
+          "omittedCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limitations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "version",
+          "dataVersion",
+          "asOfDate",
+          "items",
+          "bestResults",
+          "omittedCount",
+          "limitations"
+        ],
+        "additionalProperties": false
+      },
+      "AnalysisProjectionItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "general",
+              "event"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "archived",
+              "unknown"
+            ]
+          },
+          "position": {
+            "type": "integer"
+          },
+          "label": {
+            "type": "string",
+            "description": "Server-truncated user text."
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Server-truncated user text."
+          },
+          "date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sport": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "distanceMeters": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "A",
+              "B",
+              "C",
+              "unknown"
+            ]
+          },
+          "lifecycle": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "upcoming",
+              "awaiting_result",
+              "completed",
+              "cancelled",
+              "dns",
+              "archived",
+              "unknown",
+              null
+            ]
+          },
+          "syncState": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "pending",
+              "synced",
+              "conflict",
+              "error",
+              "delete_pending",
+              "deleted",
+              "unknown",
+              null
+            ]
+          },
+          "raceResultId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "resultStatus": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "pending",
+              "observed",
+              "confirmed",
+              "invalidated",
+              "unknown",
+              null
+            ]
+          },
+          "evidence": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "activeCount": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "invalidatedCount": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "roles": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "primary",
+                    "candidate",
+                    "supporting",
+                    "manual"
+                  ]
+                }
+              },
+              "levels": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "exact",
+                    "high_confidence",
+                    "provisional",
+                    "ambiguous",
+                    "unlinked",
+                    "invalidated",
+                    "unknown"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "activeCount",
+              "invalidatedCount",
+              "roles",
+              "levels"
+            ],
+            "additionalProperties": false
+          },
+          "results": {
+            "$ref": "#/components/schemas/AnalysisProjectionResults"
+          },
+          "limitations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "position",
+          "label",
+          "target",
+          "date",
+          "timezone",
+          "sport",
+          "distanceMeters",
+          "priority",
+          "lifecycle",
+          "syncState",
+          "raceResultId",
+          "resultStatus",
+          "evidence",
+          "results",
+          "limitations"
+        ],
+        "additionalProperties": false
+      },
+      "AnalysisProjectionResults": {
+        "type": "object",
+        "properties": {
+          "observedMoving": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisProjectionResultLane"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observedElapsed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisProjectionResultLane"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "officialChip": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisProjectionResultLane"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "officialGun": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisProjectionResultLane"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "manual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisProjectionResultLane"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "observedMoving",
+          "observedElapsed",
+          "officialChip",
+          "officialGun",
+          "manual"
+        ],
+        "additionalProperties": false
+      },
+      "AnalysisProjectionResultLane": {
+        "type": "object",
+        "properties": {
+          "seconds": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "observed_moving",
+              "observed_elapsed",
+              "official_chip",
+              "official_gun",
+              "manual"
+            ]
+          },
+          "evidenceLevel": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "high_confidence",
+              "provisional",
+              "ambiguous",
+              "unlinked",
+              "invalidated",
+              "unknown"
+            ]
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "high",
+              "medium",
+              "low",
+              "unknown"
+            ]
+          },
+          "limitations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "seconds",
+          "source",
+          "evidenceLevel",
+          "confidence",
+          "limitations"
+        ],
+        "additionalProperties": false
+      },
+      "AnalysisProjectionBestResults": {
+        "type": "object",
+        "properties": {
+          "current": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "object",
+              "properties": {
+                "semanticKey": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "distance": {
+                  "type": "string"
+                },
+                "seconds": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "date": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date"
+                },
+                "source": {
+                  "type": "string",
+                  "const": "user_claimed_legacy"
+                },
+                "resultKind": {
+                  "type": "string",
+                  "const": "legacy_unspecified"
+                },
+                "limitations": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "semanticKey",
+                "distance",
+                "seconds",
+                "date",
+                "source",
+                "resultKind",
+                "limitations"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "accepted": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "object",
+              "properties": {
+                "semanticKey": {
+                  "type": "string"
+                },
+                "resultKind": {
+                  "type": "string",
+                  "enum": [
+                    "observed_moving",
+                    "observed_elapsed",
+                    "official_chip",
+                    "official_gun",
+                    "manual"
+                  ]
+                },
+                "seconds": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "semanticKey",
+                "resultKind",
+                "seconds"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "derivedBestKnown": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "object",
+              "properties": {
+                "semanticKey": {
+                  "type": "string"
+                },
+                "raceResultId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "resultKind": {
+                  "type": "string",
+                  "enum": [
+                    "observed_moving",
+                    "observed_elapsed",
+                    "official_chip",
+                    "official_gun",
+                    "manual"
+                  ]
+                },
+                "seconds": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "date": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "detected",
+                    "improvement",
+                    "not_improvement",
+                    "not_comparable"
+                  ]
+                },
+                "evidenceLevel": {
+                  "type": "string",
+                  "enum": [
+                    "exact",
+                    "high_confidence",
+                    "provisional",
+                    "ambiguous",
+                    "unlinked",
+                    "invalidated",
+                    "unknown"
+                  ]
+                },
+                "confidence": {
+                  "type": "string",
+                  "enum": [
+                    "high",
+                    "medium",
+                    "low",
+                    "unknown"
+                  ]
+                },
+                "limitations": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "semanticKey",
+                "raceResultId",
+                "resultKind",
+                "seconds",
+                "date",
+                "status",
+                "evidenceLevel",
+                "confidence",
+                "limitations"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "manual": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "object",
+              "properties": {
+                "sport": {
+                  "type": "string",
+                  "enum": [
+                    "run",
+                    "ride",
+                    "swim"
+                  ]
+                },
+                "distanceMeters": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "seconds": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "actualDate": {
+                  "type": "string",
+                  "format": "date"
+                }
+              },
+              "required": [
+                "sport",
+                "distanceMeters",
+                "seconds",
+                "actualDate"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "omittedCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "current",
+          "accepted",
+          "derivedBestKnown",
+          "manual",
+          "omittedCount"
+        ],
         "additionalProperties": false
       },
       "MeResponse": {
@@ -2417,6 +2939,10 @@
                 "type": "null"
               }
             ]
+          },
+          "listDetail": {
+            "$ref": "#/components/schemas/TrainingListDetail",
+            "description": "Exact accounting for the size-safe list projection. If a section is truncated and exact execution matters, call getActivityDetailFromDB for this training id."
           }
         },
         "required": [
@@ -2424,6 +2950,74 @@
           "date"
         ],
         "additionalProperties": true
+      },
+      "TrainingListDetail": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "index",
+              "analysis"
+            ]
+          },
+          "detailAvailable": {
+            "type": "boolean"
+          },
+          "intervals": {
+            "$ref": "#/components/schemas/TrainingListSectionAccounting"
+          },
+          "intervalSummary": {
+            "$ref": "#/components/schemas/TrainingListSectionAccounting"
+          },
+          "splits": {
+            "$ref": "#/components/schemas/TrainingListSectionAccounting"
+          },
+          "userReportTruncated": {
+            "type": "boolean"
+          },
+          "responseBudgetAdjusted": {
+            "type": "boolean"
+          },
+          "fieldsOmittedForResponseBudget": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "mode",
+          "detailAvailable",
+          "intervals",
+          "intervalSummary",
+          "splits",
+          "userReportTruncated",
+          "responseBudgetAdjusted"
+        ],
+        "additionalProperties": true
+      },
+      "TrainingListSectionAccounting": {
+        "type": "object",
+        "properties": {
+          "available": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "returned": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "available",
+          "returned",
+          "truncated"
+        ],
+        "additionalProperties": false
       },
       "TrainingsListResponse": {
         "type": "array",
