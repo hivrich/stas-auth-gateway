@@ -51,6 +51,45 @@
         }
       }
     },
+    "/gw/api/db/goals/current": {
+      "get": {
+        "operationId": "getCurrentGoalsStartsResults",
+        "summary": "Get current bounded goals, starts, and results",
+        "description": "Read the existing current-only P08 projection with stable public IDs. This action does not start sync, matching, reconciliation, confirmation, or any provider operation.",
+        "responses": {
+          "200": {
+            "description": "Current bounded goals, starts, and results projection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisProjectionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or unresolvable user token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Current compact goals projection is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/gw/api/db/user_summary": {
       "get": {
         "operationId": "getUserSummary",
@@ -168,45 +207,6 @@
         }
       }
     },
-    "/gw/api/db/goals/current": {
-      "get": {
-        "operationId": "getCurrentGoalsStartsResults",
-        "summary": "Get current bounded goals, starts, and results",
-        "description": "Read-only current state only. It does not sync, match, confirm, or change anything. The server returns the existing P08 AnalysisProjection without an envelope: at most 16 items and at most 12 KB UTF-8 at runtime.",
-        "responses": {
-          "200": {
-            "description": "Current bounded goals, starts, and results projection",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnalysisProjectionResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or invalid token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Current goals projection is unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/gw/api/db/profile_sections": {
       "get": {
         "operationId": "readProfileSections",
@@ -256,7 +256,7 @@
       "post": {
         "operationId": "previewProfileSectionChange",
         "summary": "Preview a profile memory change",
-        "description": "Preview one profile/goals/rules section using structured fields. For goals, send a flat items list with optional exact ISO date, goal, target result, and comment; server builds canonical goals text. Never saves; commit only after exact confirmation.",
+        "description": "Preview one rules/profile memory change. Goals, starts, calendar links, and results must use previewGoalResultChange. Never saves; commit only after exact confirmation.",
         "requestBody": {
           "required": true,
           "content": {
@@ -325,7 +325,7 @@
       "post": {
         "operationId": "commitProfileSectionChange",
         "summary": "Commit a profile memory change",
-        "description": "Save a previewed profile/goals/rules change. Call only after the user confirms the exact full new text shown from preview.",
+        "description": "Save a previewed rules/profile change. Goals and results use commitGoalResultChange.",
         "requestBody": {
           "required": true,
           "content": {
@@ -876,7 +876,7 @@
       "get": {
         "operationId": "getUserSummaryGw",
         "summary": "Get full user summary via gateway in up to two parts",
-        "description": "Call part 1. On partial, call part 2 with expectedVersion, merge the top-level data, and only then answer. On version_mismatch restart. Use summaryFreshness: stale or refresh_failed means not verified current; null means unavailable, not zero. Make at most two calls per summaryVersion.",
+        "description": "Call part 1. On partial, call part 2 with expectedVersion, merge top-level data, and only then answer. On version_mismatch restart. Use summaryFreshness: stale/refresh_failed means not verified current; null means unavailable, not zero. Max two calls per version.",
         "parameters": [
           {
             "name": "part",
@@ -913,22 +913,22 @@
               }
             }
           },
-          "401": {
-            "description": "Missing or invalid token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "400": {
             "description": "Invalid request",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UserSummaryV2InvalidRequestResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -1003,6 +1003,290 @@
           }
         }
       }
+    },
+    "/gw/api/db/goals/editable": {
+      "get": {
+        "operationId": "getEditableGoalsResults",
+        "summary": "Read editable goals, starts, and results",
+        "description": "Read the authoritative current state before any goals/results change. Keep dataVersion and use it in previewGoalResultChange. This does not write anything.",
+        "responses": {
+          "200": {
+            "description": "Editable goals/results state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditableGoalsResultsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Goals are unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gw/api/db/goals/activity-candidates": {
+      "get": {
+        "operationId": "getGoalActivityCandidates",
+        "summary": "Read eligible activities for one start",
+        "description": "Read exact activity candidates before linking a completed start to an activity. Use only an event goal public ID from getEditableGoalsResults.",
+        "parameters": [
+          {
+            "name": "goal_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Event goal public ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Activity candidates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalActivityCandidatesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid goal ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Goal not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gw/api/db/goals/changes/preview": {
+      "post": {
+        "operationId": "previewGoalResultChange",
+        "summary": "Preview one exact goals or results change",
+        "description": "Required write gate: first read getEditableGoalsResults, then preview one exact change with that dataVersion. Show the returned before/after/effects and request explicit confirmation. This does not save anything.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "expectedDataVersion": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$",
+                    "description": "Exact dataVersion from getEditableGoalsResults."
+                  },
+                  "command": {
+                    "$ref": "#/components/schemas/GoalResultEditCommand"
+                  }
+                },
+                "required": [
+                  "expectedDataVersion",
+                  "command"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Change preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalResultChangePreviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Goal changes disabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Target not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State changed since read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gw/api/db/goals/changes/commit": {
+      "post": {
+        "operationId": "commitGoalResultChange",
+        "summary": "Commit a confirmed goals or results change",
+        "description": "Commit only the exact preview after the user explicitly confirms its before/after/effects. Then use returned state as the source of truth; calendar synchronization may still be pending.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "changeId": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Preview ID returned by previewGoalResultChange."
+                  }
+                },
+                "required": [
+                  "changeId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Committed change and authoritative state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalResultChangeCommitResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or expired preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Goal changes disabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Preview not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State changed since preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1026,6 +1310,54 @@
       }
     },
     "schemas": {
+      "AnalysisProjectionResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "dataVersion",
+          "asOfDate",
+          "items",
+          "bestResults",
+          "omittedCount",
+          "limitations"
+        ],
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "dataVersion": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "asOfDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "items": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "object",
+              "description": "Existing P08 current item with stable public IDs, bounded user text, lifecycle, result lanes and limitations."
+            }
+          },
+          "bestResults": {
+            "type": "object",
+            "description": "Existing P08 bounded current, accepted, derived and manual best-result lanes."
+          },
+          "omittedCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limitations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "ErrorResponse": {
         "type": "object",
         "properties": {
@@ -1050,82 +1382,6 @@
             "additionalProperties": true
           }
         },
-        "additionalProperties": false
-      },
-      "AnalysisProjectionResponse": {
-        "type": "object",
-        "description": "Exact P08 current-state projection. The server enforces a 12 KB UTF-8 response budget.",
-        "properties": {
-          "version": { "type": "integer", "const": 1 },
-          "dataVersion": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-          "asOfDate": { "type": "string", "format": "date" },
-          "items": { "type": "array", "maxItems": 16, "items": { "$ref": "#/components/schemas/AnalysisProjectionItem" } },
-          "bestResults": { "$ref": "#/components/schemas/AnalysisProjectionBestResults" },
-          "omittedCount": { "type": "integer", "minimum": 0 },
-          "limitations": { "type": "array", "items": { "type": "string" } }
-        },
-        "required": ["version", "dataVersion", "asOfDate", "items", "bestResults", "omittedCount", "limitations"],
-        "additionalProperties": false
-      },
-      "AnalysisProjectionItem": {
-        "type": "object",
-        "properties": {
-          "id": { "type": "string", "format": "uuid" },
-          "kind": { "type": "string", "enum": ["general", "event"] },
-          "status": { "type": "string", "enum": ["active", "archived", "unknown"] },
-          "position": { "type": "integer" },
-          "label": { "type": "string", "description": "Server-truncated user text." },
-          "target": { "type": ["string", "null"], "description": "Server-truncated user text." },
-          "date": { "type": ["string", "null"], "format": "date" },
-          "timezone": { "type": ["string", "null"] },
-          "sport": { "type": ["string", "null"] },
-          "distanceMeters": { "type": ["integer", "null"] },
-          "priority": { "type": "string", "enum": ["A", "B", "C", "unknown"] },
-          "lifecycle": { "type": ["string", "null"], "enum": ["upcoming", "awaiting_result", "completed", "cancelled", "dns", "archived", "unknown", null] },
-          "syncState": { "type": ["string", "null"], "enum": ["pending", "synced", "conflict", "error", "delete_pending", "deleted", "unknown", null] },
-          "raceResultId": { "type": ["string", "null"], "format": "uuid" },
-          "resultStatus": { "type": ["string", "null"], "enum": ["pending", "observed", "confirmed", "invalidated", "unknown", null] },
-          "evidence": { "type": ["object", "null"], "properties": { "activeCount": { "type": "integer", "minimum": 0 }, "invalidatedCount": { "type": "integer", "minimum": 0 }, "roles": { "type": "array", "items": { "type": "string", "enum": ["primary", "candidate", "supporting", "manual"] } }, "levels": { "type": "array", "items": { "type": "string", "enum": ["exact", "high_confidence", "provisional", "ambiguous", "unlinked", "invalidated", "unknown"] } } }, "required": ["activeCount", "invalidatedCount", "roles", "levels"], "additionalProperties": false },
-          "results": { "$ref": "#/components/schemas/AnalysisProjectionResults" },
-          "limitations": { "type": "array", "items": { "type": "string" } }
-        },
-        "required": ["id", "kind", "status", "position", "label", "target", "date", "timezone", "sport", "distanceMeters", "priority", "lifecycle", "syncState", "raceResultId", "resultStatus", "evidence", "results", "limitations"],
-        "additionalProperties": false
-      },
-      "AnalysisProjectionResults": {
-        "type": "object",
-        "properties": {
-          "observedMoving": { "anyOf": [{ "$ref": "#/components/schemas/AnalysisProjectionResultLane" }, { "type": "null" }] },
-          "observedElapsed": { "anyOf": [{ "$ref": "#/components/schemas/AnalysisProjectionResultLane" }, { "type": "null" }] },
-          "officialChip": { "anyOf": [{ "$ref": "#/components/schemas/AnalysisProjectionResultLane" }, { "type": "null" }] },
-          "officialGun": { "anyOf": [{ "$ref": "#/components/schemas/AnalysisProjectionResultLane" }, { "type": "null" }] },
-          "manual": { "anyOf": [{ "$ref": "#/components/schemas/AnalysisProjectionResultLane" }, { "type": "null" }] }
-        },
-        "required": ["observedMoving", "observedElapsed", "officialChip", "officialGun", "manual"],
-        "additionalProperties": false
-      },
-      "AnalysisProjectionResultLane": {
-        "type": "object",
-        "properties": {
-          "seconds": { "type": "integer", "minimum": 1 },
-          "source": { "type": "string", "enum": ["observed_moving", "observed_elapsed", "official_chip", "official_gun", "manual"] },
-          "evidenceLevel": { "type": "string", "enum": ["exact", "high_confidence", "provisional", "ambiguous", "unlinked", "invalidated", "unknown"] },
-          "confidence": { "type": "string", "enum": ["high", "medium", "low", "unknown"] },
-          "limitations": { "type": "array", "items": { "type": "string" } }
-        },
-        "required": ["seconds", "source", "evidenceLevel", "confidence", "limitations"],
-        "additionalProperties": false
-      },
-      "AnalysisProjectionBestResults": {
-        "type": "object",
-        "properties": {
-          "current": { "type": "array", "maxItems": 16, "items": { "type": "object", "properties": { "semanticKey": { "type": ["string", "null"] }, "distance": { "type": "string" }, "seconds": { "type": ["integer", "null"] }, "date": { "type": ["string", "null"], "format": "date" }, "source": { "type": "string", "const": "user_claimed_legacy" }, "resultKind": { "type": "string", "const": "legacy_unspecified" }, "limitations": { "type": "array", "items": { "type": "string" } } }, "required": ["semanticKey", "distance", "seconds", "date", "source", "resultKind", "limitations"], "additionalProperties": false } },
-          "accepted": { "type": "array", "maxItems": 16, "items": { "type": "object", "properties": { "semanticKey": { "type": "string" }, "resultKind": { "type": "string", "enum": ["observed_moving", "observed_elapsed", "official_chip", "official_gun", "manual"] }, "seconds": { "type": "integer", "minimum": 1 } }, "required": ["semanticKey", "resultKind", "seconds"], "additionalProperties": false } },
-          "derivedBestKnown": { "type": "array", "maxItems": 16, "items": { "type": "object", "properties": { "semanticKey": { "type": "string" }, "raceResultId": { "type": ["string", "null"], "format": "uuid" }, "resultKind": { "type": "string", "enum": ["observed_moving", "observed_elapsed", "official_chip", "official_gun", "manual"] }, "seconds": { "type": "integer", "minimum": 1 }, "date": { "type": ["string", "null"], "format": "date" }, "status": { "type": "string", "enum": ["detected", "improvement", "not_improvement", "not_comparable"] }, "evidenceLevel": { "type": "string", "enum": ["exact", "high_confidence", "provisional", "ambiguous", "unlinked", "invalidated", "unknown"] }, "confidence": { "type": "string", "enum": ["high", "medium", "low", "unknown"] }, "limitations": { "type": "array", "items": { "type": "string" } } }, "required": ["semanticKey", "raceResultId", "resultKind", "seconds", "date", "status", "evidenceLevel", "confidence", "limitations"], "additionalProperties": false } },
-          "manual": { "type": "array", "maxItems": 16, "items": { "type": "object", "properties": { "sport": { "type": "string", "enum": ["run", "ride", "swim"] }, "distanceMeters": { "type": "integer", "minimum": 1 }, "seconds": { "type": "integer", "minimum": 1 }, "actualDate": { "type": "string", "format": "date" } }, "required": ["sport", "distanceMeters", "seconds", "actualDate"], "additionalProperties": false } },
-          "omittedCount": { "type": "integer", "minimum": 0 }
-        },
-        "required": ["current", "accepted", "derivedBestKnown", "manual", "omittedCount"],
         "additionalProperties": false
       },
       "MeResponse": {
@@ -1425,13 +1681,13 @@
             "type": "string",
             "enum": [
               "profile",
-              "goals",
               "rules"
-            ]
+            ],
+            "description": "Goals and results use previewGoalResultChange."
           },
           "structured": {
-            "$ref": "#/components/schemas/ProfileMemoryStructuredInput",
-            "description": "Required. Send only the object matching section. For goals, send a flat items list with optional exact ISO date, goal, target result, and comment; the server builds canonical goals text."
+            "$ref": "#/components/schemas/ProfileMemoryWritableStructuredInput",
+            "description": "Rules/profile input only. Goals and results use the dedicated goals-results operations."
           },
           "previousHash": {
             "type": "string",
@@ -3220,6 +3476,1221 @@
           }
         },
         "additionalProperties": true
+      },
+      "GoalResultEditCommand": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "general_create"
+              },
+              "operationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "deadlineDate": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "sport": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "run",
+                      "ride",
+                      "swim"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "comment": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "operationId",
+              "title"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "general_update"
+              },
+              "operationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "goalPublicId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "deadlineDate": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "sport": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "run",
+                      "ride",
+                      "swim"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "comment": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "operationId",
+              "goalPublicId"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "general_archive"
+              },
+              "operationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "goalPublicId": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "type",
+              "operationId",
+              "goalPublicId"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "start_create"
+              },
+              "operationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "date": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "timezone": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "sport": {
+                "type": "string",
+                "enum": [
+                  "run",
+                  "ride",
+                  "swim"
+                ]
+              },
+              "distanceMeters": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000000
+              },
+              "priority": {
+                "type": "string",
+                "enum": [
+                  "A",
+                  "B",
+                  "C"
+                ]
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "comment": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "operationId",
+              "title",
+              "date",
+              "sport",
+              "distanceMeters",
+              "priority"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "start_update"
+              },
+              "operationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "goalPublicId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "date": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "timezone": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "sport": {
+                "type": "string",
+                "enum": [
+                  "run",
+                  "ride",
+                  "swim"
+                ]
+              },
+              "distanceMeters": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000000
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "priority": {
+                "type": "string",
+                "enum": [
+                  "A",
+                  "B",
+                  "C"
+                ]
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "comment": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "operationId",
+              "goalPublicId"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "start_delete"
+              },
+              "operationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "goalPublicId": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "type",
+              "operationId",
+              "goalPublicId"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "start_cancel"
+              },
+              "operationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "goalPublicId": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "type",
+              "operationId",
+              "goalPublicId"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "start_dns"
+              },
+              "operationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "goalPublicId": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "type",
+              "operationId",
+              "goalPublicId"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "result_set"
+              },
+              "operationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "goalPublicId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "resultKind": {
+                "type": "string",
+                "enum": [
+                  "manual",
+                  "official_chip",
+                  "official_gun"
+                ]
+              },
+              "seconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 604800
+              },
+              "actualDate": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              }
+            },
+            "required": [
+              "type",
+              "operationId",
+              "goalPublicId",
+              "resultKind",
+              "seconds"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "result_link_activity"
+              },
+              "operationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "goalPublicId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "selectionId": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "type",
+              "operationId",
+              "goalPublicId",
+              "selectionId"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "result_detach_activity"
+              },
+              "operationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "goalPublicId": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "type",
+              "operationId",
+              "goalPublicId"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "manual_result_create"
+              },
+              "operationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "sport": {
+                "type": "string",
+                "enum": [
+                  "run",
+                  "ride",
+                  "swim"
+                ]
+              },
+              "distanceMeters": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000000
+              },
+              "seconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 604800
+              },
+              "actualDate": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              }
+            },
+            "required": [
+              "type",
+              "operationId",
+              "sport",
+              "distanceMeters",
+              "seconds",
+              "actualDate"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "manual_result_update"
+              },
+              "operationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "resultPublicId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "sport": {
+                "type": "string",
+                "enum": [
+                  "run",
+                  "ride",
+                  "swim"
+                ]
+              },
+              "distanceMeters": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000000
+              },
+              "seconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 604800
+              },
+              "actualDate": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              }
+            },
+            "required": [
+              "type",
+              "operationId",
+              "resultPublicId",
+              "sport",
+              "distanceMeters",
+              "seconds",
+              "actualDate"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "manual_result_delete"
+              },
+              "operationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "resultPublicId": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "type",
+              "operationId",
+              "resultPublicId"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "legacy_result_convert"
+              },
+              "operationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "expectedBestResultVersion": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "legacyToken": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "sport": {
+                "type": "string",
+                "enum": [
+                  "run",
+                  "ride",
+                  "swim"
+                ]
+              },
+              "distanceMeters": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000000
+              },
+              "seconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 604800
+              },
+              "actualDate": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              }
+            },
+            "required": [
+              "type",
+              "operationId",
+              "expectedBestResultVersion",
+              "legacyToken",
+              "sport",
+              "distanceMeters",
+              "seconds",
+              "actualDate"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "legacy_result_delete"
+              },
+              "operationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "expectedBestResultVersion": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "legacyToken": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "type",
+              "operationId",
+              "expectedBestResultVersion",
+              "legacyToken"
+            ]
+          }
+        ]
+      },
+      "EditableGoalsResultsResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 2
+          },
+          "dataVersion": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "publicId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "general",
+                    "event"
+                  ]
+                },
+                "title": {
+                  "type": "string"
+                },
+                "target": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "comment": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "plannedDate": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "actualDate": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "timezone": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "sport": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "run",
+                        "ride",
+                        "swim"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "distanceMeters": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "priority": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "A",
+                        "B",
+                        "C"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "lifecycle": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "syncState": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "raceResult": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "bestResultSuggestion": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "publicId",
+                "kind",
+                "title"
+              ]
+            }
+          },
+          "omittedCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bestResultVersion": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "manualResults": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "legacyResults": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        },
+        "required": [
+          "version",
+          "dataVersion",
+          "items",
+          "omittedCount",
+          "bestResultVersion",
+          "manualResults",
+          "legacyResults"
+        ]
+      },
+      "GoalResultChangePreviewResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "preview": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "changeId": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "operation": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "confirmationRequired": {
+                "const": true
+              },
+              "summary": {
+                "type": "string"
+              },
+              "effects": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "before": {},
+              "after": {}
+            },
+            "required": [
+              "changeId",
+              "operation",
+              "expiresAt",
+              "confirmationRequired",
+              "summary",
+              "effects",
+              "before",
+              "after"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "preview"
+        ]
+      },
+      "GoalResultChangeCommitResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "changeId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "replay": {
+            "type": "boolean"
+          },
+          "state": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "version": {
+                "const": 2
+              },
+              "dataVersion": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "publicId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "general",
+                        "event"
+                      ]
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "target": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "comment": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "plannedDate": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "actualDate": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "timezone": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "sport": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "run",
+                            "ride",
+                            "swim"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "distanceMeters": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "priority": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "A",
+                            "B",
+                            "C"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "lifecycle": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "syncState": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "raceResult": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "bestResultSuggestion": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "publicId",
+                    "kind",
+                    "title"
+                  ]
+                }
+              },
+              "omittedCount": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "bestResultVersion": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "manualResults": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "legacyResults": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            },
+            "required": [
+              "version",
+              "dataVersion",
+              "items",
+              "omittedCount",
+              "bestResultVersion",
+              "manualResults",
+              "legacyResults"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "changeId",
+          "replay",
+          "state"
+        ]
+      },
+      "GoalActivityCandidatesResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goalPublicId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        },
+        "required": [
+          "goalPublicId",
+          "items"
+        ]
+      },
+      "ProfileMemoryWritableStructuredInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "rules": {
+            "$ref": "#/components/schemas/ProfileMemoryStructuredRules"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/ProfileMemoryStructuredProfile"
+          }
+        }
       }
     }
   }

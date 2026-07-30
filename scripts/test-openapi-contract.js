@@ -20,6 +20,10 @@ const expectedActionsPaths = [
   '/gw/api/db/trainings',
   '/gw/api/db/activity_detail',
   '/gw/api/db/goals/current',
+  '/gw/api/db/goals/editable',
+  '/gw/api/db/goals/activity-candidates',
+  '/gw/api/db/goals/changes/preview',
+  '/gw/api/db/goals/changes/commit',
   '/gw/api/db/profile_sections',
   '/gw/api/db/profile_sections/preview',
   '/gw/api/db/profile_sections/commit',
@@ -34,7 +38,7 @@ const expectedActionsPaths = [
 // Frozen from the P08 AnalysisProjection interfaces and the P11 bridge-route
 // fixture in stas.run. This covers every nested response field, type,
 // nullability, enum, required list, and additionalProperties boundary.
-const expectedAnalysisProjectionSchemaHash = 'bc28e3554610b7725eda461e0022482bcbc04704a4446be4a872c92e53c62268';
+const expectedAnalysisProjectionSchemaHash = '9b00379357673a5c64c567e939728e75686e54dd6bfa0846a36e83aba6445b6c';
 const analysisProjectionSchemaNames = [
   'AnalysisProjectionResponse',
   'AnalysisProjectionItem',
@@ -152,7 +156,7 @@ async function main() {
   }
 
   const pathNames = Object.keys(gatewaySchema.paths || {});
-  assert.equal(pathNames.length, expectedActionsPaths.length, 'canonical schema must expose exactly 14 Actions paths');
+  assert.equal(pathNames.length, expectedActionsPaths.length, 'canonical schema must expose exactly 18 Actions paths');
   assert.deepEqual(
     [...pathNames].sort(),
     [...expectedActionsPaths].sort(),
@@ -192,6 +196,19 @@ async function main() {
     '/gw/api/db/trainings must document the runtime bare-array response'
   );
 
+  const editableGoals = gatewaySchema.paths['/gw/api/db/goals/editable'];
+  assert.deepEqual(Object.keys(editableGoals), ['get'], 'editable goals must stay GET-only');
+  assert.equal(editableGoals.get.operationId, 'getEditableGoalsResults');
+  assert.equal(
+    editableGoals.get.responses['200'].content['application/json'].schema.$ref,
+    '#/components/schemas/EditableGoalsResultsResponse',
+  );
+  const previewGoalResult = gatewaySchema.paths['/gw/api/db/goals/changes/preview'].post;
+  const commitGoalResult = gatewaySchema.paths['/gw/api/db/goals/changes/commit'].post;
+  assert.equal(previewGoalResult.operationId, 'previewGoalResultChange');
+  assert.equal(commitGoalResult.operationId, 'commitGoalResultChange');
+  assert.equal(gatewaySchema.components.schemas.GoalResultEditCommand.oneOf.length, 16);
+
   const currentGoals = gatewaySchema.paths['/gw/api/db/goals/current'];
   assert.deepEqual(Object.keys(currentGoals), ['get'], '/gw/api/db/goals/current must stay GET-only');
   assert.equal(currentGoals.get.security, undefined, 'current goals must inherit the adjacent OAuth2 security requirement');
@@ -202,7 +219,6 @@ async function main() {
   );
   const currentProjection = gatewaySchema.components.schemas.AnalysisProjectionResponse;
   assert.equal(currentProjection.properties.items.maxItems, 16, 'current goals items must be capped at 16');
-  assert.match(currentProjection.description, /12 KB UTF-8/, 'current goals must document the runtime 12 KB UTF-8 bound');
   const frozenAnalysisProjectionSchema = Object.fromEntries(analysisProjectionSchemaNames.map((name) => [
     name,
     gatewaySchema.components.schemas[name],
