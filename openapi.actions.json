@@ -734,7 +734,7 @@
       "get": {
         "operationId": "getTrainings",
         "summary": "Get a bounded completed-workout list from STAS",
-        "description": "One size-safe list with two modes. Default mode is a rich index for chronology, load, reports, compact interval/split summaries, and choosing training_id. Set full=true only for analysis-rich comparison across multiple workouts in a bounded date window; it adds a bounded compact interval projection. For one selected workout, call getActivityDetailFromDB instead of full=true. Read each item's listDetail accounting before deciding whether exact detail is needed.",
+        "description": "Size-safe workout list. Omit full for chronology, load, reports, and choosing training_id. Use full=true only to compare multiple workouts in a bounded date range. For one workout, call getActivityDetailFromDB. Check listDetail for omitted or truncated sections.",
         "parameters": [
           {
             "name": "oldest",
