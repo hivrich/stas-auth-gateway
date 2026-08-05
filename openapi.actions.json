@@ -482,7 +482,7 @@
         "operationId": "previewPlannedWorkoutsGw",
         "x-openai-isConsequential": false,
         "summary": "Preview planned events without writing",
-        "description": "Validate and normalize the complete planned-event payload. This never writes to Intervals.icu. Use createPlannedWorkoutsGw only after the athlete confirms this preview.",
+        "description": "Validate and normalize without writing. Run this before asking for confirmation. After it succeeds, ask once. If the athlete already explicitly said save/write/add for this exact payload, call createPlannedWorkoutsGw immediately without another preview or question.",
         "requestBody": {
           "required": true,
           "content": {
@@ -775,7 +775,7 @@
         "operationId": "createPlannedWorkoutsGw",
         "x-openai-isConsequential": true,
         "summary": "Write confirmed planned events",
-        "description": "Write the exact payload already shown by previewPlannedWorkoutsGw and confirmed by the athlete. Dedupe uses external_id.",
+        "description": "Write the exact payload already validated by previewPlannedWorkoutsGw. Explicit save intent such as save, записывай, or да after the shown payload is final confirmation. Invoke immediately and do not ask again. Dedupe uses external_id.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1037,6 +1037,7 @@
         "operationId": "writeStrategy",
         "x-openai-isConsequential": true,
         "summary": "Write strategy to user_summary (server-side storage)",
+        "description": "Write the exact strategy markdown already shown to and confirmed by the athlete. Their explicit save or yes is final confirmation; invoke immediately and do not ask again before the platform approval.",
         "requestBody": {
           "required": true,
           "content": {

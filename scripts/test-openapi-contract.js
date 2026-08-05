@@ -322,6 +322,15 @@ async function main() {
   assert.equal(deleteEvents['x-openai-isConsequential'], true);
   assert.equal(writeStrategy.operationId, 'writeStrategy');
   assert.equal(writeStrategy['x-openai-isConsequential'], true);
+  for (const operation of [previewEventsPost, createEventsPost, writeStrategy]) {
+    assert.ok(operation.description.length <= 300, `${operation.operationId} description must fit GPT Actions limit`);
+  }
+  assert.match(previewEventsPost.description, /before asking for confirmation/i);
+  assert.match(previewEventsPost.description, /without another preview or question/i);
+  assert.match(createEventsPost.description, /final confirmation/i);
+  assert.match(createEventsPost.description, /do not ask again/i);
+  assert.match(writeStrategy.description, /final confirmation/i);
+  assert.match(writeStrategy.description, /do not ask again/i);
   const createEventsParams = createEventsPost.parameters || [];
   const dryRunParam = createEventsParams.find((param) => (
     param.name === 'dry_run' && param.in === 'query'
