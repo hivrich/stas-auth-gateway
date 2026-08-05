@@ -20,16 +20,12 @@ const expectedActionsPaths = [
   '/gw/api/db/activity_detail',
   '/gw/api/db/goals/editable',
   '/gw/api/db/goals/activity-candidates',
-  '/gw/api/db/goals/changes/preview',
-  '/gw/api/db/goals/changes/commit',
+  '/gw/api/db/goals/changes/apply',
   '/gw/api/db/profile_sections',
-  '/gw/api/db/profile_sections/preview',
-  '/gw/api/db/profile_sections/commit',
+  '/gw/api/db/profile_sections/save',
   '/gw/api/db/profile_changes',
   '/gw/api/db/profile_changes/{changeId}',
   '/gw/api/db/profile_changes/{changeId}/restore',
-  '/gw/icu/events/preview',
-  '/gw/icu/events/delete-preview',
   '/gw/icu/events',
   '/gw/trainings',
   '/gw/api/db/user_summary/v2',
@@ -193,25 +189,21 @@ async function main() {
     'getUserSummary',
     'getActivityDetailFromDB',
     'readProfileSections',
-    'previewProfileSectionChange',
     'readProfileChangeHistory',
-    'previewPlannedWorkoutsGw',
-    'previewDeletePlannedWorkouts',
     'getPlannedWorkoutsGw',
     'getTrainings',
     'getUserSummaryGw',
     'getEditableGoalsResults',
     'getGoalActivityCandidates',
-    'previewGoalResultChange',
     'readProfileChangeDetail',
   ];
   const consequentialOperations = [
-    'commitProfileSectionChange',
+    'saveProfileSection',
     'restoreProfileChange',
     'deletePlannedWorkouts',
     'createPlannedWorkoutsGw',
     'writeStrategy',
-    'commitGoalResultChange',
+    'applyGoalResultChange',
   ];
   assert.equal(
     operationsById.size,
@@ -268,10 +260,25 @@ async function main() {
     editableGoals.get.responses['200'].content['application/json'].schema.$ref,
     '#/components/schemas/EditableGoalsResultsResponse',
   );
-  const previewGoalResult = gatewaySchema.paths['/gw/api/db/goals/changes/preview'].post;
-  const commitGoalResult = gatewaySchema.paths['/gw/api/db/goals/changes/commit'].post;
-  assert.equal(previewGoalResult.operationId, 'previewGoalResultChange');
-  assert.equal(commitGoalResult.operationId, 'commitGoalResultChange');
+  const applyGoalResult = gatewaySchema.paths['/gw/api/db/goals/changes/apply'].post;
+  assert.equal(applyGoalResult.operationId, 'applyGoalResultChange');
+  assert.equal(applyGoalResult['x-openai-isConsequential'], true);
+  assert.deepEqual(
+    applyGoalResult.requestBody.content['application/json'].schema.required,
+    ['command'],
+    'one-call goal writes must not require an externally fetched dataVersion or preview id',
+  );
+  assert.deepEqual(
+    gatewaySchema.components.schemas.EditableGoalsResultsResponse.properties.bestResultVersion.type,
+    ['string', 'null'],
+    'editable goals must allow the real no-best-result null state',
+  );
+  assert.deepEqual(
+    gatewaySchema.components.schemas.GoalResultChangeCommitResponse.properties.state
+      .properties.bestResultVersion.type,
+    ['string', 'null'],
+    'one-call goal response must allow the real no-best-result null state',
+  );
   assert.equal(gatewaySchema.components.schemas.GoalResultEditCommand.oneOf.length, 16);
   assert.equal(gatewaySchema.paths['/gw/api/db/goals/current'], undefined, 'retired current-goals path must stay absent');
   assert.equal(gatewaySchema.components.schemas.AnalysisProjectionResponse, undefined);
@@ -306,12 +313,18 @@ async function main() {
   assert.equal(gatewaySchema.components.schemas.ProfileMemoryStructuredGoals, undefined);
   assert.equal(gatewaySchema.components.schemas.ProfileMemoryStructuredInput, undefined);
 
-  const profilePreview = gatewaySchema.paths['/gw/api/db/profile_sections/preview'].post;
+  const profileSave = gatewaySchema.paths['/gw/api/db/profile_sections/save'].post;
   assert.equal(
-    profilePreview.responses['200'].content['application/json'].schema.$ref,
-    '#/components/schemas/ProfileSectionPreviewResult'
+    profileSave.responses['200'].content['application/json'].schema.$ref,
+    '#/components/schemas/ProfileSectionSaveResponse'
   );
-  assert.match(profilePreview.description, /noChange=true/);
+  assert.equal(profileSave.operationId, 'saveProfileSection');
+  assert.equal(profileSave['x-openai-isConsequential'], true);
+  assert.deepEqual(
+    gatewaySchema.components.schemas.ProfileSectionSaveRequest.required,
+    ['section', 'structured'],
+    'one-call profile writes must not require an externally fetched hash or preview id',
+  );
 
   const profileHistory = gatewaySchema.paths['/gw/api/db/profile_changes'].get;
   assert.equal(profileHistory.operationId, 'readProfileChangeHistory');
@@ -363,27 +376,25 @@ async function main() {
   );
 
   const createEventsPost = gatewaySchema.paths['/gw/icu/events'].post;
-  const previewEventsPost = gatewaySchema.paths['/gw/icu/events/preview'].post;
   const deleteEvents = gatewaySchema.paths['/gw/icu/events'].delete;
-  const previewDeleteEvents = gatewaySchema.paths['/gw/icu/events/delete-preview'].get;
   const writeStrategy = gatewaySchema.paths['/gw/strategy'].post;
-  assert.equal(previewEventsPost.operationId, 'previewPlannedWorkoutsGw');
-  assert.equal(previewEventsPost['x-openai-isConsequential'], false);
   assert.equal(createEventsPost['x-openai-isConsequential'], true);
-  assert.equal(previewDeleteEvents.operationId, 'previewDeletePlannedWorkouts');
-  assert.equal(previewDeleteEvents['x-openai-isConsequential'], false);
   assert.equal(deleteEvents['x-openai-isConsequential'], true);
   assert.equal(writeStrategy.operationId, 'writeStrategy');
   assert.equal(writeStrategy['x-openai-isConsequential'], true);
-  for (const operation of [previewEventsPost, createEventsPost, writeStrategy]) {
+  for (const operation of [createEventsPost, deleteEvents, writeStrategy, profileSave, applyGoalResult]) {
     assert.ok(operation.description.length <= 300, `${operation.operationId} description must fit GPT Actions limit`);
   }
-  assert.match(previewEventsPost.description, /before asking for confirmation/i);
-  assert.match(previewEventsPost.description, /without another preview or question/i);
-  assert.match(createEventsPost.description, /final confirmation/i);
-  assert.match(createEventsPost.description, /do not ask again/i);
-  assert.match(writeStrategy.description, /final confirmation/i);
-  assert.match(writeStrategy.description, /do not ask again/i);
+  for (const operation of [createEventsPost, deleteEvents, writeStrategy, profileSave, applyGoalResult]) {
+    assert.match(operation.description, /call once|single confirmed/i);
+    assert.match(operation.description, /do not (call|read)/i);
+  }
+  const actionsStory = stableStringify(gatewaySchema.paths);
+  assert.equal(actionsStory.includes('previewPlannedWorkoutsGw'), false);
+  assert.equal(actionsStory.includes('previewProfileSectionChange'), false);
+  assert.equal(actionsStory.includes('commitProfileSectionChange'), false);
+  assert.equal(actionsStory.includes('previewGoalResultChange'), false);
+  assert.equal(actionsStory.includes('commitGoalResultChange'), false);
   const createEventsParams = createEventsPost.parameters || [];
   const dryRunParam = createEventsParams.find((param) => (
     param.name === 'dry_run' && param.in === 'query'

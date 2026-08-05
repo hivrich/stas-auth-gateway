@@ -148,7 +148,7 @@
         "operationId": "readProfileSections",
         "x-openai-isConsequential": false,
         "summary": "Read profile memory sections",
-        "description": "Read current rules and profile memory with hashes. Goals and results are available only through getEditableGoalsResults.",
+        "description": "Read profile/rules only when needed to compose or explain a draft. Do not call this after explicit save intent; saveProfileSection reads the current section internally.",
         "responses": {
           "200": {
             "description": "Profile sections payload",
@@ -178,146 +178,6 @@
           },
           "401": {
             "description": "Missing or invalid token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/gw/api/db/profile_sections/preview": {
-      "post": {
-        "operationId": "previewProfileSectionChange",
-        "x-openai-isConsequential": false,
-        "summary": "Preview a profile memory change",
-        "description": "Preview one rules/profile memory change. Identical normalized text returns noChange=true and creates no history record. Goals and results use previewGoalResultChange.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ProfileSectionPreviewRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Profile change preview",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProfileSectionPreviewResult"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or invalid token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Write disabled, section disabled, not allowlisted, or sensitive data rejected",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Current section text differs from previousHash",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/gw/api/db/profile_sections/commit": {
-      "post": {
-        "operationId": "commitProfileSectionChange",
-        "x-openai-isConsequential": true,
-        "summary": "Commit a profile memory change",
-        "description": "Save a previewed rules/profile change. Goals and results use commitGoalResultChange.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ProfileSectionCommitRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Profile change committed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProfileWriteResult"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request or expired preview",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or invalid token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Profile change not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Profile changed since preview",
             "content": {
               "application/json": {
                 "schema": {
@@ -483,138 +343,6 @@
         }
       }
     },
-    "/gw/icu/events/preview": {
-      "post": {
-        "operationId": "previewPlannedWorkoutsGw",
-        "x-openai-isConsequential": false,
-        "summary": "Preview planned events without writing",
-        "description": "Validate and normalize without writing. Run this before asking for confirmation. After it succeeds, ask once. If the athlete already explicitly said save/write/add for this exact payload, call createPlannedWorkoutsGw immediately without another preview or question.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreatePlannedWorkoutsRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Non-writing plan preview",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BulkCreateResult"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or invalid token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/gw/icu/events/delete-preview": {
-      "get": {
-        "operationId": "previewDeletePlannedWorkouts",
-        "x-openai-isConsequential": false,
-        "summary": "Preview planned-event deletion without deleting",
-        "description": "Resolve the exact STAS-managed events affected by a proposed deletion. This never deletes anything. Use deletePlannedWorkouts only after the athlete confirms this preview.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "description": "Exact Intervals event id to preview for deletion. Can be comma-separated for multiple exact ids."
-          },
-          {
-            "name": "external_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "description": "Exact external_id to preview for deletion."
-          },
-          {
-            "name": "external_ids",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "description": "Comma-separated exact external_id values to preview for deletion."
-          },
-          {
-            "name": "external_id_prefix",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "description": "Preview only events whose external_id starts with this prefix. Requires oldest and newest."
-          },
-          {
-            "name": "oldest",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "date"
-            },
-            "description": "Oldest date inclusive. Required with external_id_prefix."
-          },
-          {
-            "name": "newest",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "date"
-            },
-            "description": "Newest date inclusive. Required with external_id_prefix."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Non-deleting preview",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeleteWindowResult"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or invalid token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/gw/icu/events": {
       "get": {
         "operationId": "getPlannedWorkoutsGw",
@@ -751,7 +479,7 @@
                 false
               ]
             },
-            "description": "Required false for the confirmed real deletion. Use previewDeletePlannedWorkouts for the non-deleting preview."
+            "description": "Required false for this single confirmed deletion."
           }
         ],
         "responses": {
@@ -776,13 +504,13 @@
             }
           }
         },
-        "description": "Delete only the exact scope already shown by previewDeletePlannedWorkouts and confirmed by the athlete. Prefer exact ids; use prefix plus oldest/newest only for a confirmed full-window replacement."
+        "description": "Call once to delete only the exact STAS-managed scope explicitly requested. Gateway resolves targets and deletes internally. Do not call calendar reads, delete previews, or readback in the delete turn."
       },
       "post": {
         "operationId": "createPlannedWorkoutsGw",
         "x-openai-isConsequential": true,
         "summary": "Write confirmed planned events",
-        "description": "Write the exact payload already validated by previewPlannedWorkoutsGw. Explicit save intent such as save, записывай, or да after the shown payload is final confirmation. Invoke immediately and do not ask again. Dedupe uses external_id.",
+        "description": "An explicit request to save the exact understood events is sufficient confirmation. Call once with dry_run=false. Gateway normalizes, deduplicates, writes, and returns the result. Do not read the calendar, preview, or read back in the save turn.",
         "requestBody": {
           "required": true,
           "content": {
@@ -826,7 +554,7 @@
                 false
               ]
             },
-            "description": "Required false for the confirmed real write. Use previewPlannedWorkoutsGw for validation without writing."
+            "description": "Required false for this single confirmed write."
           }
         ]
       }
@@ -1046,7 +774,7 @@
         "operationId": "writeStrategy",
         "x-openai-isConsequential": true,
         "summary": "Write strategy to user_summary (server-side storage)",
-        "description": "Write the exact strategy markdown already shown to and confirmed by the athlete. Their explicit save or yes is final confirmation; invoke immediately and do not ask again before the platform approval.",
+        "description": "An explicit request to save the exact strategy markdown is sufficient confirmation. Call once with the final markdown. The server stores it and refreshes the summary internally. Do not read summary, preview, or read back in the save turn.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1086,7 +814,7 @@
         "operationId": "getEditableGoalsResults",
         "x-openai-isConsequential": false,
         "summary": "Read editable goals, starts, and results",
-        "description": "Read the authoritative current state before any goals/results change. Keep dataVersion and use it in previewGoalResultChange. This does not write anything.",
+        "description": "Read goals/results only when needed to identify an existing target or compose a draft. Do not call this after explicit save intent; applyGoalResultChange reads the current version internally.",
         "responses": {
           "200": {
             "description": "Editable goals/results state",
@@ -1183,192 +911,6 @@
         }
       }
     },
-    "/gw/api/db/goals/changes/preview": {
-      "post": {
-        "operationId": "previewGoalResultChange",
-        "x-openai-isConsequential": false,
-        "summary": "Preview one exact goals or results change",
-        "description": "Required write gate: first read getEditableGoalsResults, then preview one exact change with that dataVersion. Show the returned before/after/effects and request explicit confirmation. This does not save anything.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "expectedDataVersion": {
-                    "type": "string",
-                    "pattern": "^[0-9a-f]{64}$",
-                    "description": "Exact dataVersion from getEditableGoalsResults."
-                  },
-                  "command": {
-                    "$ref": "#/components/schemas/GoalResultEditCommand"
-                  }
-                },
-                "required": [
-                  "expectedDataVersion",
-                  "command"
-                ]
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Change preview",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GoalResultChangePreviewResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid change",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or invalid token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Goal changes disabled",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Target not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "State changed since read",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/gw/api/db/goals/changes/commit": {
-      "post": {
-        "operationId": "commitGoalResultChange",
-        "x-openai-isConsequential": true,
-        "summary": "Commit a confirmed goals or results change",
-        "description": "Commit only the exact preview after the user explicitly confirms its before/after/effects. Then use returned state as the source of truth; calendar synchronization may still be pending.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "changeId": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "description": "Preview ID returned by previewGoalResultChange."
-                  }
-                },
-                "required": [
-                  "changeId"
-                ]
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Committed change and authoritative state",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GoalResultChangeCommitResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid or expired preview",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or invalid token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Goal changes disabled",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Preview not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "State changed since preview",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/gw/api/db/profile_changes/{changeId}": {
       "get": {
         "operationId": "readProfileChangeDetail",
@@ -1409,6 +951,215 @@
           },
           "404": {
             "description": "Profile change not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gw/api/db/profile_sections/save": {
+      "post": {
+        "operationId": "saveProfileSection",
+        "x-openai-isConsequential": true,
+        "summary": "Validate and save one profile memory section",
+        "description": "An explicit request to save the exact profile or rules change is sufficient confirmation. Call once with the final payload. Gateway reads, validates, and commits internally. Do not call profile reads, previews, or readback in the save turn.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileSectionSaveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Profile section saved or already identical",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileSectionSaveResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Write disabled or rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Target not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Current data conflicts with the requested change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Invalid upstream response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Upstream timeout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gw/api/db/goals/changes/apply": {
+      "post": {
+        "operationId": "applyGoalResultChange",
+        "x-openai-isConsequential": true,
+        "summary": "Validate and apply one goals or results change",
+        "description": "An explicit request to save the exact goal or result change is sufficient confirmation. Call once with the final command. Gateway reads the current version, previews, and commits internally. Do not read, preview, commit, or read back separately in the save turn.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "command": {
+                    "$ref": "#/components/schemas/GoalResultEditCommand"
+                  }
+                },
+                "required": [
+                  "command"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Applied change and authoritative state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalResultChangeCommitResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Write disabled or rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Target not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Current data conflicts with the requested change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Invalid upstream response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Upstream timeout",
             "content": {
               "application/json": {
                 "schema": {
@@ -1875,38 +1626,6 @@
         ],
         "additionalProperties": false
       },
-      "ProfileSectionPreviewRequest": {
-        "type": "object",
-        "properties": {
-          "section": {
-            "type": "string",
-            "enum": [
-              "profile",
-              "rules"
-            ],
-            "description": "Goals and results use previewGoalResultChange."
-          },
-          "structured": {
-            "$ref": "#/components/schemas/ProfileMemoryWritableStructuredInput",
-            "description": "Rules/profile input only. Goals and results use the dedicated goals-results operations."
-          },
-          "previousHash": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Hash returned by readProfileSections for this section."
-          },
-          "diffSummary": {
-            "type": "string",
-            "description": "Short factual summary of what changed. Do not include raw chat."
-          }
-        },
-        "required": [
-          "section",
-          "structured",
-          "previousHash"
-        ],
-        "additionalProperties": false
-      },
       "ProfileMemoryStructuredProfile": {
         "type": "object",
         "additionalProperties": false,
@@ -2045,20 +1764,6 @@
             "description": "Extra durable rule context."
           }
         }
-      },
-      "ProfileSectionCommitRequest": {
-        "type": "object",
-        "properties": {
-          "changeId": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "Preview change id returned by previewProfileSectionChange."
-          }
-        },
-        "required": [
-          "changeId"
-        ],
-        "additionalProperties": false
       },
       "ProfileMemoryChange": {
         "type": "object",
@@ -4649,7 +4354,10 @@
             "minimum": 0
           },
           "bestResultVersion": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "pattern": "^[0-9a-f]{64}$"
           },
           "manualResults": {
@@ -4675,60 +4383,6 @@
           "bestResultVersion",
           "manualResults",
           "legacyResults"
-        ]
-      },
-      "GoalResultChangePreviewResponse": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "ok": {
-            "const": true
-          },
-          "preview": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "changeId": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "operation": {
-                "type": "string"
-              },
-              "expiresAt": {
-                "type": "string",
-                "format": "date-time"
-              },
-              "confirmationRequired": {
-                "const": true
-              },
-              "summary": {
-                "type": "string"
-              },
-              "effects": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "before": {},
-              "after": {}
-            },
-            "required": [
-              "changeId",
-              "operation",
-              "expiresAt",
-              "confirmationRequired",
-              "summary",
-              "effects",
-              "before",
-              "after"
-            ]
-          }
-        },
-        "required": [
-          "ok",
-          "preview"
         ]
       },
       "GoalResultChangeCommitResponse": {
@@ -4923,7 +4577,10 @@
                 "minimum": 0
               },
               "bestResultVersion": {
-                "type": "string",
+                "type": [
+                  "string",
+                  "null"
+                ],
                 "pattern": "^[0-9a-f]{64}$"
               },
               "manualResults": {
@@ -5147,37 +4804,58 @@
           "change"
         ]
       },
-      "ProfileSectionPreviewResult": {
+      "ProfileSectionSaveRequest": {
         "type": "object",
-        "additionalProperties": false,
+        "properties": {
+          "section": {
+            "type": "string",
+            "enum": [
+              "profile",
+              "rules"
+            ],
+            "description": "Save exactly one profile memory section."
+          },
+          "structured": {
+            "$ref": "#/components/schemas/ProfileMemoryWritableStructuredInput",
+            "description": "Final structured change for the selected section."
+          },
+          "diffSummary": {
+            "type": "string",
+            "description": "Short factual summary of the requested change. Do not include raw chat."
+          }
+        },
+        "required": [
+          "section",
+          "structured"
+        ],
+        "additionalProperties": false
+      },
+      "ProfileSectionSaveResponse": {
+        "type": "object",
         "properties": {
           "ok": {
-            "const": true
+            "type": "boolean"
+          },
+          "saved": {
+            "type": "boolean"
           },
           "noChange": {
-            "type": "boolean",
-            "description": "When true, no history record exists and there is nothing to commit."
+            "type": "boolean"
           },
           "change": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ProfileMemoryChange"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "$ref": "#/components/schemas/ProfileMemoryChange"
           },
           "section": {
-            "$ref": "#/components/schemas/ActiveProfileSection"
+            "$ref": "#/components/schemas/ProfileSection"
           }
         },
         "required": [
           "ok",
+          "saved",
           "noChange",
-          "change",
           "section"
-        ]
+        ],
+        "additionalProperties": false
       }
     }
   }

@@ -155,6 +155,10 @@ async function main() {
   );
   const apiMeIndex = findIndex(stack, '/gw/api/me route', (layer) => isRouteLayer(layer, 'GET', '/gw/api/me'));
   const strategyIndex = findIndex(stack, '/gw/strategy route', (layer) => isRouteLayer(layer, 'POST', '/gw/strategy'));
+  const singleCallWritesIndex = findIndex(stack, 'single-call writes router', (layer) => (
+    routerHasRoute(layer, 'POST', '/api/db/profile_sections/save') &&
+    routerHasRoute(layer, 'POST', '/api/db/goals/changes/apply')
+  ));
   const uidInjectDbIndex = findIndex(stack, 'DB UID injector middleware', (layer) => (
     !layer.route &&
     !Array.isArray(layer.handle?.stack) &&
@@ -174,6 +178,7 @@ async function main() {
     ['legacy aliases router', legacyAliasesIndex],
     ['/gw/api/me route', apiMeIndex],
     ['/gw/strategy route', strategyIndex],
+    ['single-call writes router', singleCallWritesIndex],
     ['DB UID injector middleware', uidInjectDbIndex],
     ['DB proxy router', dbProxyIndex],
     ['STAS API router', stasApiIndex],
@@ -185,6 +190,7 @@ async function main() {
   assertBefore(stack, trainingsIndex, oauthRouterIndex, 'trainings router must keep its position before OAuth router');
   assertBefore(stack, oauthRouterIndex, legacyAliasesIndex, 'OAuth router must keep its position before legacy aliases');
   assertBefore(stack, legacyAliasesIndex, apiMeIndex, 'legacy aliases must keep their position before /gw/api/me');
+  assertBefore(stack, singleCallWritesIndex, uidInjectDbIndex, 'single-call writes must run before generic DB proxy');
   assertBefore(stack, uidInjectDbIndex, dbProxyIndex, 'DB UID injector must stay before DB proxy');
 
   const server = await new Promise((resolve) => {

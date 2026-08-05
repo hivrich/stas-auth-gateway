@@ -6,6 +6,7 @@ const legacyAliases = require('./routes/legacy_aliases');
 const trainingsRouter = require('./routes/trainings');
 const uidInjectDb = require('./routes/_uid_inject_db');
 const dbProxy     = require('./routes/db_proxy');
+const singleCallWrites = require('./routes/single_call_writes');
 const stas        = require('./routes/stas');
 const icu         = require('./routes/icu');
 const openapi     = require('./routes/openapi');
@@ -82,6 +83,7 @@ function createApp() {
     }
   });
 
+  app.use('/gw', singleCallWrites);
   app.use('/gw/api/db', uidInjectDb);
   app.use('/gw/api/db', dbProxy);
   app.use('/gw/api', stas);
