@@ -188,6 +188,7 @@
     "/gw/api/db/profile_sections/preview": {
       "post": {
         "operationId": "previewProfileSectionChange",
+        "x-openai-isConsequential": false,
         "summary": "Preview a profile memory change",
         "description": "Preview one rules/profile memory change. Identical normalized text returns noChange=true and creates no history record. Goals and results use previewGoalResultChange.",
         "requestBody": {
@@ -257,6 +258,7 @@
     "/gw/api/db/profile_sections/commit": {
       "post": {
         "operationId": "commitProfileSectionChange",
+        "x-openai-isConsequential": true,
         "summary": "Commit a profile memory change",
         "description": "Save a previewed rules/profile change. Goals and results use commitGoalResultChange.",
         "requestBody": {
@@ -1032,6 +1034,7 @@
     "/gw/api/db/goals/changes/preview": {
       "post": {
         "operationId": "previewGoalResultChange",
+        "x-openai-isConsequential": false,
         "summary": "Preview one exact goals or results change",
         "description": "Required write gate: first read getEditableGoalsResults, then preview one exact change with that dataVersion. Show the returned before/after/effects and request explicit confirmation. This does not save anything.",
         "requestBody": {
@@ -1126,6 +1129,7 @@
     "/gw/api/db/goals/changes/commit": {
       "post": {
         "operationId": "commitGoalResultChange",
+        "x-openai-isConsequential": true,
         "summary": "Commit a confirmed goals or results change",
         "description": "Commit only the exact preview after the user explicitly confirms its before/after/effects. Then use returned state as the source of truth; calendar synchronization may still be pending.",
         "requestBody": {
