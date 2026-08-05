@@ -115,6 +115,20 @@ async function main() {
   try {
     let response = await request(
       baseUrl,
+      '/gw/icu/events/delete-preview?external_id_prefix=test%3A&oldest=2026-06-18&newest=2026-06-19&user_id=999&uid=888',
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.body.dry_run, true);
+    assert.equal(response.body.uid, '15487');
+    assert.deepEqual(response.body.to_delete.ids, ['116577024']);
+    assert.equal(
+      upstreamHits.some(hit => new URL(hit.url).pathname === '/api/v1/athlete/0/events/bulk-delete'),
+      false,
+      'delete preview must not call bulk-delete',
+    );
+
+    response = await request(
+      baseUrl,
       '/gw/icu/events?external_id_prefix=test%3A&oldest=2026-06-18&newest=2026-06-19&dry_run=true&user_id=999&uid=888',
       { method: 'DELETE' },
     );

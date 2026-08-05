@@ -113,22 +113,38 @@ async function main() {
   localOrigin = baseUrl;
 
   try {
+    const payload = {
+      events: [{
+        name: 'STAS oauth write test',
+        start_date_local: '2026-06-22T09:00:00',
+        end_date_local: '2026-06-22T09:30:00',
+        category: 'WORKOUT',
+        type: 'Run',
+        external_id: 'plan:2026-06-22:oauth-write-test',
+      }],
+    };
+
+    const preview = await request(
+      baseUrl,
+      '/gw/icu/events/preview?external_id_prefix=plan:',
+      { method: 'POST', body: payload },
+    );
+
+    assert.equal(preview.status, 200);
+    assert.equal(preview.body.ok, true);
+    assert.equal(preview.body.dry_run, true);
+    assert.equal(preview.body.created, 0);
+    assert.equal(preview.body.events[0].external_id, 'plan:2026-06-22:oauth-write-test');
+    assert.equal(
+      upstreamHits.some((hit) => new URL(hit.url).pathname === '/api/v1/athlete/0/events'),
+      false,
+      'preview must not read or write the upstream calendar',
+    );
+
     const response = await request(
       baseUrl,
       '/gw/icu/events?dry_run=false&oldest=2026-06-22&newest=2026-06-23',
-      {
-        method: 'POST',
-        body: {
-          events: [{
-            name: 'STAS oauth write test',
-            start_date_local: '2026-06-22T09:00:00',
-            end_date_local: '2026-06-22T09:30:00',
-            category: 'WORKOUT',
-            type: 'Run',
-            external_id: 'plan:2026-06-22:oauth-write-test',
-          }],
-        },
-      },
+      { method: 'POST', body: payload },
     );
 
     assert.equal(response.status, 200);
@@ -143,7 +159,7 @@ async function main() {
     assert.equal(calendarHits.every((hit) => hit.headers.Authorization === 'Bearer intervals-access-token'), true);
     assert.equal(upstreamHits.some((hit) => new URL(hit.url).pathname === '/api/db/icu_creds'), false);
 
-    console.log('ok - OAuth calendar POST uses Bearer auth for dedupe and write');
+    console.log('ok - plan preview stays local and confirmed write uses OAuth Bearer auth');
   } finally {
     server.close();
     global.fetch = originalFetch;

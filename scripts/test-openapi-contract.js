@@ -28,6 +28,8 @@ const expectedActionsPaths = [
   '/gw/api/db/profile_changes',
   '/gw/api/db/profile_changes/{changeId}',
   '/gw/api/db/profile_changes/{changeId}/restore',
+  '/gw/icu/events/preview',
+  '/gw/icu/events/delete-preview',
   '/gw/icu/events',
   '/gw/trainings',
   '/gw/api/db/user_summary/v2',
@@ -167,7 +169,11 @@ async function main() {
   }
 
   const pathNames = Object.keys(gatewaySchema.paths || {});
-  assert.equal(pathNames.length, expectedActionsPaths.length, 'canonical schema must expose exactly 17 Actions paths');
+  assert.equal(
+    pathNames.length,
+    expectedActionsPaths.length,
+    `canonical schema must expose exactly ${expectedActionsPaths.length} Actions paths`,
+  );
   assert.deepEqual(
     [...pathNames].sort(),
     [...expectedActionsPaths].sort(),
@@ -304,12 +310,31 @@ async function main() {
   );
 
   const createEventsPost = gatewaySchema.paths['/gw/icu/events'].post;
+  const previewEventsPost = gatewaySchema.paths['/gw/icu/events/preview'].post;
+  const deleteEvents = gatewaySchema.paths['/gw/icu/events'].delete;
+  const previewDeleteEvents = gatewaySchema.paths['/gw/icu/events/delete-preview'].get;
+  const writeStrategy = gatewaySchema.paths['/gw/strategy'].post;
+  assert.equal(previewEventsPost.operationId, 'previewPlannedWorkoutsGw');
+  assert.equal(previewEventsPost['x-openai-isConsequential'], false);
+  assert.equal(createEventsPost['x-openai-isConsequential'], true);
+  assert.equal(previewDeleteEvents.operationId, 'previewDeletePlannedWorkouts');
+  assert.equal(previewDeleteEvents['x-openai-isConsequential'], false);
+  assert.equal(deleteEvents['x-openai-isConsequential'], true);
+  assert.equal(writeStrategy.operationId, 'writeStrategy');
+  assert.equal(writeStrategy['x-openai-isConsequential'], true);
   const createEventsParams = createEventsPost.parameters || [];
   const dryRunParam = createEventsParams.find((param) => (
     param.name === 'dry_run' && param.in === 'query'
   ));
   assert.ok(dryRunParam, 'POST /gw/icu/events must expose dry_run as a query parameter');
   assert.equal(dryRunParam.required, true, 'POST /gw/icu/events dry_run query parameter must be required');
+  assert.deepEqual(dryRunParam.schema.enum, [false], 'POST /gw/icu/events must only expose confirmed writes');
+  const deleteDryRunParam = deleteEvents.parameters.find((param) => (
+    param.name === 'dry_run' && param.in === 'query'
+  ));
+  assert.ok(deleteDryRunParam, 'DELETE /gw/icu/events must expose dry_run as a query parameter');
+  assert.equal(deleteDryRunParam.required, true);
+  assert.deepEqual(deleteDryRunParam.schema.enum, [false], 'DELETE /gw/icu/events must only expose confirmed deletes');
   assert.equal(
     createEventsPost.requestBody.content['application/json'].schema.$ref,
     '#/components/schemas/CreatePlannedWorkoutsRequest',
