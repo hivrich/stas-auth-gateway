@@ -197,7 +197,7 @@ async function main() {
     'getGoalActivityCandidates',
     'readProfileChangeDetail',
   ];
-  const writeOperationsUsingPlatformDefaults = [
+  const nonConsequentialWriteOperations = [
     'saveProfileSection',
     'restoreProfileChange',
     'deletePlannedWorkouts',
@@ -207,7 +207,7 @@ async function main() {
   ];
   assert.equal(
     operationsById.size,
-    nonConsequentialOperations.length + writeOperationsUsingPlatformDefaults.length,
+    nonConsequentialOperations.length + nonConsequentialWriteOperations.length,
     'every Actions operation must have an expected confirmation classification',
   );
   for (const operationId of nonConsequentialOperations) {
@@ -217,11 +217,11 @@ async function main() {
       `${operationId} must not request platform confirmation`,
     );
   }
-  for (const operationId of writeOperationsUsingPlatformDefaults) {
+  for (const operationId of nonConsequentialWriteOperations) {
     assert.equal(
       operationsById.get(operationId)?.['x-openai-isConsequential'],
-      undefined,
-      `${operationId} must use the platform default instead of forcing the looping confirmation flag`,
+      false,
+      `${operationId} must explicitly allow persistent approval instead of using the POST default`,
     );
   }
 
@@ -262,7 +262,7 @@ async function main() {
   );
   const applyGoalResult = gatewaySchema.paths['/gw/api/db/goals/changes/apply'].post;
   assert.equal(applyGoalResult.operationId, 'applyGoalResultChange');
-  assert.equal(applyGoalResult['x-openai-isConsequential'], undefined);
+  assert.equal(applyGoalResult['x-openai-isConsequential'], false);
   assert.deepEqual(
     applyGoalResult.requestBody.content['application/json'].schema.required,
     ['command'],
@@ -319,7 +319,7 @@ async function main() {
     '#/components/schemas/ProfileSectionSaveResponse'
   );
   assert.equal(profileSave.operationId, 'saveProfileSection');
-  assert.equal(profileSave['x-openai-isConsequential'], undefined);
+  assert.equal(profileSave['x-openai-isConsequential'], false);
   assert.deepEqual(
     gatewaySchema.components.schemas.ProfileSectionSaveRequest.required,
     ['section', 'structured'],
@@ -378,10 +378,10 @@ async function main() {
   const createEventsPost = gatewaySchema.paths['/gw/icu/events'].post;
   const deleteEvents = gatewaySchema.paths['/gw/icu/events'].delete;
   const writeStrategy = gatewaySchema.paths['/gw/strategy'].post;
-  assert.equal(createEventsPost['x-openai-isConsequential'], undefined);
-  assert.equal(deleteEvents['x-openai-isConsequential'], undefined);
+  assert.equal(createEventsPost['x-openai-isConsequential'], false);
+  assert.equal(deleteEvents['x-openai-isConsequential'], false);
   assert.equal(writeStrategy.operationId, 'writeStrategy');
-  assert.equal(writeStrategy['x-openai-isConsequential'], undefined);
+  assert.equal(writeStrategy['x-openai-isConsequential'], false);
   for (const operation of [createEventsPost, deleteEvents, writeStrategy, profileSave, applyGoalResult]) {
     assert.ok(operation.description.length <= 300, `${operation.operationId} description must fit GPT Actions limit`);
   }
