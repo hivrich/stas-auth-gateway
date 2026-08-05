@@ -180,6 +180,59 @@ async function main() {
     'canonical schema must expose the expected Actions paths'
   );
 
+  const operationsById = new Map();
+  for (const pathItem of Object.values(gatewaySchema.paths || {})) {
+    for (const operation of Object.values(pathItem || {})) {
+      if (operation && typeof operation === 'object' && operation.operationId) {
+        operationsById.set(operation.operationId, operation);
+      }
+    }
+  }
+  const nonConsequentialOperations = [
+    'getMe',
+    'getUserSummary',
+    'getActivityDetailFromDB',
+    'readProfileSections',
+    'previewProfileSectionChange',
+    'readProfileChangeHistory',
+    'previewPlannedWorkoutsGw',
+    'previewDeletePlannedWorkouts',
+    'getPlannedWorkoutsGw',
+    'getTrainings',
+    'getUserSummaryGw',
+    'getEditableGoalsResults',
+    'getGoalActivityCandidates',
+    'previewGoalResultChange',
+    'readProfileChangeDetail',
+  ];
+  const consequentialOperations = [
+    'commitProfileSectionChange',
+    'restoreProfileChange',
+    'deletePlannedWorkouts',
+    'createPlannedWorkoutsGw',
+    'writeStrategy',
+    'commitGoalResultChange',
+  ];
+  assert.equal(
+    operationsById.size,
+    nonConsequentialOperations.length + consequentialOperations.length,
+    'every Actions operation must have an explicit confirmation classification',
+  );
+  for (const operationId of nonConsequentialOperations) {
+    assert.equal(
+      operationsById.get(operationId)?.['x-openai-isConsequential'],
+      false,
+      `${operationId} must not request platform confirmation`,
+    );
+  }
+  for (const operationId of consequentialOperations) {
+    assert.equal(
+      operationsById.get(operationId)?.['x-openai-isConsequential'],
+      true,
+      `${operationId} must request platform confirmation`,
+    );
+  }
+
   const securitySchemes = gatewaySchema.components?.securitySchemes || {};
   assert.deepEqual(Object.keys(securitySchemes), ['oauth2'], 'canonical schema must expose only oauth2 security');
 

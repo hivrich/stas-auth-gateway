@@ -26,6 +26,7 @@
     "/gw/api/me": {
       "get": {
         "operationId": "getMe",
+        "x-openai-isConsequential": false,
         "summary": "Get current user identity from JWT token",
         "responses": {
           "200": {
@@ -54,6 +55,7 @@
     "/gw/api/db/user_summary": {
       "get": {
         "operationId": "getUserSummary",
+        "x-openai-isConsequential": false,
         "summary": "Get user_summary from STAS DB",
         "responses": {
           "200": {
@@ -82,6 +84,7 @@
     "/gw/api/db/activity_detail": {
       "get": {
         "operationId": "getActivityDetailFromDB",
+        "x-openai-isConsequential": false,
         "summary": "Get detailed package for one completed training",
         "description": "Read-only detailed package for one selected completed workout. Use after getTrainings identifies the exact training_id. Do not batch this action across many workouts. The response omits rawData, route coordinates, latlng, and raw stream arrays.",
         "parameters": [
@@ -143,6 +146,7 @@
     "/gw/api/db/profile_sections": {
       "get": {
         "operationId": "readProfileSections",
+        "x-openai-isConsequential": false,
         "summary": "Read profile memory sections",
         "description": "Read current rules and profile memory with hashes. Goals and results are available only through getEditableGoalsResults.",
         "responses": {
@@ -328,6 +332,7 @@
     "/gw/api/db/profile_changes": {
       "get": {
         "operationId": "readProfileChangeHistory",
+        "x-openai-isConsequential": false,
         "summary": "Read compact profile change history",
         "description": "Read a compact paginated history index. Full texts and hashes are omitted; use readProfileChangeDetail for one selected record.",
         "parameters": [
@@ -409,6 +414,7 @@
     "/gw/api/db/profile_changes/{changeId}/restore": {
       "post": {
         "operationId": "restoreProfileChange",
+        "x-openai-isConsequential": true,
         "summary": "Restore a profile memory change",
         "description": "Restore one committed change only after readProfileChangeDetail and explicit confirmation of the exact previous text.",
         "parameters": [
@@ -612,6 +618,7 @@
     "/gw/icu/events": {
       "get": {
         "operationId": "getPlannedWorkoutsGw",
+        "x-openai-isConsequential": false,
         "summary": "List planned workouts (gateway route)",
         "parameters": [
           {
@@ -827,6 +834,7 @@
     "/gw/trainings": {
       "get": {
         "operationId": "getTrainings",
+        "x-openai-isConsequential": false,
         "summary": "Get a bounded completed-workout list from STAS",
         "description": "Size-safe workout list. Omit full for chronology, load, reports, and choosing training_id. Use full=true only to compare multiple workouts in a bounded date range. For one workout, call getActivityDetailFromDB. Check listDetail for omitted or truncated sections.",
         "parameters": [
@@ -941,6 +949,7 @@
     "/gw/api/db/user_summary/v2": {
       "get": {
         "operationId": "getUserSummaryGw",
+        "x-openai-isConsequential": false,
         "summary": "Get full user summary via gateway in up to two parts",
         "description": "Call part 1. On partial, call part 2 with expectedVersion, merge the top-level data, and only then answer. On version_mismatch restart. Use summaryFreshness: stale or refresh_failed means not verified current; null means unavailable, not zero. Make at most two calls per summaryVersion.",
         "parameters": [
@@ -1075,6 +1084,7 @@
     "/gw/api/db/goals/editable": {
       "get": {
         "operationId": "getEditableGoalsResults",
+        "x-openai-isConsequential": false,
         "summary": "Read editable goals, starts, and results",
         "description": "Read the authoritative current state before any goals/results change. Keep dataVersion and use it in previewGoalResultChange. This does not write anything.",
         "responses": {
@@ -1114,6 +1124,7 @@
     "/gw/api/db/goals/activity-candidates": {
       "get": {
         "operationId": "getGoalActivityCandidates",
+        "x-openai-isConsequential": false,
         "summary": "Read eligible activities for one start",
         "description": "Read exact activity candidates before linking a completed start to an activity. Use only an event goal public ID from getEditableGoalsResults.",
         "parameters": [
@@ -1361,6 +1372,7 @@
     "/gw/api/db/profile_changes/{changeId}": {
       "get": {
         "operationId": "readProfileChangeDetail",
+        "x-openai-isConsequential": false,
         "summary": "Read one profile change in full",
         "description": "Load exact old/new text and hashes for one record selected from readProfileChangeHistory. This is read-only.",
         "parameters": [
