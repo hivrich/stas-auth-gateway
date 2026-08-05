@@ -274,7 +274,6 @@
     "/gw/api/db/profile_changes/{changeId}/restore": {
       "post": {
         "operationId": "restoreProfileChange",
-        "x-openai-isConsequential": true,
         "summary": "Restore a profile memory change",
         "description": "Restore one committed change only after readProfileChangeDetail and explicit confirmation of the exact previous text.",
         "parameters": [
@@ -406,7 +405,6 @@
       },
       "delete": {
         "operationId": "deletePlannedWorkouts",
-        "x-openai-isConsequential": true,
         "summary": "Delete confirmed planned workouts",
         "parameters": [
           {
@@ -508,7 +506,6 @@
       },
       "post": {
         "operationId": "createPlannedWorkoutsGw",
-        "x-openai-isConsequential": true,
         "summary": "Write confirmed planned events",
         "description": "An explicit request to save the exact understood events is sufficient confirmation. Call once with dry_run=false. Gateway normalizes, deduplicates, writes, and returns the result. Do not read the calendar, preview, or read back in the save turn.",
         "requestBody": {
@@ -772,7 +769,6 @@
     "/gw/strategy": {
       "post": {
         "operationId": "writeStrategy",
-        "x-openai-isConsequential": true,
         "summary": "Write strategy to user_summary (server-side storage)",
         "description": "An explicit request to save the exact strategy markdown is sufficient confirmation. Call once with the final markdown. The server stores it and refreshes the summary internally. Do not read summary, preview, or read back in the save turn.",
         "requestBody": {
@@ -965,7 +961,6 @@
     "/gw/api/db/profile_sections/save": {
       "post": {
         "operationId": "saveProfileSection",
-        "x-openai-isConsequential": true,
         "summary": "Validate and save one profile memory section",
         "description": "An explicit request to save the exact profile or rules change is sufficient confirmation. Call once with the final payload. Gateway reads, validates, and commits internally. Do not call profile reads, previews, or readback in the save turn.",
         "requestBody": {
@@ -1065,7 +1060,6 @@
     "/gw/api/db/goals/changes/apply": {
       "post": {
         "operationId": "applyGoalResultChange",
-        "x-openai-isConsequential": true,
         "summary": "Validate and apply one goals or results change",
         "description": "An explicit request to save the exact goal or result change is sufficient confirmation. Call once with the final command. Gateway reads the current version, previews, and commits internally. Do not read, preview, commit, or read back separately in the save turn.",
         "requestBody": {
