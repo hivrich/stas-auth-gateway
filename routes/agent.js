@@ -116,21 +116,14 @@ router.post('/agent/identity/claim', (req, res, next) => {
   }
 });
 
-router.get('/agent/claim', (_req, res) => {
-  if (!isAgentAuthConfigured()) {
-    return res.status(503).type('html').send('<!doctype html><title>Unavailable</title><p>Agent Auth is not enabled.</p>');
-  }
-  return res.type('html').send(renderClaimPage());
-});
-
-router.post('/agent/claim', (req, res, next) => {
+function startAgentClaim(req, res, next, userCode) {
   try {
     if (!isAgentAuthConfigured()) return renderErrorPage(503, res);
 
     const client = getIntervalsClientConfig();
     if (!client) return renderErrorPage(503, res);
 
-    const claim = createIntervalsClaimStateForUserCode(req.body?.user_code, {
+    const claim = createIntervalsClaimStateForUserCode(userCode, {
       ip: req.ip || req.get('x-forwarded-for') || 'unknown',
     });
     const callbackUrl = getAgentCallbackUrl(req);
@@ -148,7 +141,21 @@ router.post('/agent/claim', (req, res, next) => {
     if (error?.status === 400) return renderErrorPage(400, res);
     return next(error);
   }
+}
+
+router.get('/agent/claim', (req, res, next) => {
+  if (!isAgentAuthConfigured()) {
+    return res.status(503).type('html').send('<!doctype html><title>Unavailable</title><p>Agent Auth is not enabled.</p>');
+  }
+
+  const userCode = trimToString(req.query?.user_code);
+  if (userCode) return startAgentClaim(req, res, next, userCode);
+  return res.type('html').send(renderClaimPage());
 });
+
+router.post('/agent/claim', (req, res, next) => (
+  startAgentClaim(req, res, next, req.body?.user_code)
+));
 
 async function handleAgentCallback(req, res, next) {
   try {

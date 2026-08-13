@@ -298,6 +298,7 @@ async function main() {
     assert.match(response.body.claim_token, /^claim_/);
     assert.match(response.body.claim.user_code, /^\d{6}$/);
     assert.equal(response.body.claim.verification_uri, `${baseUrl}/gw/agent/claim`);
+    assert.equal(response.body.claim.verification_uri_complete, `${baseUrl}/gw/agent/claim?user_code=${response.body.claim.user_code}`);
     assert.equal(response.body.interval, 5);
     assert.doesNotMatch(response.text, new RegExp(RAW_INTERVALS_TOKEN));
 
@@ -351,10 +352,7 @@ async function main() {
     assert.equal(response.status, 200);
     assert.match(response.contentType, /text\/html/);
 
-    response = await request(baseUrl, '/gw/agent/claim', {
-      method: 'POST',
-      form: { user_code: userCode },
-    });
+    response = await request(baseUrl, `/gw/agent/claim?user_code=${encodeURIComponent(userCode)}`);
     assert.equal(response.status, 302);
     const authorizeUrl = new URL(response.location);
     assert.equal(authorizeUrl.origin, 'https://intervals.icu');
