@@ -586,7 +586,7 @@
         "operationId": "getTrainings",
         "x-openai-isConsequential": false,
         "summary": "Get a bounded comparative list of historical workouts and calendar context",
-        "description": "Read workouts plus NOTE/SICK/INJURED/HOLIDAY context. Structured workouts include complete stages. Splits are detail-only. Use full=true for bounded comparisons; on too_large, retry smaller windows.",
+        "description": "Read workouts plus NOTE/SICK/INJURED/HOLIDAY context. Structured workouts include complete stages; inspect listDetail. Splits are detail-only via getActivityDetailFromDB. Use full=true for bounded comparisons; on too_large, retry smaller windows.",
         "parameters": [
           {
             "name": "oldest",
