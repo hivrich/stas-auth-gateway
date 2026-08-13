@@ -59,15 +59,22 @@ router.get('/trainings', async (req, res) => {
     const upstreamOk = typeof response.ok === 'boolean'
       ? response.ok
       : upstreamStatus >= 200 && upstreamStatus < 300;
+    const json = await response.json().catch(() => null);
     if (!upstreamOk) {
+      if (upstreamStatus === 413 && json?.error === 'too_large') {
+        return res.status(413).json({
+          status: 413,
+          error: 'too_large',
+          message: typeof json.message === 'string' ? json.message : 'The requested window is too large.',
+          retryable: false,
+        });
+      }
       const isAuthFailure = upstreamStatus === 401 || upstreamStatus === 403;
       return sendTrainingsError(res, 502, isAuthFailure ? 'auth_error' : 'upstream_error', {
         upstreamStatus,
         retryable: !isAuthFailure && isTransientUpstreamStatus(upstreamStatus),
       });
     }
-
-    const json = await response.json().catch(() => null);
     if (Array.isArray(json)) return res.json(json);
     if (json && Array.isArray(json.trainings)) return res.json(json.trainings);
     if (json && Array.isArray(json.activities)) return res.json(json.activities);

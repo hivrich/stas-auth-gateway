@@ -54,16 +54,28 @@
     },
     "/gw/api/db/user_summary": {
       "get": {
-        "operationId": "getUserSummary",
+        "operationId": "getChatFooter",
         "x-openai-isConsequential": false,
-        "summary": "Get user_summary from STAS DB",
+        "summary": "Get the authoritative footer before every reply",
+        "description": "Call before every final reply. Render only chatFooter after the answer. If absent, omit the footer and never invent links.",
+        "parameters": [
+          {
+            "name": "section",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": ["footer"]
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "User summary payload",
+            "description": "Authoritative footer payload",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserSummaryResponse"
+                  "$ref": "#/components/schemas/ChatFooterResponse"
                 }
               }
             }
@@ -74,6 +86,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Summary is not available yet; chatFooter may still be present",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatFooterResponse"
                 }
               }
             }
@@ -563,8 +585,8 @@
       "get": {
         "operationId": "getTrainings",
         "x-openai-isConsequential": false,
-        "summary": "Get a bounded completed-workout list from STAS",
-        "description": "Size-safe workout list. Omit full for chronology, load, reports, and choosing training_id. Use full=true only to compare multiple workouts in a bounded date range. For one workout, call getActivityDetailFromDB. Check listDetail for omitted or truncated sections.",
+        "summary": "Get a bounded comparative list of historical workouts and calendar context",
+        "description": "Read completed trainings plus NOTE/SICK/INJURED/HOLIDAY context. Notes do not consume the limit. Inspect listDetail; use full=true only for bounded comparisons and getActivityDetailFromDB for one workout. On too_large, retry smaller non-overlapping windows.",
         "parameters": [
           {
             "name": "oldest",
@@ -606,7 +628,7 @@
               "maximum": 50,
               "default": 30
             },
-            "description": "Max trainings per page. Real cap is 50."
+            "description": "Max completed trainings per page. Historical calendar context does not consume this limit."
           },
           {
             "name": "offset",
@@ -617,7 +639,7 @@
               "minimum": 0,
               "default": 0
             },
-            "description": "Pagination offset when a date window needs more pages."
+            "description": "Pagination offset for completed trainings. Historical calendar context is returned only when offset=0 to avoid repetition on every training page; prefer non-overlapping date windows for historical analysis."
           },
           {
             "name": "full",
@@ -627,12 +649,12 @@
               "type": "boolean",
               "default": false
             },
-            "description": "Optional analysis-rich list mode for comparing multiple workouts. It is still compact and size-safe, not raw data and not the detailed view for one workout. Omit it for listing/lookup; use getActivityDetailFromDB after selecting one exact training_id."
+            "description": "Optional analysis-rich but bounded list mode for comparing multiple workouts. listDetail reports returned, truncated, and budget-omitted sections. This is not raw data or the exact detailed view for one workout; use getActivityDetailFromDB after selecting one training_id."
           }
         ],
         "responses": {
           "200": {
-            "description": "Bounded completed-workout list with per-item listDetail accounting",
+            "description": "Bounded chronological union of completed training and calendar-context items; listDetail accounting applies only to training items.",
             "content": {
               "application/json": {
                 "schema": {
@@ -643,6 +665,16 @@
           },
           "401": {
             "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The requested training and calendar window exceeds the safe response budget",
             "content": {
               "application/json": {
                 "schema": {
@@ -679,7 +711,7 @@
         "operationId": "getUserSummaryGw",
         "x-openai-isConsequential": false,
         "summary": "Get full user summary via gateway in up to two parts",
-        "description": "Call part 1. On partial, call part 2 with expectedVersion, merge the top-level data, and only then answer. On version_mismatch restart. Use summaryFreshness: stale or refresh_failed means not verified current; null means unavailable, not zero. Make at most two calls per summaryVersion.",
+        "description": "Load part 1 and, when partial, part 2 with expectedVersion. confirmedStructuredIntervals is verified WORK/REST evidence; truncated representative subsets are samples. Missing metrics are unknown. Verify sourceTrainingId before detail. Use data.chatFooter exactly.",
         "parameters": [
           {
             "name": "part",
@@ -965,7 +997,7 @@
     "/gw/api/db/profile_sections/save": {
       "post": {
         "operationId": "saveProfileSection",
-        "x-openai-isConsequential": false,
+        "x-openai-isConsequential": true,
         "summary": "Validate and save one profile memory section",
         "description": "An explicit request to save the exact profile or rules change is sufficient confirmation. Call once with the final payload. Gateway reads, validates, and commits internally. Do not call profile reads, previews, or readback in the save turn.",
         "requestBody": {
@@ -1065,7 +1097,7 @@
     "/gw/api/db/goals/changes/apply": {
       "post": {
         "operationId": "applyGoalResultChange",
-        "x-openai-isConsequential": false,
+        "x-openai-isConsequential": true,
         "summary": "Validate and apply one goals or results change",
         "description": "An explicit request to save the exact goal or result change is sufficient confirmation. Call once with the final command. Gateway reads the current version, previews, and commits internally. Do not read, preview, commit, or read back separately in the save turn.",
         "requestBody": {
@@ -1347,7 +1379,7 @@
             "description": "Intervals athlete id resolved from OAuth token"
           },
           "email": {
-            "type": "string"
+            "type": ["string", "null"]
           }
         },
         "required": [
@@ -1356,6 +1388,62 @@
         ],
         "additionalProperties": false
       },
+      "ChatFooterLink": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "url": { "type": "string" }
+        },
+        "required": ["id", "label", "url"],
+        "additionalProperties": false
+      },
+      "ChatFooterCampaign": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "text": { "type": "string" },
+          "label": { "type": "string" },
+          "url": { "type": "string" }
+        },
+        "required": ["id", "text", "label", "url"],
+        "additionalProperties": false
+      },
+      "ChatFooter": {
+        "type": "object",
+        "description": "Authoritative footer for the final answer. Render these exact links after a Markdown divider. If absent, omit the footer and never invent links.",
+        "properties": {
+          "required": { "type": "boolean", "enum": [true] },
+          "locale": { "type": "string" },
+          "sourceLanguage": { "type": "string", "enum": ["ru"] },
+          "translateToUserLanguage": { "type": "boolean", "enum": [true] },
+          "baseLinks": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ChatFooterLink" }
+          },
+          "campaigns": {
+            "type": "array",
+            "maxItems": 1,
+            "items": { "$ref": "#/components/schemas/ChatFooterCampaign" }
+          }
+        },
+        "required": ["required", "locale", "sourceLanguage", "translateToUserLanguage", "baseLinks", "campaigns"],
+        "additionalProperties": true
+      },
+      "ChatFooterResponse": {
+        "type": "object",
+        "properties": {
+          "chatFooter": { "$ref": "#/components/schemas/ChatFooter" }
+        },
+        "additionalProperties": true
+      },
+      "UserSummaryData": {
+        "type": "object",
+        "properties": {
+          "chatFooter": { "$ref": "#/components/schemas/ChatFooter" }
+        },
+        "additionalProperties": true
+      },
       "UserSummaryResponse": {
         "type": "object",
         "properties": {
@@ -1363,9 +1451,7 @@
             "type": "boolean"
           },
           "user_summary": {
-            "type": "object",
-            "properties": {},
-            "additionalProperties": true
+            "$ref": "#/components/schemas/UserSummaryData"
           }
         },
         "required": [
@@ -1397,8 +1483,7 @@
             "type": "string"
           },
           "data": {
-            "type": "object",
-            "additionalProperties": true
+            "$ref": "#/components/schemas/UserSummaryData"
           }
         },
         "required": [
@@ -1434,8 +1519,7 @@
             ]
           },
           "data": {
-            "type": "object",
-            "additionalProperties": true
+            "$ref": "#/components/schemas/UserSummaryData"
           }
         },
         "required": [
@@ -2123,160 +2207,141 @@
       },
       "TrainingFull": {
         "type": "object",
+        "description": "Bounded comparative list projection of one completed training. listDetail reports truncation or fields omitted for the response budget. For exact detail about one selected workout, use getActivityDetailFromDB.",
         "properties": {
-          "id": {
-            "type": "string"
+          "kind": { "type": "string", "const": "training" },
+          "id": { "type": "string" },
+          "date": { "type": "string", "format": "date-time" },
+          "workoutType": { "type": ["string", "null"] },
+          "sessionType": { "type": ["string", "null"] },
+          "activityName": { "type": ["string", "null"] },
+          "distance": { "type": ["number", "null"], "description": "Distance in kilometres." },
+          "movingTime": { "type": ["number", "null"], "description": "Moving time in seconds." },
+          "pace": { "type": ["number", "null"], "description": "Average pace in seconds per kilometre when available." },
+          "avgHr": { "type": ["number", "null"] },
+          "maxHr": { "type": ["number", "null"] },
+          "fitness": { "type": ["number", "null"] },
+          "fatigue": { "type": ["number", "null"] },
+          "form": { "type": ["number", "null"] },
+          "load": { "type": ["number", "null"] },
+          "intensity": { "type": ["string", "number", "null"] },
+          "elevationGain": { "type": ["number", "null"], "description": "Elevation gain in metres." },
+          "lactateThresholdHr": { "type": ["number", "null"] },
+          "icuHrZones": {
+            "type": ["array", "null"],
+            "items": { "type": "number" }
           },
-          "date": {
-            "type": "string",
-            "format": "date-time"
+          "hrZoneTimes": {
+            "type": ["array", "null"],
+            "items": { "type": "number" }
           },
-          "workout_type": {
-            "type": "string"
-          },
-          "distance": {
-            "type": "string"
-          },
-          "moving_time": {
-            "type": "string"
-          },
-          "training_load": {
-            "type": "integer"
-          },
-          "fitness": {
-            "type": "number"
-          },
-          "fatigue": {
-            "type": "number"
-          },
-          "intensity": {
-            "type": "string"
-          },
-          "avg_heartrate": {
-            "type": "integer"
-          },
-          "max_heartrate": {
-            "type": "integer"
-          },
-          "lactate_threshold_hr": {
-            "type": "integer"
-          },
-          "elevation_gain": {
-            "type": "integer"
-          },
-          "icu_hr_zones": {
-            "type": "array",
-            "items": {
-              "type": "integer"
-            }
-          },
-          "splits_km": {
-            "type": "array",
+          "splitsKmQuality": { "type": ["string", "null"] },
+          "splitsKm": {
+            "type": ["array", "null"],
             "items": {
               "type": "object",
               "properties": {
-                "km": {
-                  "type": "integer"
-                },
-                "pace": {
-                  "type": "string"
-                },
-                "time": {
-                  "type": "string"
-                },
-                "avg_hr": {
-                  "type": "integer"
-                }
+                "km": { "type": "number" },
+                "distance": { "type": ["number", "string"] },
+                "time": { "type": ["number", "string"] },
+                "seconds": { "type": "number" },
+                "pace": { "type": ["number", "string"] },
+                "hr": { "type": "number" }
               },
-              "required": [
-                "km",
-                "pace",
-                "time"
-              ],
               "additionalProperties": true
             }
           },
-          "interval_summary": {
+          "intervalSummary": {
+            "description": "Bounded saved semantic markup. Rows may be legacy strings or structured canonical objects; use listDetail.intervalSummary to see truncation. For the exact complete workout package, use getActivityDetailFromDB.",
             "oneOf": [
               {
                 "type": "array",
                 "items": {
-                  "type": "string"
-                }
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "activity_plan": {
-            "oneOf": [
-              {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": true
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "has_intervals": {
-                    "type": "boolean"
-                  },
-                  "intervals": {
-                    "type": "array",
-                    "items": {
+                  "oneOf": [
+                    { "type": "string" },
+                    {
                       "type": "object",
                       "properties": {
-                        "label": {
-                          "type": "string"
-                        },
-                        "duration_s": {
-                          "type": "integer"
-                        },
-                        "distance_m": {
-                          "type": "number"
-                        },
-                        "avg_pace": {
-                          "type": "string"
-                        },
-                        "avg_hr": {
-                          "type": "integer"
-                        }
+                        "num": { "type": "number" },
+                        "index": { "type": "number" },
+                        "role": { "type": "string" },
+                        "type": { "type": "string" },
+                        "label": { "type": "string" },
+                        "distance": { "type": ["number", "string"] },
+                        "time": { "type": ["number", "string"] },
+                        "pace": { "type": ["number", "string"] },
+                        "hr": { "type": ["number", "null"] },
+                        "watts": { "type": ["number", "null"] }
                       },
                       "additionalProperties": true
                     }
-                  }
-                },
-                "required": [
-                  "has_intervals"
-                ],
-                "additionalProperties": true
-              }
-            ]
-          },
-          "hr_zone_times": {
-            "oneOf": [
-              {
-                "type": "array",
-                "items": {
-                  "type": "number"
+                  ]
                 }
               },
-              {
-                "type": "null"
-              }
+              { "type": "null" }
             ]
+          },
+          "userReport": { "type": ["string", "null"] },
+          "sportMetrics": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": true
+          },
+          "workSignals": {
+            "type": "object",
+            "description": "Derived training-work signal. facts vary by sport and available data.",
+            "properties": {
+              "sport": { "type": "string" },
+              "label": { "type": ["string", "null"] },
+              "confidence": { "type": "string" },
+              "source": { "type": "string" },
+              "structure": { "type": ["string", "null"] },
+              "flags": { "type": "array", "items": { "type": "string" } },
+              "facts": { "type": "object", "properties": {}, "additionalProperties": true }
+            },
+            "additionalProperties": true
+          },
+          "classificationStatus": { "type": "string" },
+          "reportStatus": { "type": "string" },
+          "externalAssessment": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": true
           },
           "listDetail": {
             "$ref": "#/components/schemas/TrainingListDetail",
-            "description": "Exact accounting for the size-safe list projection. If a section is truncated and exact execution matters, call getActivityDetailFromDB for this training id."
+            "description": "Accounting for this bounded list projection. It reports rows returned, truncation, and fields omitted under the response budget; use getActivityDetailFromDB for one exact selected workout."
           }
         },
-        "required": [
-          "id",
-          "date"
-        ],
+        "required": ["kind", "id", "date"],
         "additionalProperties": true
+      },
+      "TrainingHistoryNoteItem": {
+        "type": "object",
+        "properties": {
+          "kind": { "type": "string", "const": "note" },
+          "id": { "type": "string" },
+          "category": { "type": "string", "enum": ["NOTE", "SICK", "INJURED", "HOLIDAY"] },
+          "date": { "type": "string", "format": "date-time" },
+          "startDate": { "type": "string", "format": "date" },
+          "endDate": { "type": ["string", "null"], "format": "date" },
+          "trainingAvailability": { "type": ["string", "null"], "enum": ["NORMAL", "LIMITED", "UNAVAILABLE", null] },
+          "maxTrainingTime": { "type": ["integer", "null"], "minimum": 0, "maximum": 86400, "description": "Maximum available training duration in seconds." },
+          "canTrainSports": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 80 } },
+          "title": { "type": "string", "maxLength": 240 },
+          "text": { "type": ["string", "null"] },
+          "scope": { "type": "string", "enum": ["day", "week", "range"] },
+          "source": { "type": "string", "enum": ["stas", "athlete"] },
+          "externalId": { "type": ["string", "null"] },
+          "noteDetail": {
+            "type": "object",
+            "properties": { "textTruncated": { "type": "boolean" } },
+            "required": ["textTruncated"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["kind", "id", "category", "date", "startDate", "endDate", "trainingAvailability", "maxTrainingTime", "canTrainSports", "title", "text", "scope", "source", "externalId", "noteDetail"],
+        "additionalProperties": false
       },
       "TrainingListDetail": {
         "type": "object",
@@ -2349,7 +2414,10 @@
       "TrainingsListResponse": {
         "type": "array",
         "items": {
-          "$ref": "#/components/schemas/TrainingFull"
+          "oneOf": [
+            { "$ref": "#/components/schemas/TrainingFull" },
+            { "$ref": "#/components/schemas/TrainingHistoryNoteItem" }
+          ]
         }
       },
       "StrategyWriteRequest": {
