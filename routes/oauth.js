@@ -2,6 +2,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const router  = express.Router();
 const { resolveDirectIntervalsAuth } = require('../lib/request-auth');
+const { handleAgentCallback } = require('./agent');
 const {
   getClaudeOauthClientId,
   isAllowedChatGptRedirectUri,
@@ -578,7 +579,9 @@ router.get('/oauth/authorize', (req, res, next) => {
   }
 });
 
-router.get('/oauth/callback', (req, res) => {
+router.get('/oauth/callback', async (req, res, next) => {
+  if (await handleAgentCallback(req, res, next)) return;
+
   const q = req.query || {};
   let stateRecord = null;
   try {

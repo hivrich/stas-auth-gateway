@@ -361,12 +361,13 @@ async function main() {
     assert.equal(authorizeUrl.pathname, '/oauth/authorize');
     assert.equal(authorizeUrl.searchParams.get('client_id'), 'test-intervals-client');
     assert.equal(authorizeUrl.searchParams.get('scope'), AGENT_INTERVALS_READ_SCOPE);
+    assert.equal(authorizeUrl.searchParams.get('redirect_uri'), `${baseUrl}/gw/oauth/callback`);
     assert.doesNotMatch(authorizeUrl.searchParams.get('scope'), /WRITE/);
 
     const agentState = authorizeUrl.searchParams.get('state');
     response = await request(
       baseUrl,
-      `/gw/agent/callback?code=mock-intervals-code&state=${encodeURIComponent(agentState)}`,
+      `/gw/oauth/callback?code=mock-intervals-code&state=${encodeURIComponent(agentState)}`,
     );
     assert.equal(response.status, 200);
     assert.match(response.contentType, /text\/html/);

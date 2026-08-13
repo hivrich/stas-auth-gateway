@@ -35,7 +35,7 @@ function getIntervalsClientConfig() {
 }
 
 function getAgentCallbackUrl(req) {
-  return trimToString(process.env.INTERVALS_AGENT_CALLBACK_URL) || `${requestOrigin(req)}/gw/agent/callback`;
+  return trimToString(process.env.INTERVALS_AGENT_CALLBACK_URL) || `${requestOrigin(req)}/gw/oauth/callback`;
 }
 
 function renderClaimPage({ error = '' } = {}) {
@@ -150,17 +150,25 @@ router.post('/agent/claim', (req, res, next) => {
   }
 });
 
-router.get('/agent/callback', async (req, res, next) => {
+async function handleAgentCallback(req, res, next) {
   try {
-    if (!isAgentAuthConfigured()) return renderErrorPage(503, res);
+    if (!isAgentAuthConfigured()) return false;
+
+    const registration = consumeIntervalsClaimState(req.query?.state);
+    if (!registration) return false;
 
     const upstreamError = trimToString(req.query?.error);
-    if (upstreamError) return renderErrorPage(400, res);
+    if (upstreamError) {
+      renderErrorPage(400, res);
+      return true;
+    }
 
     const client = getIntervalsClientConfig();
-    const registration = consumeIntervalsClaimState(req.query?.state);
     const code = trimToString(req.query?.code);
-    if (!client || !registration || !code) return renderErrorPage(400, res);
+    if (!client || !code) {
+      renderErrorPage(400, res);
+      return true;
+    }
 
     const form = new URLSearchParams();
     form.set('grant_type', 'authorization_code');
@@ -181,11 +189,15 @@ router.get('/agent/callback', async (req, res, next) => {
     const payload = await upstream.json().catch(() => null);
     if (!upstream.ok || !payload?.access_token) {
       console.error('[agent_auth][callback][intervals_error]', upstream.status);
-      return renderErrorPage(502, res);
+      renderErrorPage(502, res);
+      return true;
     }
 
     const auth = await resolveDirectIntervalsAuth(payload.access_token, { source: 'gpt' });
-    if (!auth?.userId) return renderErrorPage(502, res);
+    if (!auth?.userId) {
+      renderErrorPage(502, res);
+      return true;
+    }
 
     completeAgentRegistration(registration.registrationId, {
       userId: auth.userId,
@@ -193,10 +205,19 @@ router.get('/agent/callback', async (req, res, next) => {
     });
 
     console.log('[agent_auth][claim_completed]', JSON.stringify({ registration_id: registration.registrationId, user_id: auth.userId }));
-    return res.type('html').send(renderConnectedPage());
+    res.type('html').send(renderConnectedPage());
+    return true;
   } catch (error) {
-    return next(error);
+    next(error);
+    return true;
   }
+}
+
+router.get('/agent/callback', async (req, res, next) => {
+  const handled = await handleAgentCallback(req, res, next);
+  if (!handled) return renderErrorPage(400, res);
+  return undefined;
 });
 
 module.exports = router;
+module.exports.handleAgentCallback = handleAgentCallback;
