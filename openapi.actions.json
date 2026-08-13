@@ -586,7 +586,7 @@
         "operationId": "getTrainings",
         "x-openai-isConsequential": false,
         "summary": "Get a bounded comparative list of historical workouts and calendar context",
-        "description": "Read completed trainings plus NOTE/SICK/INJURED/HOLIDAY context. Notes do not consume the limit. Inspect listDetail; use full=true only for bounded comparisons and getActivityDetailFromDB for one workout. On too_large, retry smaller non-overlapping windows.",
+        "description": "Read completed trainings plus NOTE/SICK/INJURED/HOLIDAY context. Each structured workout exposes complete compact stages when available; inspect listDetail. Use full=true only for bounded comparisons and getActivityDetailFromDB for one workout. On too_large, retry smaller non-overlapping windows.",
         "parameters": [
           {
             "name": "oldest",
@@ -654,7 +654,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Bounded chronological union of completed training and calendar-context items; listDetail accounting applies only to training items.",
+            "description": "Bounded chronological union of completed training and calendar-context items. Each training may include stages: a complete compact table of meaningful workout stages; listDetail accounting applies only to training items.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2207,7 +2207,7 @@
       },
       "TrainingFull": {
         "type": "object",
-        "description": "Bounded comparative list projection of one completed training. listDetail reports truncation or fields omitted for the response budget. For exact detail about one selected workout, use getActivityDetailFromDB.",
+        "description": "Bounded comparative list projection of one completed training. When stages is present it contains all meaningful workout stages in compact columns-plus-rows form; listDetail reports truncation or fields omitted for the response budget. For exact detail about one selected workout, use getActivityDetailFromDB.",
         "properties": {
           "kind": { "type": "string", "const": "training" },
           "id": { "type": "string" },
@@ -2251,8 +2251,12 @@
               "additionalProperties": true
             }
           },
+          "stages": {
+            "$ref": "#/components/schemas/TrainingStages",
+            "description": "Complete compact table of meaningful workout stages when available. Read columns once, then map every row by position. This is the preferred AI structure; it preserves warmup, work, recovery, and cooldown without repeating field names."
+          },
           "intervalSummary": {
-            "description": "Bounded saved semantic markup. Rows may be legacy strings or structured canonical objects; use listDetail.intervalSummary to see truncation. For the exact complete workout package, use getActivityDetailFromDB.",
+            "description": "Backward-compatible saved semantic markup. Prefer stages when present; use listDetail.intervalSummary to see truncation.",
             "oneOf": [
               {
                 "type": "array",
@@ -2362,6 +2366,9 @@
           "intervalSummary": {
             "$ref": "#/components/schemas/TrainingListSectionAccounting"
           },
+          "stages": {
+            "$ref": "#/components/schemas/TrainingListSectionAccounting"
+          },
           "splits": {
             "$ref": "#/components/schemas/TrainingListSectionAccounting"
           },
@@ -2388,6 +2395,19 @@
           "responseBudgetAdjusted"
         ],
         "additionalProperties": true
+      },
+      "TrainingStages": {
+        "type": "object",
+        "description": "Compact table. columns declares the order once; each row has values in that exact order. Core columns are number, type, distance, duration, pace, avgHr, maxHr. Detail responses may append only columns with real source values.",
+        "properties": {
+          "columns": { "type": "array", "items": { "type": "string" }, "minItems": 7 },
+          "rows": { "type": "array", "items": { "type": "array", "items": { "type": ["string", "number", "null"] } } },
+          "available": { "type": "integer", "minimum": 0 },
+          "returned": { "type": "integer", "minimum": 0 },
+          "truncated": { "type": "boolean" }
+        },
+        "required": ["columns", "rows", "available", "returned", "truncated"],
+        "additionalProperties": false
       },
       "TrainingListSectionAccounting": {
         "type": "object",
@@ -2446,7 +2466,7 @@
       },
       "ActivityDetailResponse": {
         "type": "object",
-        "description": "AI-ready detailed passport for one completed workout. Raw source payloads, route coordinates, latlng, and raw stream arrays are intentionally omitted.",
+        "description": "AI-ready detailed passport for one completed workout. Prefer stages for the complete readable stage table; detail may append available metrics. Raw source payloads, route coordinates, latlng, and raw stream arrays are intentionally omitted.",
         "properties": {
           "overview": {
             "$ref": "#/components/schemas/ActivityDetailOverview"
@@ -2466,10 +2486,14 @@
           },
           "workIntervalsSummary": {
             "type": "array",
-            "description": "Compact protected summary of work and recovery intervals. This stays complete even when detailed intervals are reduced by response-size limits.",
+            "description": "Backward-compatible protected summary. Prefer stages when present.",
             "items": {
               "$ref": "#/components/schemas/ActivityDetailWorkIntervalSummaryItem"
             }
+          },
+          "stages": {
+            "$ref": "#/components/schemas/TrainingStages",
+            "description": "Complete compact table of this workout's meaningful stages. Detail responses may include additional columns when the source recorded them."
           },
           "lapsDetailed": {
             "$ref": "#/components/schemas/ActivityDetailListSection"
