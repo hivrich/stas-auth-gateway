@@ -159,6 +159,7 @@ async function handleAgentCallback(req, res, next) {
 
     const upstreamError = trimToString(req.query?.error);
     if (upstreamError) {
+      console.warn("[agent_auth][callback][upstream_error]", JSON.stringify({ error: upstreamError }));
       renderErrorPage(400, res);
       return true;
     }
