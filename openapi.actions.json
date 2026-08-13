@@ -2256,7 +2256,7 @@
             "description": "Complete compact table of meaningful workout stages when available. Read columns once, then map every row by position. This is the preferred AI structure; it preserves warmup, work, recovery, and cooldown without repeating field names."
           },
           "intervalSummary": {
-            "description": "Backward-compatible saved semantic markup. Prefer stages when present; use listDetail.intervalSummary to see truncation.",
+            "description": "Fallback saved semantic markup, returned only when stages is unavailable; use listDetail.intervalSummary to see truncation.",
             "oneOf": [
               {
                 "type": "array",
@@ -2389,7 +2389,6 @@
           "mode",
           "detailAvailable",
           "intervals",
-          "intervalSummary",
           "splits",
           "userReportTruncated",
           "responseBudgetAdjusted"
