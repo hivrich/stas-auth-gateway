@@ -53,6 +53,7 @@ global.fetch = async (url, options = {}) => {
     if (trainingsFetchMode === 'empty') return jsonResponse([]);
     if (trainingsFetchMode === 'envelope') return jsonResponse({ trainings: [{ id: 'train-envelope' }] });
     if (trainingsFetchMode === 'upstream-non-ok') return jsonResponse({ error: 'upstream_down' }, 503);
+    if (trainingsFetchMode === 'too-large') return jsonResponse({ error: 'too_large', message: 'Use a smaller date window.' }, 413);
     if (trainingsFetchMode === 'invalid-json') return invalidJsonResponse();
     if (trainingsFetchMode === 'unknown-shape') return jsonResponse({ ok: true });
     if (trainingsFetchMode === 'timeout') {
@@ -381,6 +382,15 @@ async function main() {
     await expectTrainingsError('upstream-non-ok', 502, 'upstream_error', {
       retryable: true,
       upstreamStatus: 503,
+    });
+    trainingsFetchMode = 'too-large';
+    response = await runTrainingsRequest({ days: '365' }, 'user-42');
+    assert.strictEqual(response.statusCode, 413);
+    assert.deepStrictEqual(response.jsonBody, {
+      status: 413,
+      error: 'too_large',
+      message: 'Use a smaller date window.',
+      retryable: false,
     });
     await expectTrainingsError('timeout', 504, 'upstream_timeout', { retryable: true });
     await expectTrainingsError('invalid-json', 502, 'invalid_upstream_response', { retryable: true });

@@ -186,7 +186,7 @@ async function main() {
   }
   const nonConsequentialOperations = [
     'getMe',
-    'getUserSummary',
+    'getChatFooter',
     'getActivityDetailFromDB',
     'readProfileSections',
     'readProfileChangeHistory',
@@ -198,16 +198,18 @@ async function main() {
     'readProfileChangeDetail',
   ];
   const nonConsequentialWriteOperations = [
-    'saveProfileSection',
     'restoreProfileChange',
     'deletePlannedWorkouts',
     'createPlannedWorkoutsGw',
     'writeStrategy',
+  ];
+  const consequentialWriteOperations = [
+    'saveProfileSection',
     'applyGoalResultChange',
   ];
   assert.equal(
     operationsById.size,
-    nonConsequentialOperations.length + nonConsequentialWriteOperations.length,
+    nonConsequentialOperations.length + nonConsequentialWriteOperations.length + consequentialWriteOperations.length,
     'every Actions operation must have an expected confirmation classification',
   );
   for (const operationId of nonConsequentialOperations) {
@@ -222,6 +224,14 @@ async function main() {
       operationsById.get(operationId)?.['x-openai-isConsequential'],
       false,
       `${operationId} must explicitly allow persistent approval instead of using the POST default`,
+    );
+  }
+
+  for (const operationId of consequentialWriteOperations) {
+    assert.equal(
+      operationsById.get(operationId)?.['x-openai-isConsequential'],
+      true,
+      operationId + ' must request platform confirmation for a final profile or goal write',
     );
   }
 
@@ -262,7 +272,7 @@ async function main() {
   );
   const applyGoalResult = gatewaySchema.paths['/gw/api/db/goals/changes/apply'].post;
   assert.equal(applyGoalResult.operationId, 'applyGoalResultChange');
-  assert.equal(applyGoalResult['x-openai-isConsequential'], false);
+  assert.equal(applyGoalResult['x-openai-isConsequential'], true);
   assert.deepEqual(
     applyGoalResult.requestBody.content['application/json'].schema.required,
     ['command'],
@@ -319,7 +329,7 @@ async function main() {
     '#/components/schemas/ProfileSectionSaveResponse'
   );
   assert.equal(profileSave.operationId, 'saveProfileSection');
-  assert.equal(profileSave['x-openai-isConsequential'], false);
+  assert.equal(profileSave['x-openai-isConsequential'], true);
   assert.deepEqual(
     gatewaySchema.components.schemas.ProfileSectionSaveRequest.required,
     ['section', 'structured'],
@@ -337,6 +347,17 @@ async function main() {
   const profileDetail = gatewaySchema.paths['/gw/api/db/profile_changes/{changeId}'].get;
   assert.equal(profileDetail.operationId, 'readProfileChangeDetail');
 
+  const chatFooter = gatewaySchema.paths['/gw/api/db/user_summary'].get;
+  assert.equal(chatFooter.operationId, 'getChatFooter');
+  assert.equal(
+    chatFooter.responses['200'].content['application/json'].schema['$ref'],
+    '#/components/schemas/ChatFooterResponse',
+  );
+  assert.equal(
+    gatewaySchema.components.schemas.ChatFooterResponse.properties.chatFooter['$ref'],
+    '#/components/schemas/ChatFooter',
+  );
+
   const gwTrainings = gatewaySchema.paths['/gw/trainings'].get;
   assert.equal(gwTrainings.operationId, 'getTrainings');
   assert.equal(
@@ -349,7 +370,7 @@ async function main() {
     '#/components/schemas/TrainingsListResponse',
     '/gw/trainings success schema must stay a bare array'
   );
-  for (const status of ['502', '504']) {
+  for (const status of ['413', '502', '504']) {
     assert.equal(
       gwTrainings.responses[status].content['application/json'].schema.$ref,
       '#/components/schemas/ErrorResponse',
@@ -370,10 +391,16 @@ async function main() {
   assert.equal(gatewaySchema.components.schemas.ErrorResponse.properties.upstream_status.type, 'integer');
 
   const userSummaryV2 = gatewaySchema.paths['/gw/api/db/user_summary/v2'].get;
-  assert.ok(
-    userSummaryV2.description.length <= 300,
-    'GPT Actions operation description must not exceed 300 characters'
-  );
+  for (const pathItem of Object.values(gatewaySchema.paths)) {
+    for (const operation of Object.values(pathItem)) {
+      if (operation?.operationId && operation.description) {
+        assert.ok(
+          operation.description.length <= 300,
+          operation.operationId + ' description must fit GPT Actions limit',
+        );
+      }
+    }
+  }
 
   const createEventsPost = gatewaySchema.paths['/gw/icu/events'].post;
   const deleteEvents = gatewaySchema.paths['/gw/icu/events'].delete;
