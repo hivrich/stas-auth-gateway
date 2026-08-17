@@ -713,7 +713,7 @@
         "operationId": "getUserSummaryGw",
         "x-openai-isConsequential": false,
         "summary": "Get full user summary via gateway in up to two parts",
-        "description": "Load part 1 and, when partial, part 2 with expectedVersion. confirmedStructuredIntervals is verified WORK/REST evidence; truncated subsets are samples. Missing metrics are unknown. Verify sourceTrainingId before detail. Use data.chatFooter exactly.",
+        "description": "Read part 1; if partial, part 2 with expectedVersion. goalsProjection.view=compact_v1: join item.id to profile.goalItems.publicId; omitted fields duplicate goal, inherit timezone, or are null/false/empty. Projection: lifecycle/results/trust/attention/completeness. Use data.chatFooter exactly.",
         "parameters": [
           {
             "name": "part",
@@ -1497,6 +1497,7 @@
       },
       "UserSummaryData": {
         "type": "object",
+        "description": "Model-facing athlete Summary. When goalsProjection.view=compact_v1, join goalsProjection.items[].id to profile.goalItems[].publicId; omitted item fields duplicate that goal row, inherit profile.timezone, or are null/false/empty optional values. goalsProjection owns lifecycle, result, trust, attention and completeness facts.",
         "properties": {
           "chatFooter": {
             "$ref": "#/components/schemas/ChatFooter"
