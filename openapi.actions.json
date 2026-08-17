@@ -712,19 +712,20 @@
       "get": {
         "operationId": "getUserSummaryGw",
         "x-openai-isConsequential": false,
-        "summary": "Get full user summary via gateway in up to two parts",
-        "description": "Read part 1; if partial, part 2 with expectedVersion. goalsProjection.view=compact_v1: join item.id to profile.goalItems.publicId; omitted fields duplicate goal, inherit timezone, or are null/false/empty. Projection: lifecycle/results/trust/attention/completeness. Use data.chatFooter exactly.",
+        "summary": "Get full user summary via gateway in up to three parts",
+        "description": "Read part 1. If partial, read parts 2..parts with expectedVersion=summaryVersion, merge data, then answer. On version_mismatch restart. goalsProjection.view=compact_v1: join item.id to profile.goalItems.publicId; omitted goal fields are duplicate/inherited/empty. Use data.chatFooter exactly.",
         "parameters": [
           {
             "name": "part",
             "in": "query",
             "required": false,
-            "description": "Optional part number. Omit this parameter or use 1 for the first call; use 2 only after a partial response.",
+            "description": "Optional part number. Omit this parameter or use 1 first. After a partial response, request each remaining part through the declared parts value with its summaryVersion.",
             "schema": {
               "type": "integer",
               "enum": [
                 1,
-                2
+                2,
+                3
               ],
               "default": 1
             }
@@ -733,7 +734,7 @@
             "name": "expectedVersion",
             "in": "query",
             "required": false,
-            "description": "Required when part=2. Use the summaryVersion returned by the first partial response.",
+            "description": "Required when part is 2 or 3. Use the summaryVersion returned by part 1.",
             "schema": {
               "type": "string"
             }
@@ -741,7 +742,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Complete summary or one part of a two-part summary",
+            "description": "Complete summary or one part of a two- or three-part summary",
             "content": {
               "application/json": {
                 "schema": {
@@ -791,7 +792,7 @@
             }
           },
           "413": {
-            "description": "The summary cannot fit into two parts",
+            "description": "The summary cannot fit into three safe parts",
             "content": {
               "application/json": {
                 "schema": {
@@ -1570,13 +1571,15 @@
             "type": "integer",
             "enum": [
               1,
-              2
+              2,
+              3
             ]
           },
           "parts": {
             "type": "integer",
             "enum": [
-              2
+              2,
+              3
             ]
           },
           "data": {
