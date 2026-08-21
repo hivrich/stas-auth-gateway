@@ -409,6 +409,19 @@ async function main() {
     wellness.parameters.find((parameter) => parameter.name === 'newest').description.includes('No fixed day limit'),
     true,
   );
+  assert.deepEqual(
+    gatewaySchema.components.schemas.WellnessDateRange.items,
+    { type: 'string', format: 'date' },
+    'GPT Builder requires an items schema for wellness date-range arrays',
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(
+      gatewaySchema.components.schemas.WellnessCustomSeriesMap,
+      'properties',
+    ),
+    true,
+    'GPT Builder requires properties to be present for wellness custom-field objects',
+  );
 
   const userSummaryV2 = gatewaySchema.paths['/gw/api/db/user_summary/v2'].get;
   for (const pathItem of Object.values(gatewaySchema.paths)) {
