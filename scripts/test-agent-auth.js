@@ -131,6 +131,18 @@ global.fetch = async (url, options = {}) => {
     return textResponse(JSON.stringify({ ok: true, activity: 'detail' }), 200, 'application/json; charset=utf-8');
   }
 
+  if (parsed.origin === 'http://stas.local.test' && parsed.pathname === '/api/db/wellness') {
+    assert.equal(parsed.searchParams.get('user_id'), '15487');
+    assert.equal(parsed.searchParams.get('oldest'), '2026-08-01');
+    assert.equal(parsed.searchParams.get('newest'), '2026-10-01');
+    return textResponse(JSON.stringify({
+      format: 'wellness_series_v1',
+      dates: ['2026-08-01'],
+      series: { hrv: [51] },
+      complete: true,
+    }), 200, 'application/json; charset=utf-8');
+  }
+
   if (parsed.origin === 'https://intervals.icu' && parsed.pathname === '/api/v1/athlete/0/events') {
     assert.equal(options.headers.Authorization, `Bearer ${RAW_INTERVALS_TOKEN}`);
     return jsonResponse([]);
@@ -401,6 +413,11 @@ async function main() {
     response = await request(baseUrl, '/gw/api/db/activity_detail?training_id=train-1', { token: agentToken });
     assert.equal(response.status, 200);
     assert.equal(response.body.activity, 'detail');
+
+    response = await request(baseUrl, '/gw/api/db/wellness?oldest=2026-08-01&newest=2026-10-01', { token: agentToken });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.format, 'wellness_series_v1');
+    assert.deepEqual(response.body.series.hrv, [51]);
 
     response = await request(baseUrl, '/gw/icu/events?days=7', { token: agentToken });
     assert.equal(response.status, 200);

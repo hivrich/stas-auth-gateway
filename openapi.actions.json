@@ -167,6 +167,78 @@
         }
       }
     },
+    "/gw/api/db/wellness": {
+      "get": {
+        "operationId": "getWellness",
+        "x-openai-isConsequential": false,
+        "summary": "Get day-by-day wellness for any date window",
+        "description": "Read complete cached wellness series for any window. Align values by dates[i]; null is missing, not zero. Use personal trends. On 413 retry suggestedWindows; an empty list means one day itself is too large.",
+        "parameters": [
+          {
+            "name": "oldest",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Inclusive YYYY-MM-DD start. No fixed day limit."
+          },
+          {
+            "name": "newest",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Exclusive YYYY-MM-DD end. No fixed day limit."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Complete, untruncated cached wellness series",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WellnessSeriesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid date window",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Complete result is too large for one AI response; retry suggested windows when present",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WellnessTooLargeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/gw/api/db/profile_sections": {
       "get": {
         "operationId": "readProfileSections",
@@ -1252,6 +1324,329 @@
             "additionalProperties": true
           }
         },
+        "additionalProperties": false
+      },
+      "WellnessValueSeries": {
+        "type": "array",
+        "description": "Values aligned by index with dates. null means the value was not recorded for that stored day; it never means zero.",
+        "items": {}
+      },
+      "WellnessSeriesMap": {
+        "type": "object",
+        "description": "Only fields with at least one value in the requested window are included. Every field array aligns with dates by index.",
+        "properties": {
+          "ctl": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Modeled longer-term training load (Fitness). Higher is not inherently better; interpret with ATL, recent training, and the athlete's own history."
+          },
+          "atl": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Modeled shorter-term training load (Fatigue). Higher is not inherently worse; CTL minus ATL can be used as Form."
+          },
+          "rampRate": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Rate of CTL change; interpret direction and magnitude in the athlete's own training context."
+          },
+          "ctlLoad": {
+            "$ref": "#/components/schemas/WellnessValueSeries"
+          },
+          "atlLoad": {
+            "$ref": "#/components/schemas/WellnessValueSeries"
+          },
+          "sportInfo": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Per-sport threshold/power information supplied by Intervals.icu when present."
+          },
+          "weight": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Body weight in kilograms."
+          },
+          "restingHr": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Resting heart rate in beats per minute. Compare acute and multi-day deviations with this athlete's own baseline."
+          },
+          "hrv": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "HRV RMSSD. Device and protocol dependent; use the athlete's own multi-day trend rather than universal thresholds."
+          },
+          "hrvSdnn": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "HRV SDNN. Device and protocol dependent."
+          },
+          "menstrualPhase": {
+            "$ref": "#/components/schemas/WellnessValueSeries"
+          },
+          "menstrualPhasePredicted": {
+            "$ref": "#/components/schemas/WellnessValueSeries"
+          },
+          "kcalConsumed": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Recorded energy intake in kilocalories."
+          },
+          "sleepSecs": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Recorded sleep duration in seconds."
+          },
+          "sleepScore": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Source-provided sleep score; scale can depend on the connected source."
+          },
+          "sleepQuality": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Intervals.icu sleep-quality scale: 1=Excellent, 2=Good, 3=Average, 4=Poor; higher is worse."
+          },
+          "avgSleepingHr": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Average sleeping heart rate in beats per minute."
+          },
+          "soreness": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Subjective 0=None through 4=Extreme; higher is worse."
+          },
+          "fatigue": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Subjective 0=None through 4=Extreme; higher is worse."
+          },
+          "stress": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Subjective 0=None through 4=Extreme; higher is worse."
+          },
+          "mood": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Subjective 1=Excellent through 4=Poor; higher is worse."
+          },
+          "motivation": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Subjective 1=Excellent through 4=Poor; higher is worse."
+          },
+          "injury": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Athlete/source injury entry. Treat as context, not a diagnosis."
+          },
+          "spO2": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Recorded blood oxygen saturation. Device readings are context, not a diagnosis."
+          },
+          "systolic": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Recorded systolic blood pressure; use source context and do not diagnose."
+          },
+          "diastolic": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Recorded diastolic blood pressure; use source context and do not diagnose."
+          },
+          "hydration": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Source-provided hydration value; do not assume a unit or scale not supplied by the user/source."
+          },
+          "hydrationVolume": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Source-provided hydration volume; unit can depend on source/account settings."
+          },
+          "readiness": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Source-provided readiness score; scale can depend on the connected source. Do not use alone."
+          },
+          "baevskySI": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Baevsky stress index when supplied; compare within the same athlete/source."
+          },
+          "bloodGlucose": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Recorded blood glucose; unit can depend on source/account settings. Do not diagnose."
+          },
+          "lactate": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Recorded lactate; unit and protocol depend on the source."
+          },
+          "bodyFat": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Recorded body-fat percentage."
+          },
+          "abdomen": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Recorded abdomen measurement; unit can depend on account settings."
+          },
+          "vo2max": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Source-estimated VO2max; compare trends within the same device/source."
+          },
+          "comments": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Wellness comments recorded by the athlete/source."
+          },
+          "steps": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Recorded daily step count."
+          },
+          "respiration": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Recorded respiration rate; source/protocol dependent."
+          },
+          "carbohydrates": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Recorded carbohydrate intake; unit can depend on source/account settings."
+          },
+          "protein": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Recorded protein intake; unit can depend on source/account settings."
+          },
+          "fatTotal": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Recorded total fat intake; unit can depend on source/account settings."
+          },
+          "providerUpdatedAt": {
+            "$ref": "#/components/schemas/WellnessValueSeries",
+            "description": "Provider record update timestamp, not the measurement time."
+          }
+        },
+        "additionalProperties": {
+          "$ref": "#/components/schemas/WellnessValueSeries"
+        }
+      },
+      "WellnessCustomSeriesMap": {
+        "type": "object",
+        "description": "Custom Intervals.icu/source fields with original names preserved. If a unit or scale is unclear, do not invent it; describe only the observed trend or ask the user.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/WellnessValueSeries"
+        }
+      },
+      "WellnessDateRange": {
+        "type": "array",
+        "description": "Two dates: inclusive oldest and exclusive newest.",
+        "prefixItems": [
+          {
+            "type": "string",
+            "format": "date"
+          },
+          {
+            "type": "string",
+            "format": "date"
+          }
+        ],
+        "minItems": 2,
+        "maxItems": 2
+      },
+      "WellnessSeriesResponse": {
+        "type": "object",
+        "description": "Cached Intervals.icu wellness. dates[i] aligns with every series value at index i. complete=true means no locally stored field was truncated, not that the provider supplied every metric.",
+        "properties": {
+          "format": {
+            "type": "string",
+            "enum": [
+              "wellness_series_v1"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "intervals_icu_cached_by_stas"
+            ],
+            "description": "Served from STAS cache without a live provider request; original values may come from a watch, another source, or manual Intervals.icu entry."
+          },
+          "timezone": {
+            "type": "string",
+            "description": "Athlete timezone used to understand calendar dates."
+          },
+          "window": {
+            "$ref": "#/components/schemas/WellnessDateRange"
+          },
+          "dates": {
+            "type": "array",
+            "description": "Stored wellness dates in ascending order. Every returned series array has exactly this length and uses the same indexes.",
+            "items": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          "series": {
+            "$ref": "#/components/schemas/WellnessSeriesMap"
+          },
+          "customSeries": {
+            "$ref": "#/components/schemas/WellnessCustomSeriesMap"
+          },
+          "missingRanges": {
+            "type": "array",
+            "description": "Requested calendar ranges for which STAS has no stored wellness row. A null inside a returned series instead means that one field is absent on an otherwise stored date.",
+            "items": {
+              "$ref": "#/components/schemas/WellnessDateRange"
+            }
+          },
+          "complete": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        },
+        "required": [
+          "format",
+          "source",
+          "timezone",
+          "window",
+          "dates",
+          "series",
+          "customSeries",
+          "missingRanges",
+          "complete"
+        ],
+        "additionalProperties": false
+      },
+      "WellnessSuggestedWindow": {
+        "type": "object",
+        "properties": {
+          "oldest": {
+            "type": "string",
+            "format": "date"
+          },
+          "newest": {
+            "type": "string",
+            "format": "date"
+          }
+        },
+        "required": [
+          "oldest",
+          "newest"
+        ],
+        "additionalProperties": false
+      },
+      "WellnessTooLargeResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": [
+              "too_large"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "requestedWindow": {
+            "$ref": "#/components/schemas/WellnessSuggestedWindow"
+          },
+          "responseChars": {
+            "type": "integer"
+          },
+          "maxResponseChars": {
+            "type": "integer"
+          },
+          "suggestedWindows": {
+            "type": "array",
+            "description": "Retry every returned window. They are exact, ordered, and non-overlapping. An empty list means a single stored day is too large to split further by date.",
+            "items": {
+              "$ref": "#/components/schemas/WellnessSuggestedWindow"
+            }
+          }
+        },
+        "required": [
+          "error",
+          "message",
+          "requestedWindow",
+          "responseChars",
+          "maxResponseChars",
+          "suggestedWindows"
+        ],
         "additionalProperties": false
       },
       "AnalysisProjectionResults": {

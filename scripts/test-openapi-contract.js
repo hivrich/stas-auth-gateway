@@ -18,6 +18,7 @@ const expectedActionsPaths = [
   '/gw/api/me',
   '/gw/api/db/user_summary',
   '/gw/api/db/activity_detail',
+  '/gw/api/db/wellness',
   '/gw/api/db/goals/editable',
   '/gw/api/db/goals/activity-candidates',
   '/gw/api/db/goals/changes/apply',
@@ -188,6 +189,7 @@ async function main() {
     'getMe',
     'getChatFooter',
     'getActivityDetailFromDB',
+    'getWellness',
     'readProfileSections',
     'readProfileChangeHistory',
     'getPlannedWorkoutsGw',
@@ -389,6 +391,24 @@ async function main() {
   );
   assert.equal(gatewaySchema.components.schemas.ErrorResponse.properties.retryable.type, 'boolean');
   assert.equal(gatewaySchema.components.schemas.ErrorResponse.properties.upstream_status.type, 'integer');
+
+  const wellness = gatewaySchema.paths['/gw/api/db/wellness'].get;
+  assert.equal(wellness.operationId, 'getWellness');
+  assert.equal(wellness['x-openai-isConsequential'], false);
+  assert.match(wellness.description, /dates\[i\]/);
+  assert.match(wellness.description, /suggestedWindows/);
+  assert.equal(
+    wellness.responses['200'].content['application/json'].schema.$ref,
+    '#/components/schemas/WellnessSeriesResponse',
+  );
+  assert.equal(
+    wellness.responses['413'].content['application/json'].schema.$ref,
+    '#/components/schemas/WellnessTooLargeResponse',
+  );
+  assert.equal(
+    wellness.parameters.find((parameter) => parameter.name === 'newest').description.includes('No fixed day limit'),
+    true,
+  );
 
   const userSummaryV2 = gatewaySchema.paths['/gw/api/db/user_summary/v2'].get;
   for (const pathItem of Object.values(gatewaySchema.paths)) {
