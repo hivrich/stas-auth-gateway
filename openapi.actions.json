@@ -3850,7 +3850,7 @@
                 "avg": { "type": "number" },
                 "coveragePct": { "type": "number" },
                 "unit": { "type": "string" },
-                "source": { "type": "string", "enum": ["intervals_streams"] }
+                "source": { "type": "string", "enum": ["intervals_streams", "original_fit_records"] }
               },
               "required": ["avg", "coveragePct", "unit", "source"],
               "additionalProperties": false
