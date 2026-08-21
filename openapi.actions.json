@@ -3214,7 +3214,7 @@
       },
       "ActivityDetailResponse": {
         "type": "object",
-        "description": "AI-ready detailed passport for one completed workout. Prefer stages for the complete readable stage table; detail may append available metrics. Raw source payloads, route coordinates, latlng, and raw stream arrays are intentionally omitted.",
+        "description": "AI-ready detailed passport for one completed workout. Prefer stages for the complete readable stage table; detail may append recorded range averages and coverage only when time alignment is reliable. Raw source payloads, route coordinates, latlng, and raw stream arrays are intentionally omitted.",
         "properties": {
           "overview": {
             "$ref": "#/components/schemas/ActivityDetailOverview"
@@ -3269,6 +3269,14 @@
               }
             ]
           },
+          "breathingSummary": {
+            "$ref": "#/components/schemas/ActivityMetricSummary",
+            "description": "Recorded breathing metrics. Provider-native tidal-volume units must not be called litres or millilitres. null means no confirmed data, not zero."
+          },
+          "runningSensorSummary": {
+            "$ref": "#/components/schemas/ActivityMetricSummary",
+            "description": "Confirmed running-sensor metrics from Intervals or the original FIT. Balance side semantics are not assumed."
+          },
           "weather": {
             "oneOf": [
               {
@@ -3310,6 +3318,8 @@
           "workIntervalsSummary",
           "lapsDetailed",
           "splitsDetailed",
+          "breathingSummary",
+          "runningSensorSummary",
           "bestEfforts",
           "segments",
           "flags",
@@ -3318,6 +3328,28 @@
           "sizeEstimate"
         ],
         "additionalProperties": true
+      },
+      "ActivityMetricSummary": {
+        "type": "object",
+        "description": "Compact confirmed metric summary. A metric with samples=null and coveragePct=null is a provider-supplied whole-activity value, not a time series. status=partial requires stating quality.reasons; absence is never zero.",
+        "properties": {
+          "status": { "type": "string", "enum": ["available", "partial", "unavailable"] },
+          "sourcesUsed": { "type": "array", "items": { "type": "string", "enum": ["intervals_activity", "intervals_streams", "original_fit_records", "original_fit_session"] } },
+          "availableMetrics": { "type": "array", "items": { "type": "string" } },
+          "wholeActivity": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/ActivityMetric" } },
+          "quality": { "type": "object", "additionalProperties": true }
+        },
+        "required": ["status", "sourcesUsed", "availableMetrics", "wholeActivity", "quality"]
+      },
+      "ActivityMetric": {
+        "type": "object",
+        "properties": {
+          "unit": { "type": "string" }, "source": { "type": "string" },
+          "samples": { "type": ["number", "null"] }, "coveragePct": { "type": ["number", "null"] },
+          "avg": { "type": ["number", "null"] }, "median": { "type": ["number", "null"] },
+          "min": { "type": ["number", "null"] }, "max": { "type": ["number", "null"] }
+        },
+        "required": ["unit", "source", "samples", "coveragePct", "avg", "median", "min", "max"]
       },
       "ActivityDetailOverview": {
         "type": "object",
@@ -3808,6 +3840,21 @@
               "integer",
               "null"
             ]
+          },
+          "recordedMetrics": {
+            "type": "object",
+            "description": "Optional per-interval or per-lap averages from safely aligned recorded streams. Only avg and coveragePct are supplied; it is omitted when alignment is not reliable.",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "avg": { "type": "number" },
+                "coveragePct": { "type": "number" },
+                "unit": { "type": "string" },
+                "source": { "type": "string", "enum": ["intervals_streams"] }
+              },
+              "required": ["avg", "coveragePct", "unit", "source"],
+              "additionalProperties": false
+            }
           },
           "distance": {
             "type": [
