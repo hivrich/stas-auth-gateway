@@ -1507,6 +1507,7 @@
       "WellnessCustomSeriesMap": {
         "type": "object",
         "description": "Custom Intervals.icu/source fields with original names preserved. If a unit or scale is unclear, do not invent it; describe only the observed trend or ask the user.",
+        "properties": {},
         "additionalProperties": {
           "$ref": "#/components/schemas/WellnessValueSeries"
         }
@@ -1514,16 +1515,10 @@
       "WellnessDateRange": {
         "type": "array",
         "description": "Two dates: inclusive oldest and exclusive newest.",
-        "prefixItems": [
-          {
-            "type": "string",
-            "format": "date"
-          },
-          {
-            "type": "string",
-            "format": "date"
-          }
-        ],
+        "items": {
+          "type": "string",
+          "format": "date"
+        },
         "minItems": 2,
         "maxItems": 2
       },
