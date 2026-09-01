@@ -236,7 +236,7 @@ async function main() {
   let metadata = buildOAuthAuthorizationServerMetadata('https://intervals.stas.run');
   assert.deepEqual(metadata.grant_types_supported, ['authorization_code']);
   assert.equal(metadata.agent_auth, undefined);
-  assert.equal(metadata.revocation_endpoint, undefined);
+  assert.equal(metadata.revocation_endpoint, 'https://intervals.stas.run/gw/oauth/revoke');
 
   process.env.AGENT_AUTH_ENABLED = 'true';
   process.env.AGENT_AUTH_TOKEN_SECRET = 'short';
@@ -456,7 +456,7 @@ async function main() {
       token: agentToken,
     });
     assert.equal(response.status, 200);
-    assert.equal(response.body.ok, true);
+    assert.equal(response.body, null);
 
     response = await request(baseUrl, '/gw/api/me', { token: agentToken });
     assert.equal(response.status, 401);

@@ -1,10 +1,10 @@
 const express = require('express');
 const crypto = require('node:crypto');
+const net = require('node:net');
 const router  = express.Router();
-const { resolveDirectIntervalsAuth } = require('../lib/request-auth');
+const { forgetDirectIntervalsToken, resolveDirectIntervalsAuth } = require('../lib/request-auth');
 const { handleAgentCallback } = require('./agent');
 const {
-  getClaudeOauthClientId,
   isAllowedChatGptRedirectUri,
   isAllowedClaudeRedirectUri,
   resolveOauthSource,
@@ -24,6 +24,11 @@ const DEFAULT_INTERVALS_SCOPE = 'ACTIVITY:WRITE,WELLNESS:WRITE,CALENDAR:WRITE,CH
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const OAUTH_CODE_TTL_MS = 10 * 60 * 1000;
 const BRIDGE_PKCE_METHOD = 'S256';
+const MCP_CLIENT_ID_PREFIX = 'stas_mcp_';
+const MCP_CLIENT_ID_VERSION = 1;
+const MCP_CLIENT_MAX_REDIRECT_URIS = 3;
+const MCP_CLIENT_MAX_REDIRECT_URI_LENGTH = 512;
+const MCP_CLIENT_MAX_NAME_LENGTH = 80;
 const PKCE_CHALLENGE_RE = /^[A-Za-z0-9_-]{43,128}$/;
 const PKCE_VERIFIER_RE = /^[A-Za-z0-9._~-]{43,128}$/;
 const OAUTH_STATE_DEV_SECRET = 'stas-oauth-state-dev-secret';
@@ -73,6 +78,8 @@ function normalizedLogKey(key) {
 function isSensitiveLogKey(key) {
   const normalized = normalizedLogKey(key);
   if (normalized.startsWith('has_')) return false;
+
+  if (normalized === 'client_id' || normalized.endsWith('_client_id')) return true;
 
   return new Set([
     'access_token',
@@ -214,10 +221,6 @@ function getIntervalsCallbackUrl() {
     process.env.INTERVALS_REDIRECT_URI ||
     process.env.OAUTH_CALLBACK_URL,
   ) || DEFAULT_INTERVALS_CALLBACK_URL;
-}
-
-function getClaudeClientId() {
-  return getClaudeOauthClientId();
 }
 
 function getClaudeIntervalsAuthConfig() {
@@ -440,35 +443,353 @@ function appendParams(uri, params) {
   return url.toString();
 }
 
-router.post('/oauth/register', (req, res) => {
-  const body = req.body && typeof req.body === 'object' ? req.body : {};
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function normalizeMcpClientName(value, redirectUris) {
+  const raw = trimToString(value).replace(/[\u0000-\u001f\u007f]/g, ' ');
+  if (raw && raw.length <= MCP_CLIENT_MAX_NAME_LENGTH) return raw;
+
+  try {
+    return `MCP client (${new URL(redirectUris[0]).hostname})`;
+  } catch {
+    return 'MCP client';
+  }
+}
+
+function isAllowedMcpRedirectUri(value) {
+  const raw = trimToString(value);
+  if (!raw || raw.length > MCP_CLIENT_MAX_REDIRECT_URI_LENGTH) return false;
+
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:'
+      && Boolean(url.hostname)
+      && isAllowedRemoteMcpHostname(url.hostname)
+      && !url.username
+      && !url.password
+      && !url.hash;
+  } catch {
+    return false;
+  }
+}
+
+function isAllowedRemoteMcpHostname(value) {
+  const hostname = trimToString(value).toLowerCase().replace(/^\[|\]$/g, '');
+  return Boolean(
+    hostname
+    && hostname.includes('.')
+    && !hostname.endsWith('.')
+    && hostname !== 'localhost'
+    && !hostname.endsWith('.localhost')
+    && !hostname.endsWith('.local')
+    && !hostname.endsWith('.internal')
+    && net.isIP(hostname) === 0
+  );
+}
+
+function readMcpRegistrationMetadata(body) {
   const redirectUris = Array.isArray(body.redirect_uris)
     ? body.redirect_uris.map((value) => trimToString(value)).filter(Boolean)
     : [];
+  const uniqueRedirectUris = [...new Set(redirectUris)];
 
-  if (redirectUris.length === 0 || !redirectUris.every(isAllowedClaudeRedirectUri)) {
+  if (
+    uniqueRedirectUris.length === 0
+    || uniqueRedirectUris.length !== redirectUris.length
+    || uniqueRedirectUris.length > MCP_CLIENT_MAX_REDIRECT_URIS
+    || !uniqueRedirectUris.every(isAllowedMcpRedirectUri)
+  ) {
+    return null;
+  }
+
+  const grantTypes = body.grant_types === undefined ? ['authorization_code'] : body.grant_types;
+  const responseTypes = body.response_types === undefined ? ['code'] : body.response_types;
+  const tokenEndpointAuthMethod = trimToString(body.token_endpoint_auth_method) || 'none';
+  const applicationType = trimToString(body.application_type) || 'web';
+
+  if (
+    !Array.isArray(grantTypes)
+    || grantTypes.length !== 1
+    || grantTypes[0] !== 'authorization_code'
+    || !Array.isArray(responseTypes)
+    || responseTypes.length !== 1
+    || responseTypes[0] !== 'code'
+    || tokenEndpointAuthMethod !== 'none'
+    || applicationType !== 'web'
+  ) {
+    return null;
+  }
+
+  const requestedClientName = trimToString(body.client_name);
+  if (requestedClientName.length > MCP_CLIENT_MAX_NAME_LENGTH) return null;
+
+  return {
+    redirectUris: uniqueRedirectUris,
+    clientName: normalizeMcpClientName(requestedClientName, uniqueRedirectUris),
+  };
+}
+
+function createRegisteredMcpClient(metadata) {
+  const body = base64url(JSON.stringify({
+    v: MCP_CLIENT_ID_VERSION,
+    type: 'mcp_client',
+    redirectUris: metadata.redirectUris,
+    clientName: metadata.clientName,
+    iat: Math.floor(Date.now() / 1000),
+    jti: crypto.randomBytes(16).toString('base64url'),
+  }));
+  const signature = hmac(`mcp-client:${body}`);
+  return `${MCP_CLIENT_ID_PREFIX}${body}.${signature}`;
+}
+
+function readRegisteredMcpClient(clientId) {
+  const raw = trimToString(clientId);
+  if (!raw.startsWith(MCP_CLIENT_ID_PREFIX)) return null;
+
+  const signed = raw.slice(MCP_CLIENT_ID_PREFIX.length);
+  const splitAt = signed.lastIndexOf('.');
+  if (splitAt <= 0) return null;
+  const body = signed.slice(0, splitAt);
+  const signature = signed.slice(splitAt + 1);
+  const expected = hmac(`mcp-client:${body}`);
+  if (!timingSafeStringEqual(expected, signature)) return null;
+
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    const redirectUris = Array.isArray(payload?.redirectUris) ? payload.redirectUris : [];
+    if (
+      payload?.v !== MCP_CLIENT_ID_VERSION
+      || payload?.type !== 'mcp_client'
+      || redirectUris.length === 0
+      || redirectUris.length > MCP_CLIENT_MAX_REDIRECT_URIS
+      || !redirectUris.every(isAllowedMcpRedirectUri)
+    ) {
+      return null;
+    }
+
+    return {
+      clientId: raw,
+      clientName: normalizeMcpClientName(payload.clientName, redirectUris),
+      redirectUris,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isAllowedExternalRedirect(source, redirectUri, downstreamClientId = '') {
+  if (source === 'claude') return isAllowedClaudeRedirectUri(redirectUri);
+  if (source === 'gpt') return isAllowedChatGptRedirectUri(redirectUri);
+  if (source === 'mcp') {
+    const client = readRegisteredMcpClient(downstreamClientId);
+    return Boolean(client && client.redirectUris.includes(redirectUri));
+  }
+  return false;
+}
+
+function createMcpConsentToken(params) {
+  return createBridgeState({
+    type: 'mcp_consent',
+    clientId: params.clientId,
+    redirectUri: params.redirectUri,
+    originalState: params.originalState,
+    scope: params.scope,
+    responseType: params.responseType,
+    codeChallenge: params.codeChallenge,
+    codeChallengeMethod: params.codeChallengeMethod,
+  });
+}
+
+function renderMcpConsentPage(res, client, params) {
+  const consentToken = createMcpConsentToken(params);
+  const callbackHost = new URL(params.redirectUri).hostname;
+  const cancelUri = appendParams(params.redirectUri, {
+    error: 'access_denied',
+    state: params.originalState,
+  });
+  const html = `<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Подключение к STAS</title>
+<style>
+  * { box-sizing: border-box; }
+  body { min-height: 100vh; margin: 0; padding: 20px; display: flex; align-items: center; justify-content: center; background: #f7faf9; color: #073b37; font: 16px/1.5 Arial, sans-serif; }
+  main { width: 100%; max-width: 480px; padding: 28px; border: 1px solid #dbe7e4; border-radius: 16px; background: #fff; box-shadow: 0 14px 40px rgba(7,59,55,.08); }
+  .mark { width: 64px; height: 64px; margin-bottom: 20px; border-radius: 50%; display: grid; place-items: center; background: #00f0d2; font-weight: 800; }
+  h1 { margin: 0 0 12px; font-size: 24px; }
+  p { margin: 10px 0; color: #46615f; }
+  .client { margin: 18px 0; padding: 14px; border-radius: 10px; background: #f2f8f6; }
+  .client strong, .client span { display: block; overflow-wrap: anywhere; }
+  .client span { margin-top: 4px; color: #597370; font-size: 14px; }
+  .warning { color: #7a4b00; }
+  button, a { width: 100%; min-height: 46px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font: inherit; font-weight: 700; text-decoration: none; }
+  button { margin-top: 20px; border: 0; background: #00d9bf; color: #073b37; cursor: pointer; }
+  a { margin-top: 10px; color: #46615f; }
+</style>
+</head>
+<body>
+<main>
+  <div class="mark">STAS</div>
+  <h1>Подключить MCP-клиент?</h1>
+  <p>Клиент просит доступ к вашим данным STAS и Intervals.icu.</p>
+  <div class="client">
+    <strong>${escapeHtml(client.clientName)}</strong>
+    <span>${escapeHtml(callbackHost)}</span>
+  </div>
+  <p class="warning">После продолжения Intervals.icu покажет точные права. Разрешайте подключение, только если вы сами начали его в этом клиенте.</p>
+  <form method="post" action="/gw/oauth/authorize">
+    <input type="hidden" name="mcp_consent_token" value="${escapeHtml(consentToken)}"/>
+    <button type="submit">Продолжить подключение</button>
+  </form>
+  <a href="${escapeHtml(cancelUri)}">Отмена</a>
+</main>
+</body>
+</html>`;
+
+  res.setHeader('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
+  res.setHeader('content-type', 'text/html; charset=utf-8');
+  return res.status(200).send(html);
+}
+
+function beginBridgeAuthorization(res, params) {
+  const {
+    source,
+    redirectUri,
+    originalState,
+    requestedClientId,
+    downstreamClientId = '',
+    scope,
+    responseType,
+    codeChallenge,
+    codeChallengeMethod,
+  } = params;
+  const useServerClientForChatGpt = source === 'gpt'
+    && !requestedClientId
+    && isAllowedChatGptRedirectUri(redirectUri);
+  const useServerClient = source === 'claude' || source === 'mcp' || useServerClientForChatGpt;
+  const effectiveClientId = useServerClient
+    ? getClaudeIntervalsAuthConfig().clientId
+    : requestedClientId;
+
+  if (
+    !redirectUri
+    || !effectiveClientId
+    || !isAllowedExternalRedirect(source, redirectUri, downstreamClientId || requestedClientId)
+  ) {
+    return res.status(400).json({ error: 'invalid_request' });
+  }
+
+  const allowMissingPkce = source === 'gpt' && !codeChallenge && !codeChallengeMethod;
+  const pkce = readBridgePkce(codeChallenge, codeChallengeMethod, { allowMissing: allowMissingPkce });
+  if (!pkce) return res.status(400).json({ error: 'invalid_request' });
+
+  const effectiveScope = isIntervalsScope(scope) ? scope : DEFAULT_INTERVALS_SCOPE;
+  const intervalsRedirectUri = getIntervalsCallbackUrl();
+  const bridgeState = createBridgeState({
+    source,
+    redirectUri,
+    originalState,
+    effectiveClientId,
+    downstreamClientId: downstreamClientId || null,
+    scope: effectiveScope,
+    intervalsRedirectUri,
+    codeChallenge: pkce.codeChallenge,
+    codeChallengeMethod: pkce.codeChallengeMethod,
+  });
+  const url = new URL(INTERVALS_AUTH_URL);
+  url.searchParams.set('client_id', effectiveClientId);
+  url.searchParams.set('redirect_uri', intervalsRedirectUri);
+  url.searchParams.set('response_type', responseType || 'code');
+  if (effectiveScope) url.searchParams.set('scope', effectiveScope);
+  url.searchParams.set('state', bridgeState);
+  if (pkce.codeChallenge) {
+    url.searchParams.set('code_challenge', pkce.codeChallenge);
+    url.searchParams.set('code_challenge_method', pkce.codeChallengeMethod);
+  }
+
+  logOauth('log', '[oauth][authorize]', {
+    source,
+    redirectUri,
+    intervalsRedirectUri,
+    requestedClientId: requestedClientId || null,
+    effectiveClientId,
+    usedServerClientFallback: useServerClient,
+    hasCodeChallenge: Boolean(pkce.codeChallenge),
+    codeChallengeMethod: pkce.codeChallengeMethod || null,
+  });
+
+  return res.redirect(302, url.toString());
+}
+
+router.post('/oauth/register', (req, res) => {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const metadata = readMcpRegistrationMetadata(body);
+
+  if (!metadata) {
     return res.status(400).json({
       error: 'invalid_client_metadata',
-      error_description: 'redirect_uris must contain only Claude MCP callback URLs',
+      error_description: 'Only public web MCP clients using authorization_code, PKCE and valid HTTPS redirect_uris are supported',
     });
   }
 
   const response = {
-    client_id: getClaudeClientId(),
+    client_id: createRegisteredMcpClient(metadata),
     client_id_issued_at: Math.floor(Date.now() / 1000),
-    client_name: 'Claude',
-    redirect_uris: redirectUris,
+    client_name: metadata.clientName,
+    redirect_uris: metadata.redirectUris,
     grant_types: ['authorization_code'],
     response_types: ['code'],
     token_endpoint_auth_method: 'none',
   };
 
   logOauth('log', '[oauth][register]', {
-    redirectUris,
-    redirectUriCount: redirectUris.length,
+    clientName: metadata.clientName,
+    redirectUris: metadata.redirectUris,
+    redirectUriCount: metadata.redirectUris.length,
     clientId: response.client_id,
   });
   return res.status(201).json(response);
+});
+
+router.post('/oauth/authorize', (req, res) => {
+  try {
+    const consent = takeBridgeState(req.body?.mcp_consent_token);
+    if (!consent || consent.type !== 'mcp_consent') {
+      return res.status(400).json({ error: 'invalid_request' });
+    }
+
+    const client = readRegisteredMcpClient(consent.clientId);
+    const redirectUri = trimToString(consent.redirectUri);
+    if (!client || !client.redirectUris.includes(redirectUri)) {
+      return res.status(400).json({ error: 'invalid_client' });
+    }
+
+    return beginBridgeAuthorization(res, {
+      source: 'mcp',
+      redirectUri,
+      originalState: trimToString(consent.originalState),
+      requestedClientId: client.clientId,
+      downstreamClientId: client.clientId,
+      scope: trimToString(consent.scope),
+      responseType: trimToString(consent.responseType) || 'code',
+      codeChallenge: trimToString(consent.codeChallenge),
+      codeChallengeMethod: trimToString(consent.codeChallengeMethod),
+    });
+  } catch (error) {
+    if (error && error.status) {
+      return res.status(error.status).json({ error: error.message || 'server_error' });
+    }
+    return res.status(500).json({ error: 'server_error' });
+  }
 });
 
 router.get('/oauth/authorize', (req, res, next) => {
@@ -480,67 +801,50 @@ router.get('/oauth/authorize', (req, res, next) => {
     const scope = trimToString(q.scope);
     const codeChallenge = trimToString(q.code_challenge);
     const codeChallengeMethod = trimToString(q.code_challenge_method);
-    const source = resolveOauthSource({ clientId: requestedClientId, redirectUri: redirect_uri });
+    const registeredMcpClient = readRegisteredMcpClient(requestedClientId);
+    if (requestedClientId.startsWith(MCP_CLIENT_ID_PREFIX) && !registeredMcpClient) {
+      return res.status(400).json({ error: 'invalid_client' });
+    }
+    const source = registeredMcpClient
+      ? 'mcp'
+      : resolveOauthSource({ clientId: requestedClientId, redirectUri: redirect_uri });
     const uid = q.uid || q.user_id || '';
+
+    if (source === 'mcp') {
+      if (
+        trimToString(q.response_type) !== 'code'
+        || !registeredMcpClient.redirectUris.includes(redirect_uri)
+        || !readBridgePkce(codeChallenge, codeChallengeMethod)
+      ) {
+        return res.status(400).json({ error: 'invalid_request' });
+      }
+
+      return renderMcpConsentPage(res, registeredMcpClient, {
+        clientId: registeredMcpClient.clientId,
+        redirectUri: redirect_uri,
+        originalState: state,
+        scope,
+        responseType: trimToString(q.response_type),
+        codeChallenge,
+        codeChallengeMethod,
+      });
+    }
 
     if (isIntervalsScope(scope) || source === 'claude') {
       if (!source) {
         return res.status(400).json({ error: 'invalid_request' });
       }
 
-      const isAllowedExternalRedirect = source === 'claude'
-        ? isAllowedClaudeRedirectUri(redirect_uri)
-        : isAllowedChatGptRedirectUri(redirect_uri);
-      const useServerClientForChatGpt = source === 'gpt' && !requestedClientId && isAllowedChatGptRedirectUri(redirect_uri);
-      const effectiveClientId = source === 'claude' || useServerClientForChatGpt
-        ? getClaudeIntervalsAuthConfig().clientId
-        : requestedClientId;
-
-      if (!redirect_uri || !effectiveClientId || !isAllowedExternalRedirect) {
-        return res.status(400).json({ error: 'invalid_request' });
-      }
-
-      const allowMissingPkce = source === 'gpt' && !codeChallenge && !codeChallengeMethod;
-      const pkce = readBridgePkce(codeChallenge, codeChallengeMethod, { allowMissing: allowMissingPkce });
-      if (!pkce) {
-        return res.status(400).json({ error: 'invalid_request' });
-      }
-
-      const effectiveScope = isIntervalsScope(scope) ? scope : DEFAULT_INTERVALS_SCOPE;
-      const intervalsRedirectUri = getIntervalsCallbackUrl();
-      const bridgeState = createBridgeState({
+      return beginBridgeAuthorization(res, {
         source,
         redirectUri: redirect_uri,
         originalState: state,
-        effectiveClientId,
-        scope: effectiveScope,
-        intervalsRedirectUri,
-        codeChallenge: pkce.codeChallenge,
-        codeChallengeMethod: pkce.codeChallengeMethod,
+        requestedClientId,
+        scope,
+        responseType: trimToString(q.response_type),
+        codeChallenge,
+        codeChallengeMethod,
       });
-      const url = new URL(INTERVALS_AUTH_URL);
-      url.searchParams.set('client_id', effectiveClientId);
-      url.searchParams.set('redirect_uri', intervalsRedirectUri);
-      url.searchParams.set('response_type', trimToString(q.response_type) || 'code');
-      if (effectiveScope) url.searchParams.set('scope', effectiveScope);
-      url.searchParams.set('state', bridgeState);
-      if (pkce.codeChallenge) {
-        url.searchParams.set('code_challenge', pkce.codeChallenge);
-        url.searchParams.set('code_challenge_method', pkce.codeChallengeMethod);
-      }
-
-      logOauth('log', '[oauth][authorize]', {
-        source,
-        redirectUri: redirect_uri,
-        intervalsRedirectUri,
-        requestedClientId: requestedClientId || null,
-        effectiveClientId,
-        usedServerClientFallback: useServerClientForChatGpt,
-        hasCodeChallenge: Boolean(pkce.codeChallenge),
-        codeChallengeMethod: pkce.codeChallengeMethod || null,
-      });
-
-      return res.redirect(302, url.toString());
     }
 
     if (!/^[0-9]+$/.test(String(uid))) return next();
@@ -603,15 +907,13 @@ router.get('/oauth/callback', async (req, res, next) => {
   }
 
   const source = stateRecord.source;
-  if (source !== 'claude' && source !== 'gpt') {
+  if (source !== 'claude' && source !== 'gpt' && source !== 'mcp') {
     return res.status(400).json({ error: 'invalid_state' });
   }
   const redirectUri = trimToString(stateRecord.redirectUri);
-  const isAllowedExternalRedirect = source === 'claude'
-    ? isAllowedClaudeRedirectUri(redirectUri)
-    : isAllowedChatGptRedirectUri(redirectUri);
+  const downstreamClientId = trimToString(stateRecord.downstreamClientId);
 
-  if (!isAllowedExternalRedirect) {
+  if (!isAllowedExternalRedirect(source, redirectUri, downstreamClientId)) {
     return res.status(400).json({ error: 'invalid_redirect_uri' });
   }
 
@@ -636,6 +938,7 @@ router.get('/oauth/callback', async (req, res, next) => {
     upstreamCode,
     source,
     redirectUri,
+    downstreamClientId,
     originalState: trimToString(stateRecord.originalState),
     effectiveClientId: trimToString(stateRecord.effectiveClientId),
     intervalsRedirectUri: trimToString(stateRecord.intervalsRedirectUri) || getIntervalsCallbackUrl(),
@@ -655,14 +958,33 @@ router.get('/oauth/callback', async (req, res, next) => {
   }));
 });
 
-router.post('/oauth/revoke', (req, res) => {
-  if (!isAgentAuthConfigured()) {
-    return res.status(503).json({ error: 'service_unavailable', reason: 'agent_auth_not_configured' });
-  }
-
+router.post('/oauth/revoke', async (req, res) => {
   const token = trimToString(req.body?.token || req.body?.access_token);
-  if (token) revokeAgentAccessToken(token);
-  return res.json({ ok: true });
+  if (!token) return res.status(200).end();
+
+  const agentRevocation = revokeAgentAccessToken(token);
+  if (agentRevocation.matched) return res.status(200).end();
+
+  try {
+    const upstream = await fetch('https://intervals.icu/api/v1/disconnect-app', {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (upstream.ok || upstream.status === 401) {
+      forgetDirectIntervalsToken(token);
+      return res.status(200).end();
+    }
+
+    logOauth('error', '[oauth][revoke][intervals_error]', { status: upstream.status });
+    return res.status(502).json({ error: 'temporarily_unavailable' });
+  } catch {
+    return res.status(503).json({ error: 'temporarily_unavailable' });
+  }
 });
 
 router.post('/oauth/token', async (req, res) => {
@@ -716,17 +1038,22 @@ router.post('/oauth/token', async (req, res) => {
         return res.status(400).json({ error: 'invalid_grant', error_description: 'redirect_uri mismatch' });
       }
 
+      if (
+        bridgeRecord
+        && bridgeRecord.source === 'mcp'
+        && requestedClientId !== bridgeRecord.downstreamClientId
+      ) {
+        return res.status(400).json({ error: 'invalid_client' });
+      }
+
       if (!bridgeRecord && redirectUri) {
-        const isAllowedExternalRedirect = source === 'claude'
-          ? isAllowedClaudeRedirectUri(redirectUri)
-          : isAllowedChatGptRedirectUri(redirectUri);
-        if (!isAllowedExternalRedirect) {
+        if (!isAllowedExternalRedirect(source, redirectUri, requestedClientId)) {
           return res.status(400).json({ error: 'invalid_grant', error_description: 'invalid redirect_uri' });
         }
       }
 
       const useServerClientForChatGpt = source === 'gpt' && isAllowedChatGptRedirectUri(redirectUri) && (!requestedClientId || !requestedClientSecret);
-      const clientConfig = source === 'claude' || useServerClientForChatGpt
+      const clientConfig = source === 'claude' || source === 'mcp' || useServerClientForChatGpt
         ? getClaudeIntervalsAuthConfig()
         : { clientId: requestedClientId, clientSecret: requestedClientSecret };
       const clientId = clientConfig.clientId;
@@ -808,7 +1135,9 @@ router.post('/oauth/token', async (req, res) => {
 
       if (response.access_token) {
         try {
-          await resolveDirectIntervalsAuth(response.access_token, { source });
+          await resolveDirectIntervalsAuth(response.access_token, {
+            source: source === 'mcp' ? 'claude' : source,
+          });
         } catch (error) {
           logOauth('error', '[oauth][token][user_sync_failed]', {
             status: error?.status || 502,
