@@ -41,6 +41,7 @@ const {
 const INTERVALS_SCOPE = 'ACTIVITY:WRITE,WELLNESS:WRITE,CALENDAR:WRITE,CHATS:WRITE,LIBRARY:WRITE,SETTINGS:WRITE';
 const CHATGPT_CALLBACK = 'https://chat.openai.com/aip/g-0e683685e67e111ebd51aa7d6b2be34f380bb37f/oauth/callback';
 const CLAUDE_CALLBACK = 'https://claude.ai/api/mcp/auth_callback';
+const PERPLEXITY_CALLBACK = 'https://www.perplexity.ai/rest/connections/oauth_callback';
 const INTERVALS_CALLBACK = 'https://intervals.stas.run/gw/oauth/callback';
 const DEFAULT_PKCE_VERIFIER = 'test-pkce-verifier-012345678901234567890123';
 const WRONG_PKCE_VERIFIER = 'wrong-pkce-verifier-012345678901234567890123';
@@ -181,6 +182,17 @@ global.fetch = async (url, options = {}) => {
     return jsonResponse({ id: '15487', name: 'OAuth Runner' });
   }
 
+  if (parsed.origin === 'https://intervals.icu' && parsed.pathname === '/api/v1/disconnect-app') {
+    upstreamHits.push({
+      url: parsed.toString(),
+      method: options.method || 'GET',
+      headers: options.headers || {},
+    });
+    assert.equal(options.method, 'DELETE');
+    assert.equal(options.headers.Authorization, `Bearer ${RAW_INTERVALS_TOKEN}`);
+    return jsonResponse({}, 204);
+  }
+
   if (parsed.origin === 'http://stas.local.test' && parsed.pathname === '/api/db/ensure-intervals-user') {
     upstreamHits.push({
       url: parsed.toString(),
@@ -192,7 +204,7 @@ global.fetch = async (url, options = {}) => {
     assert.equal(options.headers['X-API-Key'], 'test-stas-key');
     assert.equal(body.intervalsAthleteId, '15487');
     assert.equal(body.intervalsAccessToken, RAW_INTERVALS_TOKEN);
-    assert.equal(body.source, 'gpt');
+    assert.ok(['gpt', 'claude'].includes(body.source));
     return jsonResponse({ ok: true, user_id: '15487' });
   }
 
@@ -259,6 +271,79 @@ async function issueBridgeCode(baseUrl, options = {}) {
   };
 }
 
+function extractConsentToken(html) {
+  const match = String(html).match(/name="mcp_consent_token" value="([^"]+)"/);
+  assert.ok(match, 'expected MCP consent token');
+  return match[1];
+}
+
+async function registerMcpClient(baseUrl, options = {}) {
+  const response = await request(baseUrl, '/gw/oauth/register', {
+    method: 'POST',
+    json: {
+      client_name: options.clientName || 'Perplexity Computer',
+      redirect_uris: options.redirectUris || [PERPLEXITY_CALLBACK],
+      grant_types: ['authorization_code'],
+      response_types: ['code'],
+      token_endpoint_auth_method: 'none',
+      application_type: 'web',
+    },
+  });
+  assert.equal(response.status, 201);
+  return JSON.parse(response.body);
+}
+
+async function issueMcpBridgeCode(baseUrl, options = {}) {
+  const registration = options.registration || await registerMcpClient(baseUrl, options);
+  const redirectUri = options.redirectUri || registration.redirect_uris[0];
+  const authorize = await request(baseUrl, buildAuthorizePath({
+    clientId: registration.client_id,
+    redirectUri,
+    state: options.state,
+    scope: options.scope,
+    codeVerifier: options.codeVerifier,
+    codeChallenge: options.codeChallenge,
+    codeChallengeMethod: options.codeChallengeMethod ?? 'S256',
+    pkce: options.pkce,
+  }));
+  assert.equal(authorize.status, 200);
+  assert.match(authorize.contentType, /text\/html/);
+  assert.match(authorize.body, /Подключить MCP-клиент/);
+
+  const consentToken = extractConsentToken(authorize.body);
+  const consent = await request(baseUrl, '/gw/oauth/authorize', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ mcp_consent_token: consentToken }).toString(),
+  });
+  assert.equal(consent.status, 302);
+  const authorizeLocation = new URL(consent.location);
+  assert.equal(authorizeLocation.origin, 'https://intervals.icu');
+  const bridgeState = authorizeLocation.searchParams.get('state');
+  assert.ok(bridgeState);
+
+  const callback = await request(
+    baseUrl,
+    `/gw/oauth/callback?code=${encodeURIComponent(options.upstreamCode || 'intervals-code-mcp')}&state=${encodeURIComponent(bridgeState)}`,
+  );
+  assert.equal(callback.status, 302);
+  const callbackLocation = new URL(callback.location);
+  assert.equal(callbackLocation.toString().split('?')[0], redirectUri.split('?')[0]);
+  assert.equal(callbackLocation.searchParams.get('state'), options.state ?? 'test-state');
+  const bridgeCode = callbackLocation.searchParams.get('code');
+  assert.match(bridgeCode, /^gpt_/);
+
+  return {
+    authorize,
+    authorizeLocation,
+    bridgeCode,
+    bridgeState,
+    callbackLocation,
+    consentToken,
+    registration,
+  };
+}
+
 async function main() {
   const server = await startServer(makeApp());
   const address = server.address();
@@ -283,27 +368,143 @@ async function main() {
     assert.equal(isAllowedChatGptRedirectUri(CHATGPT_CALLBACK), true);
     assert.equal(isAllowedChatGptRedirectUri(`${CHATGPT_CALLBACK}#frag`), false);
 
-    const claudeRegister = await request(baseUrl, '/gw/oauth/register', {
+    const universalRegister = await request(baseUrl, '/gw/oauth/register', {
       method: 'POST',
-      json: { redirect_uris: [CLAUDE_CALLBACK, 'https://claude.com/api/mcp/auth_callback'] },
+      json: {
+        client_name: 'Perplexity Computer',
+        redirect_uris: [PERPLEXITY_CALLBACK],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        token_endpoint_auth_method: 'none',
+      },
     });
-    assert.equal(claudeRegister.status, 201);
-    const claudeRegisterBody = JSON.parse(claudeRegister.body);
-    assert.equal(claudeRegisterBody.client_id, 'claude-public-client');
+    assert.equal(universalRegister.status, 201);
+    const universalRegisterBody = JSON.parse(universalRegister.body);
+    assert.match(universalRegisterBody.client_id, /^stas_mcp_/);
+    assert.equal(universalRegisterBody.client_name, 'Perplexity Computer');
+    assert.deepEqual(universalRegisterBody.redirect_uris, [PERPLEXITY_CALLBACK]);
+    assert.equal(universalRegisterBody.token_endpoint_auth_method, 'none');
 
-    const claudeRegisterLookalike = await request(baseUrl, '/gw/oauth/register', {
-      method: 'POST',
-      json: { redirect_uris: ['https://claude.ai.evil.example/api/mcp/auth_callback'] },
-    });
-    assert.equal(claudeRegisterLookalike.status, 400);
-    assert.match(claudeRegisterLookalike.body, /invalid_client_metadata/);
+    for (const invalidRedirectUri of [
+      'http://www.perplexity.ai/rest/connections/oauth_callback',
+      'https://user:password@example.com/oauth/callback',
+      'https://example.com/oauth/callback#fragment',
+      'https://localhost/oauth/callback',
+      'https://localhost./oauth/callback',
+      'https://foo.local./oauth/callback',
+      'https://127.0.0.1/oauth/callback',
+      'https://10.0.0.8/oauth/callback',
+      'https://[::1]/oauth/callback',
+    ]) {
+      const invalidRegister = await request(baseUrl, '/gw/oauth/register', {
+        method: 'POST',
+        json: { redirect_uris: [invalidRedirectUri] },
+      });
+      assert.equal(invalidRegister.status, 400);
+      assert.match(invalidRegister.body, /invalid_client_metadata/);
+    }
 
-    const claudeRegisterQueryTrick = await request(baseUrl, '/gw/oauth/register', {
+    const duplicateRedirectRegister = await request(baseUrl, '/gw/oauth/register', {
       method: 'POST',
-      json: { redirect_uris: [`${CLAUDE_CALLBACK}?next=evil`] },
+      json: { redirect_uris: [PERPLEXITY_CALLBACK, PERPLEXITY_CALLBACK] },
     });
-    assert.equal(claudeRegisterQueryTrick.status, 400);
-    assert.match(claudeRegisterQueryTrick.body, /invalid_client_metadata/);
+    assert.equal(duplicateRedirectRegister.status, 400);
+
+    const confidentialRegister = await request(baseUrl, '/gw/oauth/register', {
+      method: 'POST',
+      json: {
+        redirect_uris: [PERPLEXITY_CALLBACK],
+        token_endpoint_auth_method: 'client_secret_post',
+      },
+    });
+    assert.equal(confidentialRegister.status, 400);
+
+    const tamperedClientId = `${universalRegisterBody.client_id.slice(0, -1)}x`;
+    const tamperedAuthorize = await request(baseUrl, buildAuthorizePath({
+      clientId: tamperedClientId,
+      redirectUri: PERPLEXITY_CALLBACK,
+    }));
+    assert.equal(tamperedAuthorize.status, 400);
+    assert.match(tamperedAuthorize.body, /invalid_client/);
+
+    const redirectMismatch = await request(baseUrl, buildAuthorizePath({
+      clientId: universalRegisterBody.client_id,
+      redirectUri: 'https://example.com/oauth/callback',
+    }));
+    assert.equal(redirectMismatch.status, 400);
+    assert.match(redirectMismatch.body, /invalid_request/);
+
+    const missingPkceMcp = await request(baseUrl, buildAuthorizePath({
+      clientId: universalRegisterBody.client_id,
+      redirectUri: PERPLEXITY_CALLBACK,
+      pkce: false,
+    }));
+    assert.equal(missingPkceMcp.status, 400);
+    assert.match(missingPkceMcp.body, /invalid_request/);
+
+    const invalidConsent = await request(baseUrl, '/gw/oauth/authorize', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'mcp_consent_token=invalid',
+    });
+    assert.equal(invalidConsent.status, 400);
+
+    const mcpBridge = await issueMcpBridgeCode(baseUrl, { registration: universalRegisterBody });
+    assert.match(mcpBridge.authorize.body, /Perplexity Computer/);
+    assert.match(mcpBridge.authorize.body, /www\.perplexity\.ai/);
+    assert.equal(mcpBridge.authorizeLocation.searchParams.get('client_id'), 'test-intervals-client');
+    assert.equal(mcpBridge.authorizeLocation.searchParams.get('redirect_uri'), INTERVALS_CALLBACK);
+    const consentReplay = await request(baseUrl, '/gw/oauth/authorize', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ mcp_consent_token: mcpBridge.consentToken }).toString(),
+    });
+    assert.equal(consentReplay.status, 400);
+    assert.match(consentReplay.body, /invalid_request/);
+    const mcpExchange = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      json: {
+        grant_type: 'authorization_code',
+        code: mcpBridge.bridgeCode,
+        client_id: universalRegisterBody.client_id,
+        redirect_uri: PERPLEXITY_CALLBACK,
+        code_verifier: DEFAULT_PKCE_VERIFIER,
+      },
+    });
+    assert.equal(mcpExchange.status, 200);
+    assert.equal(JSON.parse(mcpExchange.body).access_token, RAW_INTERVALS_TOKEN);
+    const lastEnsureHit = upstreamHits.filter((hit) => new URL(hit.url).pathname === '/api/db/ensure-intervals-user').at(-1);
+    assert.equal(JSON.parse(lastEnsureHit.body).source, 'claude');
+
+    const mcpRevoke = await request(baseUrl, '/gw/oauth/revoke', {
+      method: 'POST',
+      json: { token: RAW_INTERVALS_TOKEN, token_type_hint: 'access_token' },
+    });
+    assert.equal(mcpRevoke.status, 200);
+    assert.equal(
+      upstreamHits.filter((hit) => new URL(hit.url).pathname === '/api/v1/disconnect-app').length,
+      1,
+    );
+
+    const wrongClientBridge = await issueMcpBridgeCode(baseUrl, { registration: universalRegisterBody });
+    const wrongClientExchange = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      json: {
+        grant_type: 'authorization_code',
+        code: wrongClientBridge.bridgeCode,
+        client_id: `${universalRegisterBody.client_id}wrong`,
+        redirect_uri: PERPLEXITY_CALLBACK,
+        code_verifier: DEFAULT_PKCE_VERIFIER,
+      },
+    });
+    assert.equal(wrongClientExchange.status, 400);
+    assert.match(wrongClientExchange.body, /invalid_client/);
+
+    const claudeRegisterBody = await registerMcpClient(baseUrl, {
+      clientName: 'Claude',
+      redirectUris: [CLAUDE_CALLBACK, 'https://claude.com/api/mcp/auth_callback'],
+    });
+    assert.match(claudeRegisterBody.client_id, /^stas_mcp_/);
 
     const emptyClientId = await request(baseUrl, buildAuthorizePath({ clientId: '' }));
     assert.equal(emptyClientId.status, 302);

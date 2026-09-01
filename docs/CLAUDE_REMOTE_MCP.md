@@ -1,12 +1,15 @@
-# Claude Remote MCP in bridge
+# Remote MCP OAuth in bridge
 
-Статус на `2026-04-17`: рабочее production-состояние.
+Статус контракта на `2026-09-01`: универсальная регистрация подготовлена в
+source; production не меняется до отдельного deploy.
 
-Этот файл фиксирует именно bridge-часть Claude flow.
+Этот файл фиксирует bridge-часть OAuth для удалённых MCP-клиентов. Старый
+Claude client остаётся совместимым, но новые регистрации больше не привязаны к
+Claude.
 
 ## Зачем это нужно
 
-Claude подключает STAS как Remote MCP server по URL:
+Совместимый удалённый MCP-клиент подключает STAS по URL:
 
 - `https://stas.run/api/mcp`
 
@@ -30,11 +33,13 @@ Claude подключает STAS как Remote MCP server по URL:
 
 Отвечает за:
 
-- `POST /oauth/register` для Dynamic Client Registration Claude;
-- `GET /oauth/authorize` для редиректа в Intervals OAuth;
+- `POST /oauth/register` для универсальной Dynamic Client Registration;
+- выдачу отдельного подписанного `client_id`, привязанного к точным callback;
+- `GET /oauth/authorize` для проверки PKCE и показа экрана согласия;
+- `POST /oauth/authorize` для подтверждённого редиректа в Intervals OAuth;
 - `GET /oauth/callback` как общий callback от Intervals обратно в bridge;
 - `POST /oauth/token` для обмена кода на токен;
-- автоматическую подстановку серверных `INTERVALS_CLIENT_ID` и `INTERVALS_CLIENT_SECRET` для Claude;
+- автоматическую подстановку серверных `INTERVALS_CLIENT_ID` и `INTERVALS_CLIENT_SECRET` для MCP-клиентов;
 - автоматическую подстановку серверного `INTERVALS_CLIENT_ID` для GPT, если ChatGPT присылает пустой `client_id`;
 - bridge-code flow для GPT: ChatGPT callback хранится в подписанном `state`, Intervals получает только `https://intervals.stas.run/gw/oauth/callback`, а bridge затем возвращает ChatGPT код вида `gpt_...`;
 - вызов `resolveDirectIntervalsAuth(...)` после получения Intervals access token.
@@ -68,23 +73,27 @@ Claude подключает STAS как Remote MCP server по URL:
 - распознавание Claude по `client_id` и `redirect_uri`;
 - проброс `x-stas-source` в STAS.
 
-## Как проходит Claude flow
+## Как проходит универсальный Remote MCP flow
 
-1. Claude добавляет MCP server `https://stas.run/api/mcp`.
+1. Клиент добавляет MCP server `https://stas.run/api/mcp`.
 2. При первом защищённом вызове STAS отвечает `401` и отдаёт `resource_metadata`.
 3. Claude читает bridge metadata:
    - `/.well-known/oauth-authorization-server`
-4. Claude делает DCR:
+4. Клиент делает DCR:
    - `POST /gw/oauth/register`
-5. Claude вызывает:
+5. Bridge выдаёт отдельный подписанный public `client_id`, связанный с точными
+   `https` callback клиента.
+6. Клиент вызывает:
    - `GET /gw/oauth/authorize`
-6. Bridge отправляет пользователя в Intervals OAuth.
-7. После callback Claude вызывает:
+7. Bridge проверяет `client_id`, точное совпадение callback и PKCE `S256`, затем
+   показывает пользователю название и домен клиента.
+8. Только после явного подтверждения bridge отправляет пользователя в Intervals OAuth.
+9. После callback клиент вызывает:
    - `POST /gw/oauth/token`
-8. Bridge получает Intervals access token.
-9. Bridge вызывает `resolveDirectIntervalsAuth(...)`.
-10. Bridge синхронизирует пользователя в STAS через `ensure-intervals-user`.
-11. Дальше bridge уже может резолвить этого пользователя по direct Intervals bearer token.
+10. Bridge повторно связывает code, `client_id`, callback и PKCE verifier.
+11. Bridge получает Intervals access token и вызывает `resolveDirectIntervalsAuth(...)`.
+12. Bridge синхронизирует пользователя в STAS через `ensure-intervals-user`.
+13. Дальше bridge уже может резолвить этого пользователя по direct Intervals bearer token.
 
 ## Как проходит GPT Actions flow
 
@@ -111,13 +120,25 @@ Claude подключает STAS как Remote MCP server по URL:
 
 Не нужно добавлять каждый новый ChatGPT `g-...` callback в Intervals app. Эти callback URL остаются только на стороне ChatGPT и bridge-state.
 
-## Что важно для Claude
+## Что важно для универсальной регистрации
 
 - ручной `client_secret` от пользователя не нужен;
 - `token_endpoint_auth_method` для DCR клиента = `none`;
-- callback URL разрешены только:
-  - `https://claude.ai/api/mcp/auth_callback`
-  - `https://claude.com/api/mcp/auth_callback`
+- поддерживаются remote web clients с `authorization_code` и PKCE `S256`;
+- callback обязан использовать `https`, не может содержать логин, пароль или
+  fragment и не может вести на localhost/private IP;
+- один client получает не более трёх callback, каждый не длиннее 512 символов;
+- signed `client_id` переживает restart и не требует отдельной таблицы;
+- пользователь видит client name и callback hostname до перехода в Intervals;
+- legacy `claude-public-client` продолжает работать для старых подключений;
+- ChatGPT Actions flow остаётся отдельным и не меняется.
+
+Perplexity использует callback:
+
+- `https://www.perplexity.ai/rest/connections/oauth_callback`
+
+Любой другой remote MCP client проходит тот же общий путь без отдельного
+исключения по названию продукта.
 
 ## Что важно для STAS
 
@@ -167,7 +188,7 @@ Bridge обязан пробрасывать источник:
 
 Этот bridge нельзя менять только на production.
 
-Если в production правился Claude/GPT OAuth flow, задача не считается законченной, пока:
+Если в production правился MCP/GPT OAuth flow, задача не считается законченной, пока:
 
 - код не сохранён в этом репозитории;
 - изменения не закоммичены;
@@ -182,11 +203,16 @@ Bridge обязан пробрасывать источник:
 
 2. DCR:
    - `POST /gw/oauth/register`
+   - unique signed `client_id`
+   - reject HTTP, localhost/private IP, credentials, fragments and unsupported auth methods
 
 3. OAuth:
    - `GET /gw/oauth/authorize`
+   - consent screen before Intervals for dynamically registered MCP clients
    - `GET /gw/oauth/callback`
    - `POST /gw/oauth/token`
+   - exact client/callback binding and PKCE replay/mismatch rejection
+   - `POST /gw/oauth/revoke`
    - для GPT Intervals authorize URL должен содержать `redirect_uri=https://intervals.stas.run/gw/oauth/callback`, а не ChatGPT callback
 
 4. Sync в STAS:
@@ -198,7 +224,7 @@ Bridge обязан пробрасывать источник:
 
 ## Что является source of truth
 
-Для bridge-части Claude source of truth:
+Для bridge-части Remote MCP OAuth source of truth:
 
 1. этот файл
 2. `routes/oauth.js`
