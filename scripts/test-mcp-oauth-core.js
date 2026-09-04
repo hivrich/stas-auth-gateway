@@ -20,6 +20,7 @@ process.env.MCP_RESOURCE_URL = 'https://stas.run/api/mcp';
 
 const CIMD_URL = 'https://client.example/oauth/client.json';
 const CLAUDE_CIMD_URL = 'https://claude.ai/oauth/mcp-oauth-client-metadata';
+const CODEX_CIMD_URL = 'https://chatgpt.com/oauth/codex/client.json';
 const HOSTED_CALLBACK = 'https://claude.ai/api/mcp/auth_callback';
 const NATIVE_REGISTERED_CALLBACK = 'http://127.0.0.1:3030/oauth/callback?flow=mcp';
 const NATIVE_RUNTIME_CALLBACK = 'http://127.0.0.1:49152/oauth/callback?flow=mcp';
@@ -107,6 +108,32 @@ async function testRegistration() {
   assert.equal(redirectUriMatches(NATIVE_REGISTERED_CALLBACK, NATIVE_RUNTIME_CALLBACK, 'native'), true);
   assert.equal(redirectUriMatches(NATIVE_REGISTERED_CALLBACK, 'http://127.0.0.1:49152/other', 'native'), false);
   assert.equal(redirectUriMatches(NATIVE_REGISTERED_CALLBACK, 'http://127.0.0.2:49152/oauth/callback?flow=mcp', 'native'), false);
+  assert.equal(redirectUriMatches(NATIVE_REGISTERED_CALLBACK, 'http://127.0.0.1:49152/oauth/callback?flow=other', 'native'), false);
+
+  const codexCimd = readClientMetadata({
+    client_id: CODEX_CIMD_URL,
+    client_name: 'Codex',
+    client_uri: 'https://chatgpt.com/codex',
+    application_type: 'native',
+    redirect_uris: ['http://127.0.0.1/callback', 'http://localhost/callback'],
+    token_endpoint_auth_method: 'none',
+    token_endpoint_auth_methods_supported: ['none'],
+    grant_types: ['authorization_code', 'refresh_token'],
+    response_types: ['code'],
+  }, { expectedClientId: CODEX_CIMD_URL });
+  assert.equal(codexCimd.ok, true);
+  assert.deepEqual(codexCimd.metadata.redirectUris, [
+    'http://127.0.0.1/callback',
+    'http://localhost/callback',
+  ]);
+  assert.equal(redirectUriMatches('http://127.0.0.1/callback', 'http://127.0.0.1:63277/callback', 'native'), true);
+  assert.equal(redirectUriMatches('http://localhost/callback', 'http://localhost:63278/callback', 'native'), true);
+  assert.equal(redirectUriMatches('http://127.0.0.1/callback', 'http://localhost:63278/callback', 'native'), false);
+  assert.equal(redirectUriMatches('http://127.0.0.1/callback', 'http://127.0.0.2:63277/callback', 'native'), false);
+  assert.equal(redirectUriMatches('http://[::1]/callback', 'http://[::1]:63279/callback', 'native'), true);
+  assert.equal(redirectUriMatches('http://[::1]/callback', 'http://[::2]:63279/callback', 'native'), false);
+  assert.equal(redirectUriMatches('https://client.example:8443/callback', 'https://client.example:8443/callback', 'web'), true);
+  assert.equal(redirectUriMatches('https://client.example:8443/callback', 'https://client.example:9443/callback', 'web'), false);
 
   const nativeClaimedHttps = readClientMetadata({
     client_name: 'Native claimed HTTPS client',
@@ -127,8 +154,17 @@ async function testRegistration() {
   assert.equal(tooManyRedirects.reason, 'redirect_uris_too_many');
 
   for (const redirect of [
-    'http://localhost:3030/oauth/callback',
     'http://10.0.0.4:3030/oauth/callback',
+    'http://0.0.0.0:3030/oauth/callback',
+    'http://localhost.evil.example:3030/oauth/callback',
+    'http://127.0.0.1.evil.example:3030/oauth/callback',
+    'http://127.0.0.1:0/oauth/callback',
+    'http://127.0.0.1:65536/oauth/callback',
+    'http://127.0.0.1:-1/oauth/callback',
+    'http://127.0.0.1:not-a-port/oauth/callback',
+    'http://user@127.0.0.1:3030/oauth/callback',
+    'http://user:password@localhost:3030/oauth/callback',
+    'http://127.0.0.1:3030/oauth/callback#fragment',
     'https://127.0.0.1/oauth/callback',
     'https://client.example/oauth/callback#fragment',
   ]) {
