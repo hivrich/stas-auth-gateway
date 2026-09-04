@@ -764,6 +764,24 @@ async function main() {
     });
     assert.equal(nativeBridge.callbackLocation.origin, 'http://127.0.0.1:49152');
 
+    const nativeLocalhostRegisterBody = await registerMcpClient(baseUrl, {
+      clientName: 'Native localhost client',
+      redirectUris: ['http://localhost/callback'],
+      applicationType: 'native',
+    });
+    const nativeLocalhostBridge = await issueMcpBridgeCode(baseUrl, {
+      registration: nativeLocalhostRegisterBody,
+      redirectUri: 'http://localhost:49153/callback',
+    });
+    assert.equal(nativeLocalhostBridge.callbackLocation.origin, 'http://localhost:49153');
+
+    const unregisteredDcrLocalhost = await request(baseUrl, buildAuthorizePath({
+      clientId: nativeRegisterBody.client_id,
+      redirectUri: 'http://localhost:49153/oauth/callback',
+    }));
+    assert.equal(unregisteredDcrLocalhost.status, 400);
+    assert.match(unregisteredDcrLocalhost.body, /invalid_request/);
+
     // Regression fixture captured from Codex CLI 0.144.1. The production path
     // remains client-neutral; this exercises its native loopback URI and the
     // repeated RFC 8707 resource parameters that exposed the bug.
@@ -824,6 +842,59 @@ async function main() {
     assert.equal(cimdBridge.authorize.status, 302);
     assert.equal(cimdBridge.authorizeLocation.origin, 'https://intervals.icu');
     assert.doesNotMatch(cimdBridge.authorize.body, /consent|<form/i);
+
+    const codexCimdClientId = 'https://chatgpt.com/oauth/codex/client.json';
+    registrationTesting.setCimdOptions({
+      lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+      fetchImpl: async () => new Response(JSON.stringify({
+        client_id: codexCimdClientId,
+        client_name: 'Codex',
+        client_uri: 'https://chatgpt.com/codex',
+        application_type: 'native',
+        redirect_uris: ['http://127.0.0.1/callback', 'http://localhost/callback'],
+        token_endpoint_auth_method: 'none',
+        token_endpoint_auth_methods_supported: ['none'],
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+      }), { headers: { 'content-type': 'application/json' } }),
+    });
+    const codexCimdIpv4Bridge = await issueMcpBridgeCode(baseUrl, {
+      registration: {
+        client_id: codexCimdClientId,
+        redirect_uris: ['http://127.0.0.1/callback', 'http://localhost/callback'],
+      },
+      redirectUri: 'http://127.0.0.1:63277/callback',
+      resources: [MCP_RESOURCE],
+    });
+    assert.equal(codexCimdIpv4Bridge.callbackLocation.origin, 'http://127.0.0.1:63277');
+    const codexCimdLocalhostBridge = await issueMcpBridgeCode(baseUrl, {
+      registration: {
+        client_id: codexCimdClientId,
+        redirect_uris: ['http://127.0.0.1/callback', 'http://localhost/callback'],
+      },
+      redirectUri: 'http://localhost:63278/callback',
+      resources: [MCP_RESOURCE],
+    });
+    assert.equal(codexCimdLocalhostBridge.callbackLocation.origin, 'http://localhost:63278');
+
+    registrationTesting.setCimdOptions({
+      lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+      fetchImpl: async () => new Response(JSON.stringify({
+        client_id: codexCimdClientId,
+        client_name: 'Native loopback client',
+        application_type: 'native',
+        redirect_uris: ['http://127.0.0.1/callback'],
+        token_endpoint_auth_method: 'none',
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+      }), { headers: { 'content-type': 'application/json' } }),
+    });
+    const unregisteredLocalhost = await request(baseUrl, buildAuthorizePath({
+      clientId: codexCimdClientId,
+      redirectUri: 'http://localhost:63278/callback',
+    }));
+    assert.equal(unregisteredLocalhost.status, 400);
+    assert.match(unregisteredLocalhost.body, /invalid_request/);
     registrationTesting.setCimdOptions(null);
 
     const emptyClientId = await request(baseUrl, buildAuthorizePath({ clientId: '' }));
