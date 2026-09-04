@@ -44,6 +44,8 @@ const CHATGPT_CALLBACK = 'https://chat.openai.com/aip/g-0e683685e67e111ebd51aa7d
 const CLAUDE_CALLBACK = 'https://claude.ai/api/mcp/auth_callback';
 const PERPLEXITY_CALLBACK = 'https://www.perplexity.ai/rest/connections/oauth_callback';
 const INTERVALS_CALLBACK = 'https://intervals.stas.run/gw/oauth/callback';
+const AUTHORIZATION_ISSUER = 'https://intervals.stas.run';
+const MCP_RESOURCE = 'https://stas.run/api/mcp';
 const DEFAULT_PKCE_VERIFIER = 'test-pkce-verifier-012345678901234567890123';
 const WRONG_PKCE_VERIFIER = 'wrong-pkce-verifier-012345678901234567890123';
 const RAW_INTERVALS_TOKEN = 'raw-oauth-flow-intervals-token';
@@ -65,15 +67,17 @@ function makeS256Challenge(verifier) {
 
 function buildAuthorizePath(params = {}) {
   const search = new URLSearchParams({
-    response_type: 'code',
+    response_type: params.responseType ?? 'code',
     client_id: params.clientId ?? '',
     redirect_uri: params.redirectUri ?? CHATGPT_CALLBACK,
     state: params.state ?? 'test-state',
     scope: params.scope ?? INTERVALS_SCOPE,
   });
 
-  if (params.resource !== null && (params.resource || String(params.clientId || '').startsWith('stas_mcp_'))) {
-    search.set('resource', params.resource || 'https://stas.run/api/mcp');
+  if (Array.isArray(params.resources)) {
+    for (const resource of params.resources) search.append('resource', resource);
+  } else if (params.resource !== null && (params.resource || String(params.clientId || '').startsWith('stas_mcp_'))) {
+    search.set('resource', params.resource || MCP_RESOURCE);
   }
 
   if (params.pkce !== false) {
@@ -86,6 +90,24 @@ function buildAuthorizePath(params = {}) {
   }
 
   return `/gw/oauth/authorize?${search.toString()}`;
+}
+
+function validateAuthorizationIssuer(location, expected = AUTHORIZATION_ISSUER) {
+  const response = new URL(location);
+  const issuers = response.searchParams.getAll('iss');
+  if (issuers.length !== 1 || issuers[0] !== expected) {
+    throw new Error('authorization_response_issuer_mismatch');
+  }
+  return response;
+}
+
+function assertAuthorizationError(response, expectedError, expectedState = 'test-state') {
+  assert.equal(response.status, 302);
+  const location = validateAuthorizationIssuer(response.location);
+  assert.equal(location.searchParams.get('error'), expectedError);
+  assert.equal(location.searchParams.get('state'), expectedState);
+  assert.equal(location.searchParams.has('code'), false);
+  return location;
 }
 
 function makeLegacyCode(uid) {
@@ -263,6 +285,7 @@ async function issueBridgeCode(baseUrl, options = {}) {
   );
   assert.equal(callback.status, 302);
   const callbackLocation = new URL(callback.location);
+  validateAuthorizationIssuer(callback.location);
   assert.equal(`${callbackLocation.origin}${callbackLocation.pathname}`, options.redirectUri || CHATGPT_CALLBACK);
   assert.equal(callbackLocation.searchParams.get('state'), options.state ?? 'test-state');
   const bridgeCode = callbackLocation.searchParams.get('code');
@@ -305,6 +328,7 @@ async function issueMcpBridgeCode(baseUrl, options = {}) {
     codeChallengeMethod: options.codeChallengeMethod ?? 'S256',
     pkce: options.pkce,
     resource: options.resource,
+    resources: options.resources,
   }));
   assert.equal(authorize.status, 302);
   assert.doesNotMatch(authorize.body, /mcp_consent_token|<form|Secure connection/);
@@ -329,6 +353,7 @@ async function issueMcpBridgeCode(baseUrl, options = {}) {
   );
   assert.equal(callback.status, 302);
   const callbackLocation = new URL(callback.location);
+  validateAuthorizationIssuer(callback.location);
   assert.equal(callbackLocation.toString().split('?')[0], redirectUri.split('?')[0]);
   assert.equal(callbackLocation.searchParams.get('state'), options.state ?? 'test-state');
   const bridgeCode = callbackLocation.searchParams.get('code');
@@ -356,6 +381,14 @@ async function main() {
     assert.equal(metadata.client_id_metadata_document_supported, true);
     assert.equal(metadata.authorization_response_iss_parameter_supported, true);
     assert.ok(metadata.grant_types_supported.includes('refresh_token'));
+    assert.throws(
+      () => validateAuthorizationIssuer('https://client.example/callback?code=missing-issuer'),
+      /authorization_response_issuer_mismatch/,
+    );
+    assert.throws(
+      () => validateAuthorizationIssuer('https://client.example/callback?code=wrong-issuer&iss=https%3A%2F%2Fwrong.example'),
+      /authorization_response_issuer_mismatch/,
+    );
 
     assert.equal(normalizeSource('claude'), 'claude');
     assert.equal(normalizeSource('gpt'), 'gpt');
@@ -453,39 +486,97 @@ async function main() {
       redirectUri: 'https://example.com/oauth/callback',
     }));
     assert.equal(redirectMismatch.status, 400);
+    assert.equal(redirectMismatch.location, '');
     assert.match(redirectMismatch.body, /invalid_request/);
+
+    const existingIssuerCallback = [
+      'https://client.example/oauth/callback',
+      '?keep=1',
+      '&iss=https%3A%2F%2Fattacker.example',
+      '&iss=https%3A%2F%2Fsecond-attacker.example',
+      '&state=attacker-state',
+      '&code=attacker-code',
+    ].join('');
+    const existingIssuerClient = await registerMcpClient(baseUrl, {
+      clientName: 'Issuer collision client',
+      redirectUris: [existingIssuerCallback],
+    });
+    const issuerCollisionBridge = await issueMcpBridgeCode(baseUrl, {
+      registration: existingIssuerClient,
+      redirectUri: existingIssuerCallback,
+      state: 'bound-state',
+    });
+    assert.deepEqual(issuerCollisionBridge.callbackLocation.searchParams.getAll('iss'), [AUTHORIZATION_ISSUER]);
+    assert.deepEqual(issuerCollisionBridge.callbackLocation.searchParams.getAll('state'), ['bound-state']);
+    assert.equal(issuerCollisionBridge.callbackLocation.searchParams.getAll('code').length, 1);
+    assert.equal(issuerCollisionBridge.callbackLocation.searchParams.get('keep'), '1');
+
+    const deniedAuthorize = await request(baseUrl, buildAuthorizePath({
+      clientId: universalRegisterBody.client_id,
+      redirectUri: PERPLEXITY_CALLBACK,
+      state: 'denied-state',
+    }));
+    const deniedBridgeState = new URL(deniedAuthorize.location).searchParams.get('state');
+    const deniedCallback = await request(
+      baseUrl,
+      `/gw/oauth/callback?error=access_denied&error_description=cancelled&state=${encodeURIComponent(deniedBridgeState)}`,
+    );
+    const deniedLocation = assertAuthorizationError(deniedCallback, 'access_denied', 'denied-state');
+    assert.equal(deniedLocation.searchParams.get('error_description'), 'cancelled');
+
+    const missingCodeAuthorize = await request(baseUrl, buildAuthorizePath({
+      clientId: universalRegisterBody.client_id,
+      redirectUri: PERPLEXITY_CALLBACK,
+      state: 'missing-code-state',
+    }));
+    const missingCodeBridgeState = new URL(missingCodeAuthorize.location).searchParams.get('state');
+    const missingCodeCallback = await request(
+      baseUrl,
+      `/gw/oauth/callback?state=${encodeURIComponent(missingCodeBridgeState)}`,
+    );
+    assertAuthorizationError(missingCodeCallback, 'invalid_request', 'missing-code-state');
 
     const missingPkceMcp = await request(baseUrl, buildAuthorizePath({
       clientId: universalRegisterBody.client_id,
       redirectUri: PERPLEXITY_CALLBACK,
       pkce: false,
     }));
-    assert.equal(missingPkceMcp.status, 400);
-    assert.match(missingPkceMcp.body, /invalid_request/);
+    assertAuthorizationError(missingPkceMcp, 'invalid_request');
 
     const invalidScopeMcp = await request(baseUrl, buildAuthorizePath({
       clientId: universalRegisterBody.client_id,
       redirectUri: PERPLEXITY_CALLBACK,
       scope: 'ACTIVITY:READ secret:scope',
     }));
-    assert.equal(invalidScopeMcp.status, 400);
-    assert.match(invalidScopeMcp.body, /invalid_scope/);
+    assertAuthorizationError(invalidScopeMcp, 'invalid_scope');
 
     const missingResourceMcp = await request(baseUrl, buildAuthorizePath({
       clientId: universalRegisterBody.client_id,
       redirectUri: PERPLEXITY_CALLBACK,
       resource: null,
     }));
-    assert.equal(missingResourceMcp.status, 400);
-    assert.match(missingResourceMcp.body, /invalid_request/);
+    assertAuthorizationError(missingResourceMcp, 'invalid_target');
 
     const wrongResourceMcp = await request(baseUrl, buildAuthorizePath({
       clientId: universalRegisterBody.client_id,
       redirectUri: PERPLEXITY_CALLBACK,
       resource: 'https://other.example/mcp',
     }));
-    assert.equal(wrongResourceMcp.status, 400);
-    assert.match(wrongResourceMcp.body, /invalid_request/);
+    assertAuthorizationError(wrongResourceMcp, 'invalid_target');
+
+    const multipleDifferentResourcesMcp = await request(baseUrl, buildAuthorizePath({
+      clientId: universalRegisterBody.client_id,
+      redirectUri: PERPLEXITY_CALLBACK,
+      resources: [MCP_RESOURCE, 'https://other.example/mcp'],
+    }));
+    assertAuthorizationError(multipleDifferentResourcesMcp, 'invalid_target');
+
+    const unsupportedResponseTypeMcp = await request(baseUrl, buildAuthorizePath({
+      clientId: universalRegisterBody.client_id,
+      redirectUri: PERPLEXITY_CALLBACK,
+      responseType: 'token',
+    }));
+    assertAuthorizationError(unsupportedResponseTypeMcp, 'unsupported_response_type');
 
     const authorizePost = await request(baseUrl, '/gw/oauth/authorize', {
       method: 'POST',
@@ -494,6 +585,29 @@ async function main() {
     });
     assert.equal(authorizePost.status, 404);
     assert.match(authorizePost.body, /not_found/);
+
+    const repeatedResourceBridge = await issueMcpBridgeCode(baseUrl, {
+      registration: universalRegisterBody,
+      resources: [MCP_RESOURCE, MCP_RESOURCE],
+      scope: 'ACTIVITY:READ',
+      upstreamCode: 'intervals-code-mcp-repeated-resource',
+    });
+    const repeatedResourceTokenBody = new URLSearchParams({
+      grant_type: 'authorization_code',
+      code: repeatedResourceBridge.bridgeCode,
+      client_id: universalRegisterBody.client_id,
+      redirect_uri: PERPLEXITY_CALLBACK,
+      code_verifier: DEFAULT_PKCE_VERIFIER,
+    });
+    repeatedResourceTokenBody.append('resource', MCP_RESOURCE);
+    repeatedResourceTokenBody.append('resource', MCP_RESOURCE);
+    const repeatedResourceExchange = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: repeatedResourceTokenBody.toString(),
+    });
+    assert.equal(repeatedResourceExchange.status, 200, repeatedResourceExchange.body);
+    assert.equal(JSON.parse(repeatedResourceExchange.body).scope, 'ACTIVITY:READ');
 
     const limitedMcpBridge = await issueMcpBridgeCode(baseUrl, {
       registration: universalRegisterBody,
@@ -552,6 +666,34 @@ async function main() {
     assert.match(mcpRefreshBody.access_token, /^stas_mcp_at_/);
     assert.match(mcpRefreshBody.refresh_token, /^stas_mcp_rt_/);
     assert.notEqual(mcpRefreshBody.refresh_token, mcpExchangeBody.refresh_token);
+
+    const repeatedRefreshBody = new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: mcpRefreshBody.refresh_token,
+      client_id: universalRegisterBody.client_id,
+    });
+    repeatedRefreshBody.append('resource', MCP_RESOURCE);
+    repeatedRefreshBody.append('resource', MCP_RESOURCE);
+    const repeatedResourceRefresh = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: repeatedRefreshBody.toString(),
+    });
+    assert.equal(repeatedResourceRefresh.status, 200, repeatedResourceRefresh.body);
+    const repeatedResourceRefreshBody = JSON.parse(repeatedResourceRefresh.body);
+
+    const invalidTargetRefresh = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      json: {
+        grant_type: 'refresh_token',
+        refresh_token: repeatedResourceRefreshBody.refresh_token,
+        client_id: universalRegisterBody.client_id,
+        resource: 'https://other.example/mcp',
+      },
+    });
+    assert.equal(invalidTargetRefresh.status, 400);
+    assert.match(invalidTargetRefresh.body, /invalid_target/);
+
     const replayedRefresh = await request(baseUrl, '/gw/oauth/token', {
       method: 'POST',
       json: {
@@ -622,6 +764,39 @@ async function main() {
     });
     assert.equal(nativeBridge.callbackLocation.origin, 'http://127.0.0.1:49152');
 
+    // Regression fixture captured from Codex CLI 0.144.1. The production path
+    // remains client-neutral; this exercises its native loopback URI and the
+    // repeated RFC 8707 resource parameters that exposed the bug.
+    const codexRegisterBody = await registerMcpClient(baseUrl, {
+      clientName: 'Codex',
+      redirectUris: ['http://127.0.0.1:36787/callback/iYlg0iQkackB'],
+      applicationType: 'native',
+    });
+    const codexBridge = await issueMcpBridgeCode(baseUrl, {
+      registration: codexRegisterBody,
+      resources: [MCP_RESOURCE, MCP_RESOURCE],
+      scope: 'ACTIVITY:READ',
+      upstreamCode: 'intervals-code-codex-repeated-resource',
+    });
+    assert.equal(codexBridge.callbackLocation.origin, 'http://127.0.0.1:36787');
+    assert.equal(codexBridge.callbackLocation.pathname, '/callback/iYlg0iQkackB');
+    const codexTokenBody = new URLSearchParams({
+      grant_type: 'authorization_code',
+      code: codexBridge.bridgeCode,
+      client_id: codexRegisterBody.client_id,
+      redirect_uri: 'http://127.0.0.1:36787/callback/iYlg0iQkackB',
+      code_verifier: DEFAULT_PKCE_VERIFIER,
+    });
+    codexTokenBody.append('resource', MCP_RESOURCE);
+    codexTokenBody.append('resource', MCP_RESOURCE);
+    const codexExchange = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: codexTokenBody.toString(),
+    });
+    assert.equal(codexExchange.status, 200, codexExchange.body);
+    assert.equal(JSON.parse(codexExchange.body).scope, 'ACTIVITY:READ');
+
     const cimdClientId = 'https://claude.ai/oauth/mcp-oauth-client-metadata';
     registrationTesting.setCimdOptions({
       lookup: async () => [{ address: '93.184.216.34', family: 4 }],
@@ -644,7 +819,7 @@ async function main() {
         client_id: cimdClientId,
         redirect_uris: [CLAUDE_CALLBACK],
       },
-      resource: 'https://stas.run/api/mcp',
+      resources: [MCP_RESOURCE, MCP_RESOURCE],
     });
     assert.equal(cimdBridge.authorize.status, 302);
     assert.equal(cimdBridge.authorizeLocation.origin, 'https://intervals.icu');
@@ -773,8 +948,7 @@ async function main() {
         codeChallengeMethod: 'plain',
       }),
     );
-    assert.equal(plainPkceAuthorize.status, 400);
-    assert.match(plainPkceAuthorize.body, /invalid_request/);
+    assertAuthorizationError(plainPkceAuthorize, 'invalid_request');
 
     const missingPkceAuthorize = await request(baseUrl, buildAuthorizePath({ pkce: false }));
     assert.equal(missingPkceAuthorize.status, 302);
@@ -787,8 +961,7 @@ async function main() {
       redirectUri: CLAUDE_CALLBACK,
       pkce: false,
     }));
-    assert.equal(missingPkceClaudeAuthorize.status, 400);
-    assert.match(missingPkceClaudeAuthorize.body, /invalid_request/);
+    assertAuthorizationError(missingPkceClaudeAuthorize, 'invalid_request');
 
     const savedNodeEnv = process.env.NODE_ENV;
     const savedOauthStateSecret = process.env.OAUTH_STATE_SECRET;
@@ -797,9 +970,7 @@ async function main() {
       process.env.OAUTH_STATE_SECRET = 'stas-oauth-state-dev-secret';
 
       const productionPlaceholderStateSecret = await request(baseUrl, buildAuthorizePath({ clientId: '' }));
-      assert.equal(productionPlaceholderStateSecret.status, 500);
-      assert.match(productionPlaceholderStateSecret.body, /oauth_state_secret_not_configured/);
-      assert.equal(productionPlaceholderStateSecret.location, '');
+      assertAuthorizationError(productionPlaceholderStateSecret, 'server_error');
     } finally {
       if (savedNodeEnv === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = savedNodeEnv;
@@ -836,6 +1007,15 @@ async function main() {
     const claudeAuthorizeLocation = new URL(claudeAuthorize.location);
     assert.equal(claudeAuthorizeLocation.searchParams.get('client_id'), 'test-intervals-client');
     assert.equal(claudeAuthorizeLocation.searchParams.get('redirect_uri'), INTERVALS_CALLBACK);
+    const claudeCallback = await request(
+      baseUrl,
+      `/gw/oauth/callback?code=intervals-code-claude&state=${encodeURIComponent(claudeAuthorizeLocation.searchParams.get('state'))}`,
+    );
+    assert.equal(claudeCallback.status, 302);
+    const claudeCallbackLocation = validateAuthorizationIssuer(claudeCallback.location);
+    assert.equal(`${claudeCallbackLocation.origin}${claudeCallbackLocation.pathname}`, CLAUDE_CALLBACK);
+    assert.equal(claudeCallbackLocation.searchParams.get('state'), 'test-state');
+    assert.match(claudeCallbackLocation.searchParams.get('code'), /^gpt_/);
 
     const invalidRedirect = await request(
       baseUrl,
@@ -995,6 +1175,7 @@ async function main() {
     const legacyAuthorizeLocation = new URL(legacyAuthorizeEnabled.location);
     assert.equal(`${legacyAuthorizeLocation.origin}${legacyAuthorizeLocation.pathname}`, 'https://chat.openai.com/aip/g-legacy/oauth/callback');
     assert.match(legacyAuthorizeLocation.searchParams.get('code'), /^c_/);
+    validateAuthorizationIssuer(legacyAuthorizeEnabled.location);
     delete process.env.ENABLE_LEGACY_STAS_ID_OAUTH;
 
     process.env.ENABLE_LEGACY_STAS_ID_TOKEN_EXCHANGE = '1';

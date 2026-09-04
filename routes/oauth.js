@@ -456,6 +456,44 @@ function appendParams(uri, params) {
   return url.toString();
 }
 
+function appendAuthorizationResponse(uri, params) {
+  return appendParams(uri, {
+    ...params,
+    // RFC 9207: the issuer is server-owned and must be present on every
+    // authorization response, including errors. Set it last so neither the
+    // request nor an existing redirect query can override or duplicate it.
+    iss: getIssuer(),
+  });
+}
+
+function redirectAuthorizationError(res, redirectUri, state, error, errorDescription = '') {
+  return res.redirect(302, appendAuthorizationResponse(redirectUri, {
+    error,
+    error_description: errorDescription,
+    state,
+  }));
+}
+
+function readCanonicalMcpResource(value) {
+  const rawValues = Array.isArray(value) ? value : [value];
+  const resources = rawValues
+    .filter((item) => item !== undefined && item !== null)
+    .map(trimToString);
+  const canonicalResource = getMcpResource();
+
+  if (
+    resources.length === 0
+    || resources.some((resource) => !resource || resource !== canonicalResource)
+  ) {
+    return null;
+  }
+
+  // RFC 8707 permits repeated resource parameters. This gateway issues
+  // tokens for one audience, so repeated copies of that audience collapse to
+  // the one canonical value stored in the authorization grant.
+  return canonicalResource;
+}
+
 function createRegisteredMcpClient(metadata) {
   const body = base64url(JSON.stringify({
     v: MCP_CLIENT_ID_VERSION,
@@ -548,6 +586,13 @@ function beginBridgeAuthorization(res, params) {
     resource,
     registeredClient,
   } = params;
+  if (
+    !redirectUri
+    || !isAllowedExternalRedirect(source, redirectUri, downstreamClientId || requestedClientId, registeredClient)
+  ) {
+    return res.status(400).json({ error: 'invalid_request' });
+  }
+
   const useServerClientForChatGpt = source === 'gpt'
     && !requestedClientId
     && isAllowedChatGptRedirectUri(redirectUri);
@@ -556,20 +601,22 @@ function beginBridgeAuthorization(res, params) {
     ? getClaudeIntervalsAuthConfig().clientId
     : requestedClientId;
 
-  if (
-    !redirectUri
-    || !effectiveClientId
-    || !isAllowedExternalRedirect(source, redirectUri, downstreamClientId || requestedClientId, registeredClient)
-  ) {
-    return res.status(400).json({ error: 'invalid_request' });
+  if (!effectiveClientId) {
+    return redirectAuthorizationError(res, redirectUri, originalState, 'server_error');
+  }
+
+  if (responseType && responseType !== 'code') {
+    return redirectAuthorizationError(res, redirectUri, originalState, 'unsupported_response_type');
   }
 
   const allowMissingPkce = source === 'gpt' && !codeChallenge && !codeChallengeMethod;
   const pkce = readBridgePkce(codeChallenge, codeChallengeMethod, { allowMissing: allowMissingPkce });
-  if (!pkce) return res.status(400).json({ error: 'invalid_request' });
+  if (!pkce) return redirectAuthorizationError(res, redirectUri, originalState, 'invalid_request');
 
   const mcpScopes = source === 'mcp' ? normalizeMcpScopes(scope) : null;
-  if (source === 'mcp' && !mcpScopes) return res.status(400).json({ error: 'invalid_scope' });
+  if (source === 'mcp' && !mcpScopes) {
+    return redirectAuthorizationError(res, redirectUri, originalState, 'invalid_scope');
+  }
   const clientScope = mcpScopes ? mcpScopes.join(' ') : null;
   // Client scopes limit only the STAS token. The internal Intervals credential
   // must retain the stable product permissions used by background/calendar work.
@@ -655,10 +702,13 @@ router.post('/oauth/register', (req, res) => {
 });
 
 router.get('/oauth/authorize', async (req, res, next) => {
+  let trustedRedirectUri = '';
+  let originalState = '';
   try {
     const q = req.query || {};
     const redirect_uri = trimToString(q.redirect_uri);
     const state = trimToString(q.state);
+    originalState = state;
     const requestedClientId = trimToString(q.client_id);
     const scope = trimToString(q.scope);
     const codeChallenge = trimToString(q.code_challenge);
@@ -681,16 +731,24 @@ router.get('/oauth/authorize', async (req, res, next) => {
     const uid = q.uid || q.user_id || '';
 
     if (source === 'mcp') {
-      const resource = trimToString(q.resource);
+      if (!isAllowedExternalRedirect('mcp', redirect_uri, requestedClientId, registeredMcpClient)) {
+        return res.status(400).json({ error: 'invalid_request' });
+      }
+      trustedRedirectUri = redirect_uri;
+
+      const resource = readCanonicalMcpResource(q.resource);
       const mcpScopes = normalizeMcpScopes(scope);
-      if (
-        trimToString(q.response_type) !== 'code'
-        || !isAllowedExternalRedirect('mcp', redirect_uri, requestedClientId, registeredMcpClient)
-        || !readBridgePkce(codeChallenge, codeChallengeMethod)
-        || resource !== getMcpResource()
-        || !mcpScopes
-      ) {
-        return res.status(400).json({ error: mcpScopes ? 'invalid_request' : 'invalid_scope' });
+      if (trimToString(q.response_type) !== 'code') {
+        return redirectAuthorizationError(res, redirect_uri, state, 'unsupported_response_type');
+      }
+      if (!readBridgePkce(codeChallenge, codeChallengeMethod)) {
+        return redirectAuthorizationError(res, redirect_uri, state, 'invalid_request');
+      }
+      if (!resource) {
+        return redirectAuthorizationError(res, redirect_uri, state, 'invalid_target');
+      }
+      if (!mcpScopes) {
+        return redirectAuthorizationError(res, redirect_uri, state, 'invalid_scope');
       }
 
       return beginBridgeAuthorization(res, {
@@ -711,6 +769,10 @@ router.get('/oauth/authorize', async (req, res, next) => {
     if (isIntervalsScope(scope) || source === 'claude') {
       if (!source) {
         return res.status(400).json({ error: 'invalid_request' });
+      }
+
+      if (isAllowedExternalRedirect(source, redirect_uri, requestedClientId)) {
+        trustedRedirectUri = redirect_uri;
       }
 
       return beginBridgeAuthorization(res, {
@@ -740,15 +802,21 @@ router.get('/oauth/authorize', async (req, res, next) => {
       .replace(/\+/g, '-')
       .replace(/\//g, '_')
       .replace(/=+$/, '');
-    const sep = redirect_uri.includes('?') ? '&' : '?';
-    const url = `${redirect_uri}${sep}code=${encodeURIComponent(code)}${state ? `&state=${encodeURIComponent(state)}` : ''}`;
     logOauth('log', '[oauth][302]', {
       redirectUri: redirect_uri,
       hasCode: true,
       hasState: Boolean(state),
     });
-    return res.redirect(302, url);
+    return res.redirect(302, appendAuthorizationResponse(redirect_uri, { code, state }));
   } catch (error) {
+    if (trustedRedirectUri) {
+      logOauth('error', '[oauth][authorize][config_error]', {
+        status: error?.status || 500,
+        error: error?.message || 'server_error',
+      });
+      return redirectAuthorizationError(res, trustedRedirectUri, originalState, 'server_error');
+    }
+
     if (error && error.status) {
       logOauth('error', '[oauth][authorize][config_error]', {
         status: error.status,
@@ -798,21 +866,23 @@ router.get('/oauth/callback', async (req, res, next) => {
 
   const upstreamError = trimToString(q.error);
   if (upstreamError) {
-    return res.redirect(302, appendParams(redirectUri, {
-      error: upstreamError,
-      error_description: trimToString(q.error_description),
-      state: trimToString(stateRecord.originalState),
-      ...(source === 'mcp' ? { iss: getIssuer() } : {}),
-    }));
+    return redirectAuthorizationError(
+      res,
+      redirectUri,
+      trimToString(stateRecord.originalState),
+      upstreamError,
+      trimToString(q.error_description),
+    );
   }
 
   const upstreamCode = trimToString(q.code);
   if (!upstreamCode) {
-    return res.redirect(302, appendParams(redirectUri, {
-      error: 'invalid_request',
-      state: trimToString(stateRecord.originalState),
-      ...(source === 'mcp' ? { iss: getIssuer() } : {}),
-    }));
+    return redirectAuthorizationError(
+      res,
+      redirectUri,
+      trimToString(stateRecord.originalState),
+      'invalid_request',
+    );
   }
 
   const bridgeCode = createBridgeCode({
@@ -836,10 +906,9 @@ router.get('/oauth/callback', async (req, res, next) => {
     effectiveClientId: stateRecord.effectiveClientId || null,
   });
 
-  return res.redirect(302, appendParams(redirectUri, {
+  return res.redirect(302, appendAuthorizationResponse(redirectUri, {
     code: bridgeCode,
     state: trimToString(stateRecord.originalState),
-    iss: getIssuer(),
   }));
 });
 
@@ -900,10 +969,11 @@ router.post('/oauth/token', async (req, res) => {
     if (grantType === 'refresh_token') {
       const refreshToken = trimToString(b.refresh_token);
       const clientId = trimToString(b.client_id) || getBasicAuthCredentials(req).clientId;
-      const resource = trimToString(b.resource);
-      if (!refreshToken || !clientId || resource !== getMcpResource()) {
+      const resource = readCanonicalMcpResource(b.resource);
+      if (!refreshToken || !clientId) {
         return res.status(400).json({ error: 'invalid_grant' });
       }
+      if (!resource) return res.status(400).json({ error: 'invalid_target' });
       const refreshed = await refreshMcpTokens(refreshToken, { clientId, resource });
       if (!refreshed) return res.status(400).json({ error: 'invalid_grant' });
       logOauth('log', '[oauth][token][refreshed]', { clientId, resource });
@@ -949,7 +1019,10 @@ router.post('/oauth/token', async (req, res) => {
       if (
         bridgeRecord
         && bridgeRecord.source === 'mcp'
-        && (trimToString(b.resource) !== bridgeRecord.resource || bridgeRecord.resource !== getMcpResource())
+        && (
+          readCanonicalMcpResource(b.resource) !== bridgeRecord.resource
+          || bridgeRecord.resource !== getMcpResource()
+        )
       ) {
         return res.status(400).json({ error: 'invalid_target' });
       }
