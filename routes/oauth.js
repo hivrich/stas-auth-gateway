@@ -72,7 +72,6 @@ const PLACEHOLDER_OAUTH_STATE_SECRET_MARKERS = [
 // Local one-process stores only. Multi-instance deploys need Redis/DB-backed state.
 const pendingBridgeStates = new Map();
 const pendingBridgeCodes = new Map();
-const consumedMcpConsentTokens = new Map();
 
 function trimToString(value) {
   if (value === null || value === undefined) return '';
@@ -342,13 +341,6 @@ function cleanupBridgeStates() {
   }
 }
 
-function cleanupConsumedMcpConsentTokens() {
-  const now = Date.now();
-  for (const [tokenId, expiresAt] of consumedMcpConsentTokens.entries()) {
-    if (Number(expiresAt) <= now) consumedMcpConsentTokens.delete(tokenId);
-  }
-}
-
 function createBridgeState(record) {
   cleanupBridgeStates();
   const stateId = crypto.randomBytes(24).toString('base64url');
@@ -464,15 +456,6 @@ function appendParams(uri, params) {
   return url.toString();
 }
 
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
-
 function createRegisteredMcpClient(metadata) {
   const body = base64url(JSON.stringify({
     v: MCP_CLIENT_ID_VERSION,
@@ -549,205 +532,6 @@ function isAllowedExternalRedirect(source, redirectUri, downstreamClientId = '',
     )));
   }
   return false;
-}
-
-function createMcpConsentToken(params) {
-  const issuedAt = Date.now();
-  return signState({
-    v: 1,
-    type: 'mcp_consent',
-    jti: crypto.randomBytes(24).toString('base64url'),
-    iat: issuedAt,
-    exp: issuedAt + OAUTH_STATE_TTL_MS,
-    clientId: params.clientId,
-    redirectUri: params.redirectUri,
-    originalState: params.originalState,
-    scope: params.scope,
-    responseType: params.responseType,
-    codeChallenge: params.codeChallenge,
-    codeChallengeMethod: params.codeChallengeMethod,
-    resource: params.resource,
-    client: params.client,
-  });
-}
-
-function takeMcpConsentToken(value) {
-  const consent = readSignedState(value);
-  if (!consent || consent.v !== 1 || consent.type !== 'mcp_consent' || !trimToString(consent.jti)) {
-    return { consent: null, reason: 'invalid_or_expired' };
-  }
-
-  cleanupConsumedMcpConsentTokens();
-  const tokenId = trimToString(consent.jti);
-  if (consumedMcpConsentTokens.has(tokenId)) {
-    return { consent: null, reason: 'replayed' };
-  }
-  consumedMcpConsentTokens.set(tokenId, Number(consent.exp));
-  return { consent, reason: null };
-}
-
-const MCP_SCOPE_LABELS = {
-  ACTIVITY: 'Activities and workouts',
-  WELLNESS: 'Wellness data',
-  CALENDAR: 'Calendar and training plan',
-  CHATS: 'STAS conversations',
-  LIBRARY: 'Training library',
-  SETTINGS: 'Account settings',
-};
-
-function renderMcpScopeList(scope) {
-  const scopes = normalizeMcpScopes(scope, { useDefault: false }) || [];
-  const accessByCategory = new Map();
-  for (const item of scopes) {
-    const [category, access] = item.split(':');
-    if (!MCP_SCOPE_LABELS[category]) continue;
-    const current = accessByCategory.get(category);
-    if (access === 'WRITE' || !current) accessByCategory.set(category, access);
-  }
-
-  return [...accessByCategory.entries()].map(([category, access]) => `
-    <li class="permission">
-      <span class="check" aria-hidden="true">&#10003;</span>
-      <span><strong>${escapeHtml(MCP_SCOPE_LABELS[category])}</strong><small>${access === 'WRITE' ? 'View and update' : 'View only'}</small></span>
-    </li>`).join('');
-}
-
-const MCP_CONSENT_PAGE_CSS = `
-  :root { color-scheme: only light; }
-  * { box-sizing: border-box; }
-  html, body { min-height: 100%; }
-  body { margin: 0; padding: 4px; background: #fff; color: #000; font: 400 18px/1.34 "Suisse Intl", "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-  .page { min-height: calc(100vh - 8px); min-height: calc(100dvh - 8px); display: flex; align-items: center; justify-content: center; padding: clamp(16px, 5vw, 52px); border-radius: 20px; background: #f0f1f1; }
-  .shell { width: 100%; max-width: 680px; }
-  .brand { display: inline-flex; align-items: center; gap: 9px; margin: 0 0 16px 4px; color: #002726; font-size: 18px; font-weight: 600; letter-spacing: .01em; }
-  .brand-dot { width: 14px; height: 14px; border-radius: 999px; background: #78fff0; }
-  .card { border-radius: 20px; background: #fff; padding: clamp(24px, 5vw, 40px); }
-  .eyebrow { margin: 0 0 12px; color: #7a838a; font-size: 12px; line-height: 1.28; text-transform: uppercase; letter-spacing: .08em; }
-  h1 { max-width: 560px; margin: 0; font-size: clamp(30px, 5vw, 38px); line-height: 1.08; font-weight: 400; letter-spacing: -.025em; }
-  .lead { max-width: 580px; margin: 16px 0 0; color: #4b555d; font-size: 18px; line-height: 1.42; }
-  .client { margin-top: 24px; padding: 16px; border-radius: 16px; background: #f7f8f8; }
-  .client-label, .section-label { display: block; margin: 0 0 8px; color: #7a838a; font-size: 12px; line-height: 1.28; }
-  .client strong, .client span { display: block; overflow-wrap: anywhere; }
-  .client strong { font-size: 18px; line-height: 1.28; font-weight: 500; }
-  .client span { margin-top: 4px; color: #4b555d; font-size: 15px; line-height: 1.32; }
-  .permissions-wrap { margin-top: 24px; }
-  .permissions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
-  .permission { min-width: 0; display: flex; align-items: flex-start; gap: 10px; padding: 14px; border-radius: 14px; background: #f7f8f8; }
-  .permission .check { width: 24px; height: 24px; flex: 0 0 24px; display: grid; place-items: center; border-radius: 8px; background: #d8fbf7; color: #002726; font-size: 15px; line-height: 1; }
-  .permission strong, .permission small { display: block; }
-  .permission strong { font-size: 15px; line-height: 1.32; font-weight: 500; }
-  .permission small { margin-top: 3px; color: #7a838a; font-size: 12px; line-height: 1.28; }
-  .notice { margin: 24px 0 0; padding: 14px 16px; border-radius: 14px; background: #fff1cc; color: #6b4700; font-size: 15px; line-height: 1.36; }
-  .actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin-top: 24px; }
-  button, .button-link { min-height: 52px; width: 100%; display: inline-flex; align-items: center; justify-content: center; border-radius: 14px; padding: 0 18px; font-family: inherit; font-size: 18px; font-weight: 400; line-height: 1; text-align: center; text-decoration: none; cursor: pointer; touch-action: manipulation; }
-  button { border: 1px solid transparent; background: #78fff0; color: #000; }
-  .button-link { border: 1px solid #4b555d; background: transparent; color: #000; }
-  @media (hover: hover) {
-    button:hover, .button-link:hover { border-radius: 999px; }
-    .button-link:hover { background: #f7f8f8; }
-  }
-  button:active, .button-link:active { transform: translateY(1px); }
-  button:focus-visible, .button-link:focus-visible, .help-link:focus-visible { outline: 3px solid #002726; outline-offset: 3px; }
-  .footnote { margin: 16px 0 0; color: #7a838a; font-size: 12px; line-height: 1.4; text-align: center; }
-  .help-link { color: #000; text-underline-offset: 4px; }
-  @media (max-width: 560px) {
-    .page { align-items: flex-start; padding: 20px 12px; }
-    .brand { margin-top: 4px; }
-    .card { padding: 24px 20px; }
-    .permissions, .actions { grid-template-columns: 1fr; }
-    .actions form { order: 0; }
-    .button-link { order: 1; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    button:active, .button-link:active { transform: none; }
-  }
-`;
-
-function setMcpConsentPageHeaders(res) {
-  res.setHeader('cache-control', 'no-store');
-  res.setHeader('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
-  res.setHeader('content-type', 'text/html; charset=utf-8');
-}
-
-function renderMcpConsentPage(res, client, params) {
-  const consentToken = createMcpConsentToken(params);
-  const callbackHost = new URL(params.redirectUri).hostname;
-  const clientName = trimToString(client.clientName) || 'MCP client';
-  const cancelUri = appendParams(params.redirectUri, {
-    error: 'access_denied',
-    state: params.originalState,
-  });
-  const html = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Connect ${escapeHtml(clientName)} to STAS</title>
-<style>${MCP_CONSENT_PAGE_CSS}</style>
-</head>
-<body>
-<div class="page">
-  <main class="shell" aria-labelledby="consent-title">
-    <div class="brand" aria-label="STAS"><span class="brand-dot" aria-hidden="true"></span>STAS</div>
-    <section class="card">
-      <p class="eyebrow">Secure connection</p>
-      <h1 id="consent-title">Connect ${escapeHtml(clientName)} to STAS?</h1>
-      <p class="lead">This lets the client work with your STAS training data. You will review access with Intervals.icu next.</p>
-      <div class="client">
-        <span class="client-label">Connecting</span>
-        <strong>${escapeHtml(clientName)}</strong>
-        <span>${escapeHtml(callbackHost)}</span>
-      </div>
-      <div class="permissions-wrap">
-        <span class="section-label">Requested access</span>
-        <ul class="permissions">${renderMcpScopeList(params.scope)}</ul>
-      </div>
-      <p class="notice"><strong>Only continue if you started this connection</strong> in ${escapeHtml(clientName)}.</p>
-      <div class="actions">
-        <form method="post" action="/gw/oauth/authorize">
-          <input type="hidden" name="mcp_consent_token" value="${escapeHtml(consentToken)}"/>
-          <button type="submit">Continue to Intervals.icu</button>
-        </form>
-        <a class="button-link" href="${escapeHtml(cancelUri)}">Cancel connection</a>
-      </div>
-      <p class="footnote">STAS never shares your Intervals.icu password with the client.</p>
-    </section>
-  </main>
-</div>
-</body>
-</html>`;
-
-  setMcpConsentPageHeaders(res);
-  return res.status(200).send(html);
-}
-
-function renderMcpConsentErrorPage(res) {
-  const html = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Start the STAS connection again</title>
-<style>${MCP_CONSENT_PAGE_CSS}</style>
-</head>
-<body>
-<div class="page">
-  <main class="shell" aria-labelledby="error-title">
-    <div class="brand" aria-label="STAS"><span class="brand-dot" aria-hidden="true"></span>STAS</div>
-    <section class="card">
-      <p class="eyebrow">Connection expired</p>
-      <h1 id="error-title">Start the connection again</h1>
-      <p class="lead">This connection request is no longer valid. Close this page, return to your MCP client, and connect STAS again.</p>
-      <p class="notice">No access was granted and no account changes were made.</p>
-      <p class="footnote">Need help? <a class="help-link" href="https://stas.run">Visit stas.run</a></p>
-    </section>
-  </main>
-</div>
-</body>
-</html>`;
-
-  setMcpConsentPageHeaders(res);
-  return res.status(400).send(html);
 }
 
 function beginBridgeAuthorization(res, params) {
@@ -870,42 +654,6 @@ router.post('/oauth/register', (req, res) => {
   return res.status(201).json(response);
 });
 
-router.post('/oauth/authorize', (req, res) => {
-  try {
-    const result = takeMcpConsentToken(req.body?.mcp_consent_token);
-    if (!result.consent) {
-      logOauth('warn', '[oauth][consent][rejected]', { reason: result.reason });
-      return renderMcpConsentErrorPage(res);
-    }
-    const consent = result.consent;
-
-    const client = consent.client;
-    const redirectUri = trimToString(consent.redirectUri);
-    if (!client || !isAllowedExternalRedirect('mcp', redirectUri, client.clientId, client)) {
-      return res.status(400).json({ error: 'invalid_client' });
-    }
-
-    return beginBridgeAuthorization(res, {
-      source: 'mcp',
-      redirectUri,
-      originalState: trimToString(consent.originalState),
-      requestedClientId: client.clientId,
-      downstreamClientId: client.clientId,
-      scope: trimToString(consent.scope),
-      responseType: trimToString(consent.responseType) || 'code',
-      codeChallenge: trimToString(consent.codeChallenge),
-      codeChallengeMethod: trimToString(consent.codeChallengeMethod),
-      resource: trimToString(consent.resource),
-      registeredClient: client,
-    });
-  } catch (error) {
-    if (error && error.status) {
-      return res.status(error.status).json({ error: error.message || 'server_error' });
-    }
-    return res.status(500).json({ error: 'server_error' });
-  }
-});
-
 router.get('/oauth/authorize', async (req, res, next) => {
   try {
     const q = req.query || {};
@@ -945,16 +693,18 @@ router.get('/oauth/authorize', async (req, res, next) => {
         return res.status(400).json({ error: mcpScopes ? 'invalid_request' : 'invalid_scope' });
       }
 
-      return renderMcpConsentPage(res, registeredMcpClient, {
-        clientId: registeredMcpClient.clientId,
+      return beginBridgeAuthorization(res, {
+        source: 'mcp',
         redirectUri: redirect_uri,
         originalState: state,
+        requestedClientId: registeredMcpClient.clientId,
+        downstreamClientId: registeredMcpClient.clientId,
         scope: mcpScopes.join(' '),
         responseType: trimToString(q.response_type),
         codeChallenge,
         codeChallengeMethod,
         resource,
-        client: registeredMcpClient,
+        registeredClient: registeredMcpClient,
       });
     }
 
@@ -1355,11 +1105,3 @@ router.post('/oauth/token', async (req, res) => {
 });
 
 module.exports = router;
-
-module.exports.__testing = {
-  resetVolatileState() {
-    pendingBridgeStates.clear();
-    pendingBridgeCodes.clear();
-    consumedMcpConsentTokens.clear();
-  },
-};

@@ -127,8 +127,6 @@ async function request(baseUrl, path, options = {}) {
   return {
     status: response.status,
     contentType: response.headers.get('content-type') || '',
-    cacheControl: response.headers.get('cache-control') || '',
-    contentSecurityPolicy: response.headers.get('content-security-policy') || '',
     location: response.headers.get('location') || '',
     body: await response.text(),
   };
@@ -278,42 +276,6 @@ async function issueBridgeCode(baseUrl, options = {}) {
   };
 }
 
-function decodeHtmlAttribute(value) {
-  return String(value)
-    .replaceAll('&amp;', '&')
-    .replaceAll('&quot;', '"')
-    .replaceAll('&#39;', "'")
-    .replaceAll('&lt;', '<')
-    .replaceAll('&gt;', '>');
-}
-
-function readHtmlAttribute(attributes, name) {
-  const match = String(attributes).match(new RegExp(`\\b${name}="([^"]*)"`, 'i'));
-  return match ? decodeHtmlAttribute(match[1]) : '';
-}
-
-function extractConsentForm(html) {
-  const match = String(html).match(/<form\b([^>]*)>([\s\S]*?)<\/form>/i);
-  assert.ok(match, 'expected MCP consent form');
-  const fields = {};
-  for (const input of match[2].matchAll(/<input\b([^>]*)>/gi)) {
-    const name = readHtmlAttribute(input[1], 'name');
-    if (name) fields[name] = readHtmlAttribute(input[1], 'value');
-  }
-  assert.ok(fields.mcp_consent_token, 'expected MCP consent token');
-  return {
-    action: readHtmlAttribute(match[1], 'action'),
-    method: readHtmlAttribute(match[1], 'method').toUpperCase(),
-    fields,
-  };
-}
-
-function extractCancelUri(html) {
-  const match = String(html).match(/<a\b([^>]*)>Cancel connection<\/a>/i);
-  assert.ok(match, 'expected cancel connection link');
-  return readHtmlAttribute(match[1], 'href');
-}
-
 async function registerMcpClient(baseUrl, options = {}) {
   const response = await request(baseUrl, '/gw/oauth/register', {
     method: 'POST',
@@ -344,33 +306,20 @@ async function issueMcpBridgeCode(baseUrl, options = {}) {
     pkce: options.pkce,
     resource: options.resource,
   }));
-  assert.equal(authorize.status, 200);
-  assert.match(authorize.contentType, /text\/html/);
-  assert.equal(authorize.cacheControl, 'no-store');
-  assert.match(authorize.contentSecurityPolicy, /default-src 'none'/);
-  assert.match(authorize.contentSecurityPolicy, /form-action 'self'/);
-  assert.match(authorize.body, /<html lang="en">/);
-  assert.match(authorize.body, /Secure connection/);
-  assert.match(authorize.body, /Requested access/);
-  assert.match(authorize.body, /Activities and workouts/);
-  assert.match(authorize.body, /Continue to Intervals\.icu/);
-  assert.doesNotMatch(authorize.body, /[А-Яа-яЁё]/);
-  assert.doesNotMatch(authorize.body.replace(/<input\b[^>]*>/gi, ''), /ACTIVITY:(?:READ|WRITE)/);
-
-  const consentForm = extractConsentForm(authorize.body);
-  assert.equal(consentForm.method, 'POST');
-  assert.equal(consentForm.action, '/gw/oauth/authorize');
-  assert.deepEqual(Object.keys(consentForm.fields), ['mcp_consent_token']);
-  const consentToken = consentForm.fields.mcp_consent_token;
-  if (options.resetVolatileStateBeforeConsent) oauth.__testing.resetVolatileState();
-  const consent = await request(baseUrl, consentForm.action, {
-    method: consentForm.method,
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams(consentForm.fields).toString(),
-  });
-  assert.equal(consent.status, 302);
-  const authorizeLocation = new URL(consent.location);
+  assert.equal(authorize.status, 302);
+  assert.doesNotMatch(authorize.body, /mcp_consent_token|<form|Secure connection/);
+  const authorizeLocation = new URL(authorize.location);
   assert.equal(authorizeLocation.origin, 'https://intervals.icu');
+  assert.equal(authorizeLocation.pathname, '/oauth/authorize');
+  assert.equal(authorizeLocation.searchParams.get('client_id'), 'test-intervals-client');
+  assert.equal(authorizeLocation.searchParams.get('redirect_uri'), INTERVALS_CALLBACK);
+  assert.equal(authorizeLocation.searchParams.get('response_type'), 'code');
+  assert.equal(authorizeLocation.searchParams.get('scope'), INTERVALS_SCOPE);
+  assert.equal(
+    authorizeLocation.searchParams.get('code_challenge'),
+    options.codeChallenge ?? makeS256Challenge(options.codeVerifier ?? DEFAULT_PKCE_VERIFIER),
+  );
+  assert.equal(authorizeLocation.searchParams.get('code_challenge_method'), 'S256');
   const bridgeState = authorizeLocation.searchParams.get('state');
   assert.ok(bridgeState);
 
@@ -391,9 +340,7 @@ async function issueMcpBridgeCode(baseUrl, options = {}) {
     bridgeCode,
     bridgeState,
     callbackLocation,
-    consentToken,
     registration,
-    consentForm,
   };
 }
 
@@ -524,24 +471,34 @@ async function main() {
     assert.equal(invalidScopeMcp.status, 400);
     assert.match(invalidScopeMcp.body, /invalid_scope/);
 
-    const invalidConsent = await request(baseUrl, '/gw/oauth/authorize', {
+    const missingResourceMcp = await request(baseUrl, buildAuthorizePath({
+      clientId: universalRegisterBody.client_id,
+      redirectUri: PERPLEXITY_CALLBACK,
+      resource: null,
+    }));
+    assert.equal(missingResourceMcp.status, 400);
+    assert.match(missingResourceMcp.body, /invalid_request/);
+
+    const wrongResourceMcp = await request(baseUrl, buildAuthorizePath({
+      clientId: universalRegisterBody.client_id,
+      redirectUri: PERPLEXITY_CALLBACK,
+      resource: 'https://other.example/mcp',
+    }));
+    assert.equal(wrongResourceMcp.status, 400);
+    assert.match(wrongResourceMcp.body, /invalid_request/);
+
+    const authorizePost = await request(baseUrl, '/gw/oauth/authorize', {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: 'mcp_consent_token=invalid',
+      body: 'mcp_consent_token=obsolete',
     });
-    assert.equal(invalidConsent.status, 400);
-    assert.match(invalidConsent.contentType, /text\/html/);
-    assert.equal(invalidConsent.cacheControl, 'no-store');
-    assert.match(invalidConsent.body, /Start the connection again/);
-    assert.match(invalidConsent.body, /Close this page, return to your MCP client/);
-    assert.doesNotMatch(invalidConsent.body, />Go to stas\.run</);
-    assert.doesNotMatch(invalidConsent.body, /invalid_request/);
+    assert.equal(authorizePost.status, 404);
+    assert.match(authorizePost.body, /not_found/);
 
     const limitedMcpBridge = await issueMcpBridgeCode(baseUrl, {
       registration: universalRegisterBody,
       scope: 'ACTIVITY:READ',
       upstreamCode: 'intervals-code-mcp-limited',
-      resetVolatileStateBeforeConsent: true,
     });
     assert.equal(limitedMcpBridge.authorizeLocation.searchParams.get('scope'), INTERVALS_SCOPE);
     const limitedMcpExchange = await request(baseUrl, '/gw/oauth/token', {
@@ -559,44 +516,8 @@ async function main() {
     assert.equal(JSON.parse(limitedMcpExchange.body).scope, 'ACTIVITY:READ');
 
     const mcpBridge = await issueMcpBridgeCode(baseUrl, { registration: universalRegisterBody });
-    assert.match(mcpBridge.authorize.body, /Perplexity Computer/);
-    assert.match(mcpBridge.authorize.body, /www\.perplexity\.ai/);
-    const cancelUri = new URL(extractCancelUri(mcpBridge.authorize.body));
-    assert.equal(`${cancelUri.origin}${cancelUri.pathname}`, PERPLEXITY_CALLBACK);
-    assert.equal(cancelUri.searchParams.get('error'), 'access_denied');
-    assert.equal(cancelUri.searchParams.get('state'), 'test-state');
     assert.equal(mcpBridge.authorizeLocation.searchParams.get('client_id'), 'test-intervals-client');
     assert.equal(mcpBridge.authorizeLocation.searchParams.get('redirect_uri'), INTERVALS_CALLBACK);
-    const consentReplay = await request(baseUrl, '/gw/oauth/authorize', {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ mcp_consent_token: mcpBridge.consentToken }).toString(),
-    });
-    assert.equal(consentReplay.status, 400);
-    assert.match(consentReplay.contentType, /text\/html/);
-    assert.match(consentReplay.body, /Start the connection again/);
-
-    const tamperAuthorize = await request(baseUrl, buildAuthorizePath({
-      clientId: universalRegisterBody.client_id,
-      redirectUri: PERPLEXITY_CALLBACK,
-    }));
-    const tamperForm = extractConsentForm(tamperAuthorize.body);
-    const validConsentToken = tamperForm.fields.mcp_consent_token;
-    const tamperedConsentToken = `${validConsentToken.slice(0, -1)}${validConsentToken.endsWith('a') ? 'b' : 'a'}`;
-    const tamperedConsent = await request(baseUrl, tamperForm.action, {
-      method: tamperForm.method,
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ mcp_consent_token: tamperedConsentToken }).toString(),
-    });
-    assert.equal(tamperedConsent.status, 400);
-    assert.match(tamperedConsent.body, /Start the connection again/);
-    const untamperedConsent = await request(baseUrl, tamperForm.action, {
-      method: tamperForm.method,
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams(tamperForm.fields).toString(),
-    });
-    assert.equal(untamperedConsent.status, 302);
-    assert.match(untamperedConsent.location, /^https:\/\/intervals\.icu\/oauth\/authorize\?/);
     const mcpExchange = await request(baseUrl, '/gw/oauth/token', {
       method: 'POST',
       json: {
@@ -668,6 +589,21 @@ async function main() {
     assert.equal(wrongClientExchange.status, 400);
     assert.match(wrongClientExchange.body, /invalid_client/);
 
+    const wrongResourceBridge = await issueMcpBridgeCode(baseUrl, { registration: universalRegisterBody });
+    const wrongResourceExchange = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      json: {
+        grant_type: 'authorization_code',
+        code: wrongResourceBridge.bridgeCode,
+        client_id: universalRegisterBody.client_id,
+        redirect_uri: PERPLEXITY_CALLBACK,
+        code_verifier: DEFAULT_PKCE_VERIFIER,
+        resource: 'https://other.example/mcp',
+      },
+    });
+    assert.equal(wrongResourceExchange.status, 400);
+    assert.match(wrongResourceExchange.body, /invalid_target/);
+
     const claudeRegisterBody = await registerMcpClient(baseUrl, {
       clientName: 'Claude',
       redirectUris: [CLAUDE_CALLBACK, 'https://claude.com/api/mcp/auth_callback'],
@@ -710,7 +646,9 @@ async function main() {
       },
       resource: 'https://stas.run/api/mcp',
     });
-    assert.match(cimdBridge.authorize.body, /Claude/);
+    assert.equal(cimdBridge.authorize.status, 302);
+    assert.equal(cimdBridge.authorizeLocation.origin, 'https://intervals.icu');
+    assert.doesNotMatch(cimdBridge.authorize.body, /consent|<form/i);
     registrationTesting.setCimdOptions(null);
 
     const emptyClientId = await request(baseUrl, buildAuthorizePath({ clientId: '' }));
