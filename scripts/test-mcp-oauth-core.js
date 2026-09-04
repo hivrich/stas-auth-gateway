@@ -19,6 +19,7 @@ process.env.GATEWAY_BASE_URL = 'https://intervals.stas.run';
 process.env.MCP_RESOURCE_URL = 'https://stas.run/api/mcp';
 
 const CIMD_URL = 'https://client.example/oauth/client.json';
+const CLAUDE_CIMD_URL = 'https://claude.ai/oauth/mcp-oauth-client-metadata';
 const HOSTED_CALLBACK = 'https://claude.ai/api/mcp/auth_callback';
 const NATIVE_REGISTERED_CALLBACK = 'http://127.0.0.1:3030/oauth/callback?flow=mcp';
 const NATIVE_RUNTIME_CALLBACK = 'http://127.0.0.1:49152/oauth/callback?flow=mcp';
@@ -53,6 +54,22 @@ function cimdBody(overrides = {}) {
   };
 }
 
+function actualClaudeCimdBody() {
+  return {
+    client_id: CLAUDE_CIMD_URL,
+    client_name: 'Claude',
+    client_uri: 'https://claude.ai',
+    redirect_uris: [HOSTED_CALLBACK],
+    grant_types: [
+      'authorization_code',
+      'refresh_token',
+      'urn:ietf:params:oauth:grant-type:jwt-bearer',
+    ],
+    response_types: ['code'],
+    token_endpoint_auth_method: 'none',
+  };
+}
+
 async function testRegistration() {
   const modern = readClientMetadata({
     client_name: 'Claude',
@@ -65,6 +82,18 @@ async function testRegistration() {
   });
   assert.equal(modern.ok, true);
   assert.deepEqual(modern.metadata.grantTypes, ['authorization_code', 'refresh_token']);
+
+  const actualClaude = readClientMetadata(actualClaudeCimdBody(), { expectedClientId: CLAUDE_CIMD_URL });
+  assert.equal(actualClaude.ok, true);
+  assert.equal(actualClaude.metadata.applicationType, 'web');
+  assert.deepEqual(actualClaude.metadata.grantTypes, ['authorization_code', 'refresh_token']);
+
+  const unsupportedOnly = readClientMetadata({
+    redirect_uris: [HOSTED_CALLBACK],
+    grant_types: ['urn:ietf:params:oauth:grant-type:jwt-bearer'],
+  });
+  assert.equal(unsupportedOnly.ok, false);
+  assert.equal(unsupportedOnly.reason, 'authorization_code_required');
 
   const native = readClientMetadata({
     client_name: 'Claude Code',
@@ -125,12 +154,17 @@ async function testCimd() {
   registrationTesting.clearCimdCache();
   let fetchCount = 0;
   let pinnedAddress = null;
+  let pinnedAddresses = null;
   const fetchImpl = async (_url, options) => {
     fetchCount += 1;
     options.agent.options.lookup('client.example', {}, (_error, address) => { pinnedAddress = address; });
+    options.agent.options.lookup('client.example', { all: true }, (_error, addresses) => { pinnedAddresses = addresses; });
     return jsonResponse(cimdBody());
   };
-  const lookup = async () => [{ address: '93.184.216.34', family: 4 }];
+  const lookup = async () => [
+    { address: '93.184.216.34', family: 4 },
+    { address: '2606:2800:220:1:248:1893:25c8:1946', family: 6 },
+  ];
   const first = await registrationTesting.loadCimdClientMetadata(CIMD_URL, { lookup, fetchImpl });
   const second = await registrationTesting.loadCimdClientMetadata(CIMD_URL, { lookup, fetchImpl });
   assert.equal(first.ok, true);
@@ -138,6 +172,17 @@ async function testCimd() {
   assert.equal(first.source, 'cimd');
   assert.equal(fetchCount, 1, 'successful CIMD metadata should be cached');
   assert.equal(pinnedAddress, '93.184.216.34', 'fetch must be pinned to the DNS address already checked');
+  assert.deepEqual(pinnedAddresses, [
+    { address: '93.184.216.34', family: 4 },
+    { address: '2606:2800:220:1:248:1893:25c8:1946', family: 6 },
+  ], 'all:true lookup must return every validated public address in the Node callback shape');
+
+  const actualClaude = await registrationTesting.loadCimdClientMetadata(CLAUDE_CIMD_URL, {
+    lookup,
+    fetchImpl: async () => jsonResponse(actualClaudeCimdBody()),
+  });
+  assert.equal(actualClaude.ok, true);
+  assert.deepEqual(actualClaude.metadata.grantTypes, ['authorization_code', 'refresh_token']);
 
   const privateDns = await registrationTesting.loadCimdClientMetadata('https://private.example/client.json', {
     lookup: async () => [{ address: '127.0.0.1', family: 4 }],

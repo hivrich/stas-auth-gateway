@@ -605,27 +605,31 @@ async function main() {
     });
     assert.equal(nativeBridge.callbackLocation.origin, 'http://127.0.0.1:49152');
 
-    const cimdClientId = 'https://client.example/oauth/client.json';
+    const cimdClientId = 'https://claude.ai/oauth/mcp-oauth-client-metadata';
     registrationTesting.setCimdOptions({
       lookup: async () => [{ address: '93.184.216.34', family: 4 }],
       fetchImpl: async () => new Response(JSON.stringify({
         client_id: cimdClientId,
-        client_name: 'CIMD Client',
-        redirect_uris: ['https://client.example/oauth/callback'],
-        grant_types: ['authorization_code', 'refresh_token'],
+        client_name: 'Claude',
+        client_uri: 'https://claude.ai',
+        redirect_uris: [CLAUDE_CALLBACK],
+        grant_types: [
+          'authorization_code',
+          'refresh_token',
+          'urn:ietf:params:oauth:grant-type:jwt-bearer',
+        ],
         response_types: ['code'],
         token_endpoint_auth_method: 'none',
-        application_type: 'web',
       }), { headers: { 'content-type': 'application/json' } }),
     });
     const cimdBridge = await issueMcpBridgeCode(baseUrl, {
       registration: {
         client_id: cimdClientId,
-        redirect_uris: ['https://client.example/oauth/callback'],
+        redirect_uris: [CLAUDE_CALLBACK],
       },
       resource: 'https://stas.run/api/mcp',
     });
-    assert.match(cimdBridge.authorize.body, /CIMD Client/);
+    assert.match(cimdBridge.authorize.body, /Claude/);
     registrationTesting.setCimdOptions(null);
 
     const emptyClientId = await request(baseUrl, buildAuthorizePath({ clientId: '' }));
