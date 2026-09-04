@@ -42,7 +42,8 @@ Claude.
 - автоматическую подстановку серверных `INTERVALS_CLIENT_ID` и `INTERVALS_CLIENT_SECRET` для MCP-клиентов;
 - автоматическую подстановку серверного `INTERVALS_CLIENT_ID` для GPT, если ChatGPT присылает пустой `client_id`;
 - bridge-code flow для GPT: ChatGPT callback хранится в подписанном `state`, Intervals получает только `https://intervals.stas.run/gw/oauth/callback`, а bridge затем возвращает ChatGPT код вида `gpt_...`;
-- вызов `resolveDirectIntervalsAuth(...)` после получения Intervals access token.
+- обмен временного Intervals token на собственные короткоживущие STAS access/refresh tokens;
+- локальную проверку, обновление и отзыв STAS-токенов без повторных запросов в Intervals.
 
 ### `server.js`
 
@@ -60,7 +61,7 @@ Claude.
 Отвечает за:
 
 - распознавание bearer token;
-- различение legacy STAS token и прямого Intervals token;
+- различение собственного MCP token, legacy STAS token и прямого Intervals token;
 - запрос в `https://intervals.icu/api/v1/athlete/0`;
 - вызов `POST ${STAS_BASE}/api/db/ensure-intervals-user`;
 - кэширование распознанных direct Intervals token.
@@ -69,7 +70,7 @@ Claude.
 
 Отвечает за:
 
-- различение источника `gpt | claude`;
+- различение источника `gpt | claude | mcp`;
 - распознавание Claude по `client_id` и `redirect_uri`;
 - проброс `x-stas-source` в STAS.
 
@@ -93,7 +94,15 @@ Claude.
 10. Bridge повторно связывает code, `client_id`, callback и PKCE verifier.
 11. Bridge получает Intervals access token и вызывает `resolveDirectIntervalsAuth(...)`.
 12. Bridge синхронизирует пользователя в STAS через `ensure-intervals-user`.
-13. Дальше bridge уже может резолвить этого пользователя по direct Intervals bearer token.
+13. Bridge выдаёт клиенту собственный STAS token, связанный с клиентом, ресурсом
+    `https://stas.run/api/mcp` и выбранными правами. Intervals token остаётся
+    только внутри STAS.
+14. Дальнейшие MCP-запросы и обновление токена проверяются локально; повторного
+    запроса в Intervals для проверки пользователя нет.
+
+Также поддерживается Client ID Metadata Document: вместо DCR клиент может дать
+HTTPS URL своего metadata-документа как `client_id`. Bridge загружает документ
+без редиректов, только с публичного DNS-адреса, с ограничением времени и размера.
 
 ## Как проходит GPT Actions flow
 
@@ -124,9 +133,13 @@ Claude.
 
 - ручной `client_secret` от пользователя не нужен;
 - `token_endpoint_auth_method` для DCR клиента = `none`;
-- поддерживаются remote web clients с `authorization_code` и PKCE `S256`;
-- callback обязан использовать `https`, не может содержать логин, пароль или
-  fragment и не может вести на localhost/private IP;
+- поддерживаются remote web и native clients с `authorization_code`, optional
+  `refresh_token` и PKCE `S256`; loopback callback native-клиента может менять порт;
+- web callback и claimed HTTPS callback native-клиента обязаны использовать
+  публичный `https`; native loopback callback может использовать `http` на
+  `127.0.0.0/8` или `::1` с динамическим портом;
+- hostname `localhost`, private non-loopback адреса, логин, пароль и fragment в
+  callback не допускаются;
 - один client получает не более трёх callback, каждый не длиннее 512 символов;
 - signed `client_id` переживает restart и не требует отдельной таблицы;
 - пользователь видит client name и callback hostname до перехода в Intervals;
@@ -142,15 +155,14 @@ Perplexity использует callback:
 
 ## Что важно для STAS
 
-Bridge обязан пробрасывать источник:
+Bridge обязан пробрасывать источник новых универсальных MCP-подключений:
 
-- `x-stas-source: claude`
+- `x-stas-source: mcp`
 
 Это нужно, чтобы:
 
 - не трогать GPT-метрики;
-- писать `claude_connected`;
-- писать `claude_data_requested`;
+- писать общие MCP-события независимо от названия клиента;
 - не обновлять `gptConnectedAt`.
 
 ## Живые признаки, что всё работает
@@ -162,6 +174,39 @@ Bridge обязан пробрасывать источник:
 - `[oauth][token][request]`
 - `[db_proxy][REQ]`
 - `[db_proxy][RES]`
+
+Логи содержат только хеш client id/name, домен callback и форму запроса. Коды,
+токены, PKCE verifier, state, секреты и произвольные поля клиента не пишутся.
+
+## Секреты и ротация
+
+Для MCP access/refresh tokens ключ выбирается по порядку:
+`MCP_OAUTH_TOKEN_SECRET`, затем `OAUTH_STATE_SECRET`, затем стабильный
+`INTERVALS_CLIENT_SECRET`. Для production подходит только непустое значение
+длиной от 32 символов без placeholder-маркеров. Отдельный
+`MCP_OAUTH_TOKEN_SECRET` предпочтительнее, но fallback сохраняет совместимость
+текущего production-конфига.
+
+OAuth state и подписанные DCR client ids используют `OAUTH_STATE_SECRET`, а при
+его отсутствии — `INTERVALS_CLIENT_SECRET`; `MCP_OAUTH_TOKEN_SECRET` на них не
+влияет. Поэтому ротация отдельного `MCP_OAUTH_TOKEN_SECRET` инвалидирует только
+MCP access/refresh tokens. Ротация `OAUTH_STATE_SECRET` также инвалидирует их,
+только если он одновременно служит fallback для MCP-токенов, и всегда
+инвалидирует незавершённый OAuth state и ранее выданные подписанные DCR client
+ids. Ротация `INTERVALS_CLIENT_SECRET` имеет эти дополнительные последствия
+только там, где отдельные секреты не заданы. Любую такую ротацию нужно проводить
+как запланированное переподключение затронутых клиентов.
+
+## Стоимость запросов к Intervals
+
+- первое подключение: один token exchange и один запрос профиля спортсмена;
+- обычная проверка STAS bearer, refresh и revoke: ноль запросов к Intervals;
+- повторное использование OAuth code или refresh token отклоняется локально и
+  не повторяет уже завершённый обмен.
+
+Развёртывать нужно gateway первым. После него STAS discovery зеркалирует только
+те возможности (refresh, CIMD и `iss`), которые уже подтвердил живой gateway;
+при недоступном или старом gateway расширенные возможности не рекламируются.
 
 ## Production paths
 

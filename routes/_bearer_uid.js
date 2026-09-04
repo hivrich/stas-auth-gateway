@@ -2,7 +2,8 @@ const { applyResolvedAuth, resolveRequestAuth } = require('../lib/request-auth')
 
 /**
  * Global Bearer auth middleware for /gw/*.
- * Supports direct Intervals OAuth tokens; legacy local t_ tokens require an explicit compat flag.
+ * Supports STAS MCP/Agent tokens and direct Intervals OAuth tokens.
+ * Unsigned legacy local t_ tokens are rejected.
  */
 module.exports = function () {
   return async function (req, res, next) {
