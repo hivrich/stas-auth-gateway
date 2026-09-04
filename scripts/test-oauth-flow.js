@@ -31,6 +31,7 @@ delete process.env.LEGACY_STAS_ID_TOKEN_EXCHANGE_ENABLED;
 const oauthPage = require('../middleware/oauth_page');
 const oauth = require('../routes/oauth');
 const { buildOAuthAuthorizationServerMetadata } = require('../lib/oauth-metadata');
+const { __testing: registrationTesting } = require('../lib/mcp-client-registration');
 const {
   isAllowedChatGptRedirectUri,
   isAllowedClaudeRedirectUri,
@@ -70,6 +71,10 @@ function buildAuthorizePath(params = {}) {
     state: params.state ?? 'test-state',
     scope: params.scope ?? INTERVALS_SCOPE,
   });
+
+  if (params.resource !== null && (params.resource || String(params.clientId || '').startsWith('stas_mcp_'))) {
+    search.set('resource', params.resource || 'https://stas.run/api/mcp');
+  }
 
   if (params.pkce !== false) {
     search.set('code_challenge', params.codeChallenge ?? makeS256Challenge(params.codeVerifier ?? DEFAULT_PKCE_VERIFIER));
@@ -204,8 +209,8 @@ global.fetch = async (url, options = {}) => {
     assert.equal(options.headers['X-API-Key'], 'test-stas-key');
     assert.equal(body.intervalsAthleteId, '15487');
     assert.equal(body.intervalsAccessToken, RAW_INTERVALS_TOKEN);
-    assert.ok(['gpt', 'claude'].includes(body.source));
-    return jsonResponse({ ok: true, user_id: '15487' });
+    assert.ok(['gpt', 'claude', 'mcp'].includes(body.source));
+    return jsonResponse({ ok: true, athleteId: 417, created: false });
   }
 
   return originalFetch(url, options);
@@ -283,10 +288,10 @@ async function registerMcpClient(baseUrl, options = {}) {
     json: {
       client_name: options.clientName || 'Perplexity Computer',
       redirect_uris: options.redirectUris || [PERPLEXITY_CALLBACK],
-      grant_types: ['authorization_code'],
+      grant_types: options.grantTypes || ['authorization_code', 'refresh_token'],
       response_types: ['code'],
       token_endpoint_auth_method: 'none',
-      application_type: 'web',
+      application_type: options.applicationType || 'web',
     },
   });
   assert.equal(response.status, 201);
@@ -305,6 +310,7 @@ async function issueMcpBridgeCode(baseUrl, options = {}) {
     codeChallenge: options.codeChallenge,
     codeChallengeMethod: options.codeChallengeMethod ?? 'S256',
     pkce: options.pkce,
+    resource: options.resource,
   }));
   assert.equal(authorize.status, 200);
   assert.match(authorize.contentType, /text\/html/);
@@ -353,6 +359,9 @@ async function main() {
   try {
     const metadata = buildOAuthAuthorizationServerMetadata('https://intervals.stas.run');
     assert.deepEqual(metadata.code_challenge_methods_supported, ['S256']);
+    assert.equal(metadata.client_id_metadata_document_supported, true);
+    assert.equal(metadata.authorization_response_iss_parameter_supported, true);
+    assert.ok(metadata.grant_types_supported.includes('refresh_token'));
 
     assert.equal(normalizeSource('claude'), 'claude');
     assert.equal(normalizeSource('gpt'), 'gpt');
@@ -373,7 +382,7 @@ async function main() {
       json: {
         client_name: 'Perplexity Computer',
         redirect_uris: [PERPLEXITY_CALLBACK],
-        grant_types: ['authorization_code'],
+        grant_types: ['authorization_code', 'refresh_token'],
         response_types: ['code'],
         token_endpoint_auth_method: 'none',
       },
@@ -384,6 +393,24 @@ async function main() {
     assert.equal(universalRegisterBody.client_name, 'Perplexity Computer');
     assert.deepEqual(universalRegisterBody.redirect_uris, [PERPLEXITY_CALLBACK]);
     assert.equal(universalRegisterBody.token_endpoint_auth_method, 'none');
+    assert.deepEqual(universalRegisterBody.grant_types, ['authorization_code', 'refresh_token']);
+    assert.ok(universalRegisterBody.client_id.length < 4096);
+
+    const nativeHttpsRegister = await request(baseUrl, '/gw/oauth/register', {
+      method: 'POST',
+      json: {
+        client_name: 'Native HTTPS',
+        redirect_uris: ['https://native.example/oauth/callback'],
+        application_type: 'native',
+      },
+    });
+    assert.equal(nativeHttpsRegister.status, 201);
+
+    const tooManyRedirectsRegister = await request(baseUrl, '/gw/oauth/register', {
+      method: 'POST',
+      json: { redirect_uris: Array.from({ length: 4 }, (_, index) => `https://client.example/callback/${index}`) },
+    });
+    assert.equal(tooManyRedirectsRegister.status, 400);
 
     for (const invalidRedirectUri of [
       'http://www.perplexity.ai/rest/connections/oauth_callback',
@@ -401,7 +428,7 @@ async function main() {
         json: { redirect_uris: [invalidRedirectUri] },
       });
       assert.equal(invalidRegister.status, 400);
-      assert.match(invalidRegister.body, /invalid_client_metadata/);
+      assert.match(invalidRegister.body, /invalid_(client_metadata|redirect_uri)/);
     }
 
     const duplicateRedirectRegister = await request(baseUrl, '/gw/oauth/register', {
@@ -442,12 +469,40 @@ async function main() {
     assert.equal(missingPkceMcp.status, 400);
     assert.match(missingPkceMcp.body, /invalid_request/);
 
+    const invalidScopeMcp = await request(baseUrl, buildAuthorizePath({
+      clientId: universalRegisterBody.client_id,
+      redirectUri: PERPLEXITY_CALLBACK,
+      scope: 'ACTIVITY:READ secret:scope',
+    }));
+    assert.equal(invalidScopeMcp.status, 400);
+    assert.match(invalidScopeMcp.body, /invalid_scope/);
+
     const invalidConsent = await request(baseUrl, '/gw/oauth/authorize', {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: 'mcp_consent_token=invalid',
     });
     assert.equal(invalidConsent.status, 400);
+
+    const limitedMcpBridge = await issueMcpBridgeCode(baseUrl, {
+      registration: universalRegisterBody,
+      scope: 'ACTIVITY:READ',
+      upstreamCode: 'intervals-code-mcp-limited',
+    });
+    assert.equal(limitedMcpBridge.authorizeLocation.searchParams.get('scope'), INTERVALS_SCOPE);
+    const limitedMcpExchange = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      json: {
+        grant_type: 'authorization_code',
+        code: limitedMcpBridge.bridgeCode,
+        client_id: universalRegisterBody.client_id,
+        redirect_uri: PERPLEXITY_CALLBACK,
+        code_verifier: DEFAULT_PKCE_VERIFIER,
+        resource: 'https://stas.run/api/mcp',
+      },
+    });
+    assert.equal(limitedMcpExchange.status, 200, limitedMcpExchange.body);
+    assert.equal(JSON.parse(limitedMcpExchange.body).scope, 'ACTIVITY:READ');
 
     const mcpBridge = await issueMcpBridgeCode(baseUrl, { registration: universalRegisterBody });
     assert.match(mcpBridge.authorize.body, /Perplexity Computer/);
@@ -469,21 +524,52 @@ async function main() {
         client_id: universalRegisterBody.client_id,
         redirect_uri: PERPLEXITY_CALLBACK,
         code_verifier: DEFAULT_PKCE_VERIFIER,
+        resource: 'https://stas.run/api/mcp',
       },
     });
-    assert.equal(mcpExchange.status, 200);
-    assert.equal(JSON.parse(mcpExchange.body).access_token, RAW_INTERVALS_TOKEN);
+    assert.equal(mcpExchange.status, 200, mcpExchange.body);
+    const mcpExchangeBody = JSON.parse(mcpExchange.body);
+    assert.match(mcpExchangeBody.access_token, /^stas_mcp_at_/);
+    assert.match(mcpExchangeBody.refresh_token, /^stas_mcp_rt_/);
+    assert.notEqual(mcpExchangeBody.access_token, RAW_INTERVALS_TOKEN);
+    assert.doesNotMatch(mcpExchange.body, new RegExp(escapeRegExp(RAW_INTERVALS_TOKEN)));
     const lastEnsureHit = upstreamHits.filter((hit) => new URL(hit.url).pathname === '/api/db/ensure-intervals-user').at(-1);
-    assert.equal(JSON.parse(lastEnsureHit.body).source, 'claude');
+    assert.equal(JSON.parse(lastEnsureHit.body).source, 'mcp');
+
+    const mcpRefresh = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      json: {
+        grant_type: 'refresh_token',
+        refresh_token: mcpExchangeBody.refresh_token,
+        client_id: universalRegisterBody.client_id,
+        resource: 'https://stas.run/api/mcp',
+      },
+    });
+    assert.equal(mcpRefresh.status, 200);
+    const mcpRefreshBody = JSON.parse(mcpRefresh.body);
+    assert.match(mcpRefreshBody.access_token, /^stas_mcp_at_/);
+    assert.match(mcpRefreshBody.refresh_token, /^stas_mcp_rt_/);
+    assert.notEqual(mcpRefreshBody.refresh_token, mcpExchangeBody.refresh_token);
+    const replayedRefresh = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      json: {
+        grant_type: 'refresh_token',
+        refresh_token: mcpExchangeBody.refresh_token,
+        client_id: universalRegisterBody.client_id,
+        resource: 'https://stas.run/api/mcp',
+      },
+    });
+    assert.equal(replayedRefresh.status, 400);
+    assert.match(replayedRefresh.body, /invalid_grant/);
 
     const mcpRevoke = await request(baseUrl, '/gw/oauth/revoke', {
       method: 'POST',
-      json: { token: RAW_INTERVALS_TOKEN, token_type_hint: 'access_token' },
+      json: { token: mcpRefreshBody.access_token, token_type_hint: 'access_token' },
     });
     assert.equal(mcpRevoke.status, 200);
     assert.equal(
       upstreamHits.filter((hit) => new URL(hit.url).pathname === '/api/v1/disconnect-app').length,
-      1,
+      0,
     );
 
     const wrongClientBridge = await issueMcpBridgeCode(baseUrl, { registration: universalRegisterBody });
@@ -495,6 +581,7 @@ async function main() {
         client_id: `${universalRegisterBody.client_id}wrong`,
         redirect_uri: PERPLEXITY_CALLBACK,
         code_verifier: DEFAULT_PKCE_VERIFIER,
+        resource: 'https://stas.run/api/mcp',
       },
     });
     assert.equal(wrongClientExchange.status, 400);
@@ -505,6 +592,41 @@ async function main() {
       redirectUris: [CLAUDE_CALLBACK, 'https://claude.com/api/mcp/auth_callback'],
     });
     assert.match(claudeRegisterBody.client_id, /^stas_mcp_/);
+
+    const nativeRegisterBody = await registerMcpClient(baseUrl, {
+      clientName: 'Claude Code',
+      redirectUris: ['http://127.0.0.1:3030/oauth/callback'],
+      applicationType: 'native',
+    });
+    assert.equal(nativeRegisterBody.application_type, 'native');
+    const nativeBridge = await issueMcpBridgeCode(baseUrl, {
+      registration: nativeRegisterBody,
+      redirectUri: 'http://127.0.0.1:49152/oauth/callback',
+    });
+    assert.equal(nativeBridge.callbackLocation.origin, 'http://127.0.0.1:49152');
+
+    const cimdClientId = 'https://client.example/oauth/client.json';
+    registrationTesting.setCimdOptions({
+      lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+      fetchImpl: async () => new Response(JSON.stringify({
+        client_id: cimdClientId,
+        client_name: 'CIMD Client',
+        redirect_uris: ['https://client.example/oauth/callback'],
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        token_endpoint_auth_method: 'none',
+        application_type: 'web',
+      }), { headers: { 'content-type': 'application/json' } }),
+    });
+    const cimdBridge = await issueMcpBridgeCode(baseUrl, {
+      registration: {
+        client_id: cimdClientId,
+        redirect_uris: ['https://client.example/oauth/callback'],
+      },
+      resource: 'https://stas.run/api/mcp',
+    });
+    assert.match(cimdBridge.authorize.body, /CIMD Client/);
+    registrationTesting.setCimdOptions(null);
 
     const emptyClientId = await request(baseUrl, buildAuthorizePath({ clientId: '' }));
     assert.equal(emptyClientId.status, 302);
@@ -743,6 +865,27 @@ async function main() {
     assert.match(unsupportedTokenSource.body, /invalid_request/);
 
     const leakLogs = await captureConsole(async () => {
+      const rejectedRegistration = await request(baseUrl, '/gw/oauth/register', {
+        method: 'POST',
+        json: {
+          redirect_uris: ['https://client.example/oauth/callback?token=registration-query-secret#invalid'],
+          application_type: 'native',
+          access_token: 'registration-body-secret',
+        },
+      });
+      assert.equal(rejectedRegistration.status, 400);
+
+      const rejectedMetadataSecrets = await request(baseUrl, '/gw/oauth/register', {
+        method: 'POST',
+        json: {
+          redirect_uris: [PERPLEXITY_CALLBACK],
+          client_name: 'client-name-secret-should-not-log'.repeat(4),
+          grant_types: ['authorization_code', 'grant-secret-should-not-log'],
+          'unknown-key-secret-should-not-log': true,
+        },
+      });
+      assert.equal(rejectedMetadataSecrets.status, 400);
+
       const secretState = 'state-secret-should-not-log';
       const secretBridge = await issueBridgeCode(baseUrl, {
         state: secretState,
@@ -781,6 +924,12 @@ async function main() {
       'legacy-state-should-not-log',
       LEAKED_UPSTREAM_ACCESS_TOKEN,
       LEAKED_UPSTREAM_REFRESH_TOKEN,
+      'registration-query-secret',
+      'registration-body-secret',
+      'client-name-secret-should-not-log',
+      'grant-secret-should-not-log',
+      'unknown-key-secret-should-not-log',
+      'https://client.example/oauth/callback',
       CHATGPT_CALLBACK,
       'code=',
     ]) {

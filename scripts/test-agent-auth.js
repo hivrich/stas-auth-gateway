@@ -234,7 +234,7 @@ async function main() {
   process.env.AGENT_AUTH_ENABLED = 'false';
   delete process.env.AGENT_AUTH_TOKEN_SECRET;
   let metadata = buildOAuthAuthorizationServerMetadata('https://intervals.stas.run');
-  assert.deepEqual(metadata.grant_types_supported, ['authorization_code']);
+  assert.deepEqual(metadata.grant_types_supported, ['authorization_code', 'refresh_token']);
   assert.equal(metadata.agent_auth, undefined);
   assert.equal(metadata.revocation_endpoint, 'https://intervals.stas.run/gw/oauth/revoke');
 
@@ -243,7 +243,7 @@ async function main() {
   assert.equal(isUsableAgentAuthSecret(process.env.AGENT_AUTH_TOKEN_SECRET), false);
   assert.equal(isAgentAuthConfigured(), false);
   metadata = buildOAuthAuthorizationServerMetadata('https://intervals.stas.run');
-  assert.deepEqual(metadata.grant_types_supported, ['authorization_code']);
+  assert.deepEqual(metadata.grant_types_supported, ['authorization_code', 'refresh_token']);
   assert.equal(metadata.agent_auth, undefined);
 
   for (const placeholderSecret of [
@@ -256,7 +256,7 @@ async function main() {
     assert.equal(isUsableAgentAuthSecret(process.env.AGENT_AUTH_TOKEN_SECRET), false);
     assert.equal(isAgentAuthConfigured(), false);
     metadata = buildOAuthAuthorizationServerMetadata('https://intervals.stas.run');
-    assert.deepEqual(metadata.grant_types_supported, ['authorization_code']);
+    assert.deepEqual(metadata.grant_types_supported, ['authorization_code', 'refresh_token']);
     assert.equal(metadata.agent_auth, undefined);
   }
 
@@ -269,7 +269,7 @@ async function main() {
   metadata = buildOAuthAuthorizationServerMetadata('https://intervals.stas.run');
   assert.ok(metadata.agent_auth);
   assert.equal(metadata.revocation_endpoint, 'https://intervals.stas.run/gw/oauth/revoke');
-  assert.ok(metadata.grant_types_supported.includes(AGENT_AUTH_GRANT_TYPE));
+  assert.deepEqual(metadata.grant_types_supported, ['authorization_code', 'refresh_token', AGENT_AUTH_GRANT_TYPE]);
   assert.equal(metadata.agent_auth.identity_endpoint, 'https://intervals.stas.run/gw/agent/identity');
   assert.equal(metadata.agent_auth.register_uri, metadata.agent_auth.identity_endpoint);
   assert.equal(metadata.agent_auth.claim_endpoint, 'https://intervals.stas.run/gw/agent/identity/claim');

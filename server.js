@@ -13,6 +13,7 @@ const openapi     = require('./routes/openapi');
 const oauth       = require('./routes/oauth');
 const agent       = require('./routes/agent');
 const agentReadOnlyGuard = require('./middleware/agent_read_only');
+const mcpScopeGuard = require('./middleware/mcp_scope_guard');
 const {
   publicDiscoveryCors,
   securityHeaders,
@@ -52,6 +53,7 @@ function createApp() {
   app.use('/gw', openapi);
   app.use('/gw', agent);
   app.use('/gw', bearerUid());
+  app.use('/gw', mcpScopeGuard());
   app.use('/gw', agentReadOnlyGuard());
   require("./routes/icu_delete_exact_gw")(app);
   app.use('/gw', trainingsRouter);

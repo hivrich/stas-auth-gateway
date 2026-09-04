@@ -1,6 +1,5 @@
 const express = require('express');
 const crypto = require('node:crypto');
-const net = require('node:net');
 const router  = express.Router();
 const { forgetDirectIntervalsToken, resolveDirectIntervalsAuth } = require('../lib/request-auth');
 const { handleAgentCallback } = require('./agent');
@@ -15,6 +14,22 @@ const {
   pollAgentClaimToken,
   revokeAgentAccessToken,
 } = require('../lib/agent-auth');
+const {
+  clientDiagnostic,
+  loadCimdClientMetadata,
+  parseCimdClientId,
+  readClientMetadata,
+  redirectUriMatches,
+  summarizeClientMetadataInput,
+} = require('../lib/mcp-client-registration');
+const {
+  getIssuer,
+  getMcpResource,
+  issueMcpTokens,
+  refreshMcpTokens,
+  revokeMcpToken,
+} = require('../lib/mcp-oauth-tokens');
+const { normalizeMcpScopes } = require('../lib/mcp-oauth-scopes');
 
 const INTERVALS_AUTH_URL = 'https://intervals.icu/oauth/authorize';
 const INTERVALS_TOKEN_URL = 'https://intervals.icu/api/oauth/token';
@@ -26,9 +41,7 @@ const OAUTH_CODE_TTL_MS = 10 * 60 * 1000;
 const BRIDGE_PKCE_METHOD = 'S256';
 const MCP_CLIENT_ID_PREFIX = 'stas_mcp_';
 const MCP_CLIENT_ID_VERSION = 1;
-const MCP_CLIENT_MAX_REDIRECT_URIS = 3;
-const MCP_CLIENT_MAX_REDIRECT_URI_LENGTH = 512;
-const MCP_CLIENT_MAX_NAME_LENGTH = 80;
+const MCP_CLIENT_ID_MAX_LENGTH = 4096;
 const PKCE_CHALLENGE_RE = /^[A-Za-z0-9_-]{43,128}$/;
 const PKCE_VERIFIER_RE = /^[A-Za-z0-9._~-]{43,128}$/;
 const OAUTH_STATE_DEV_SECRET = 'stas-oauth-state-dev-secret';
@@ -452,106 +465,25 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
-function normalizeMcpClientName(value, redirectUris) {
-  const raw = trimToString(value).replace(/[\u0000-\u001f\u007f]/g, ' ');
-  if (raw && raw.length <= MCP_CLIENT_MAX_NAME_LENGTH) return raw;
-
-  try {
-    return `MCP client (${new URL(redirectUris[0]).hostname})`;
-  } catch {
-    return 'MCP client';
-  }
-}
-
-function isAllowedMcpRedirectUri(value) {
-  const raw = trimToString(value);
-  if (!raw || raw.length > MCP_CLIENT_MAX_REDIRECT_URI_LENGTH) return false;
-
-  try {
-    const url = new URL(raw);
-    return url.protocol === 'https:'
-      && Boolean(url.hostname)
-      && isAllowedRemoteMcpHostname(url.hostname)
-      && !url.username
-      && !url.password
-      && !url.hash;
-  } catch {
-    return false;
-  }
-}
-
-function isAllowedRemoteMcpHostname(value) {
-  const hostname = trimToString(value).toLowerCase().replace(/^\[|\]$/g, '');
-  return Boolean(
-    hostname
-    && hostname.includes('.')
-    && !hostname.endsWith('.')
-    && hostname !== 'localhost'
-    && !hostname.endsWith('.localhost')
-    && !hostname.endsWith('.local')
-    && !hostname.endsWith('.internal')
-    && net.isIP(hostname) === 0
-  );
-}
-
-function readMcpRegistrationMetadata(body) {
-  const redirectUris = Array.isArray(body.redirect_uris)
-    ? body.redirect_uris.map((value) => trimToString(value)).filter(Boolean)
-    : [];
-  const uniqueRedirectUris = [...new Set(redirectUris)];
-
-  if (
-    uniqueRedirectUris.length === 0
-    || uniqueRedirectUris.length !== redirectUris.length
-    || uniqueRedirectUris.length > MCP_CLIENT_MAX_REDIRECT_URIS
-    || !uniqueRedirectUris.every(isAllowedMcpRedirectUri)
-  ) {
-    return null;
-  }
-
-  const grantTypes = body.grant_types === undefined ? ['authorization_code'] : body.grant_types;
-  const responseTypes = body.response_types === undefined ? ['code'] : body.response_types;
-  const tokenEndpointAuthMethod = trimToString(body.token_endpoint_auth_method) || 'none';
-  const applicationType = trimToString(body.application_type) || 'web';
-
-  if (
-    !Array.isArray(grantTypes)
-    || grantTypes.length !== 1
-    || grantTypes[0] !== 'authorization_code'
-    || !Array.isArray(responseTypes)
-    || responseTypes.length !== 1
-    || responseTypes[0] !== 'code'
-    || tokenEndpointAuthMethod !== 'none'
-    || applicationType !== 'web'
-  ) {
-    return null;
-  }
-
-  const requestedClientName = trimToString(body.client_name);
-  if (requestedClientName.length > MCP_CLIENT_MAX_NAME_LENGTH) return null;
-
-  return {
-    redirectUris: uniqueRedirectUris,
-    clientName: normalizeMcpClientName(requestedClientName, uniqueRedirectUris),
-  };
-}
-
 function createRegisteredMcpClient(metadata) {
   const body = base64url(JSON.stringify({
     v: MCP_CLIENT_ID_VERSION,
     type: 'mcp_client',
     redirectUris: metadata.redirectUris,
     clientName: metadata.clientName,
+    grantTypes: metadata.grantTypes,
+    applicationType: metadata.applicationType,
     iat: Math.floor(Date.now() / 1000),
     jti: crypto.randomBytes(16).toString('base64url'),
   }));
   const signature = hmac(`mcp-client:${body}`);
-  return `${MCP_CLIENT_ID_PREFIX}${body}.${signature}`;
+  const clientId = `${MCP_CLIENT_ID_PREFIX}${body}.${signature}`;
+  return clientId.length <= MCP_CLIENT_ID_MAX_LENGTH ? clientId : null;
 }
 
 function readRegisteredMcpClient(clientId) {
   const raw = trimToString(clientId);
-  if (!raw.startsWith(MCP_CLIENT_ID_PREFIX)) return null;
+  if (!raw.startsWith(MCP_CLIENT_ID_PREFIX) || raw.length > MCP_CLIENT_ID_MAX_LENGTH) return null;
 
   const signed = raw.slice(MCP_CLIENT_ID_PREFIX.length);
   const splitAt = signed.lastIndexOf('.');
@@ -563,33 +495,50 @@ function readRegisteredMcpClient(clientId) {
 
   try {
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
-    const redirectUris = Array.isArray(payload?.redirectUris) ? payload.redirectUris : [];
-    if (
-      payload?.v !== MCP_CLIENT_ID_VERSION
-      || payload?.type !== 'mcp_client'
-      || redirectUris.length === 0
-      || redirectUris.length > MCP_CLIENT_MAX_REDIRECT_URIS
-      || !redirectUris.every(isAllowedMcpRedirectUri)
-    ) {
-      return null;
-    }
-
+    if (payload?.v !== MCP_CLIENT_ID_VERSION || payload?.type !== 'mcp_client') return null;
+    const result = readClientMetadata({
+      redirect_uris: payload.redirectUris,
+      client_name: payload.clientName,
+      grant_types: payload.grantTypes || ['authorization_code'],
+      response_types: ['code'],
+      token_endpoint_auth_method: 'none',
+      application_type: payload.applicationType,
+    });
+    if (!result.ok) return null;
     return {
+      ...result.metadata,
       clientId: raw,
-      clientName: normalizeMcpClientName(payload.clientName, redirectUris),
-      redirectUris,
+      registrationMode: 'dcr',
     };
   } catch {
     return null;
   }
 }
 
-function isAllowedExternalRedirect(source, redirectUri, downstreamClientId = '') {
+async function resolveMcpClient(clientId) {
+  const signed = readRegisteredMcpClient(clientId);
+  if (signed) return { client: signed, error: null };
+  if (!parseCimdClientId(clientId)) return { client: null, error: null };
+  const result = await loadCimdClientMetadata(clientId);
+  if (!result.ok) return { client: null, error: result };
+  return {
+    client: {
+      clientId: trimToString(clientId),
+      ...result.metadata,
+      registrationMode: 'cimd',
+    },
+    error: null,
+  };
+}
+
+function isAllowedExternalRedirect(source, redirectUri, downstreamClientId = '', registeredClient = null) {
   if (source === 'claude') return isAllowedClaudeRedirectUri(redirectUri);
   if (source === 'gpt') return isAllowedChatGptRedirectUri(redirectUri);
   if (source === 'mcp') {
-    const client = readRegisteredMcpClient(downstreamClientId);
-    return Boolean(client && client.redirectUris.includes(redirectUri));
+    const client = registeredClient || readRegisteredMcpClient(downstreamClientId);
+    return Boolean(client && client.redirectUris.some((registered) => (
+      redirectUriMatches(registered, redirectUri, client.applicationType)
+    )));
   }
   return false;
 }
@@ -604,6 +553,8 @@ function createMcpConsentToken(params) {
     responseType: params.responseType,
     codeChallenge: params.codeChallenge,
     codeChallengeMethod: params.codeChallengeMethod,
+    resource: params.resource,
+    client: params.client,
   });
 }
 
@@ -671,6 +622,8 @@ function beginBridgeAuthorization(res, params) {
     responseType,
     codeChallenge,
     codeChallengeMethod,
+    resource,
+    registeredClient,
   } = params;
   const useServerClientForChatGpt = source === 'gpt'
     && !requestedClientId
@@ -683,7 +636,7 @@ function beginBridgeAuthorization(res, params) {
   if (
     !redirectUri
     || !effectiveClientId
-    || !isAllowedExternalRedirect(source, redirectUri, downstreamClientId || requestedClientId)
+    || !isAllowedExternalRedirect(source, redirectUri, downstreamClientId || requestedClientId, registeredClient)
   ) {
     return res.status(400).json({ error: 'invalid_request' });
   }
@@ -692,7 +645,14 @@ function beginBridgeAuthorization(res, params) {
   const pkce = readBridgePkce(codeChallenge, codeChallengeMethod, { allowMissing: allowMissingPkce });
   if (!pkce) return res.status(400).json({ error: 'invalid_request' });
 
-  const effectiveScope = isIntervalsScope(scope) ? scope : DEFAULT_INTERVALS_SCOPE;
+  const mcpScopes = source === 'mcp' ? normalizeMcpScopes(scope) : null;
+  if (source === 'mcp' && !mcpScopes) return res.status(400).json({ error: 'invalid_scope' });
+  const clientScope = mcpScopes ? mcpScopes.join(' ') : null;
+  // Client scopes limit only the STAS token. The internal Intervals credential
+  // must retain the stable product permissions used by background/calendar work.
+  const effectiveScope = source === 'mcp'
+    ? DEFAULT_INTERVALS_SCOPE
+    : (isIntervalsScope(scope) ? scope : DEFAULT_INTERVALS_SCOPE);
   const intervalsRedirectUri = getIntervalsCallbackUrl();
   const bridgeState = createBridgeState({
     source,
@@ -700,10 +660,12 @@ function beginBridgeAuthorization(res, params) {
     originalState,
     effectiveClientId,
     downstreamClientId: downstreamClientId || null,
-    scope: effectiveScope,
+    scope: clientScope || effectiveScope,
     intervalsRedirectUri,
     codeChallenge: pkce.codeChallenge,
     codeChallengeMethod: pkce.codeChallengeMethod,
+    resource: source === 'mcp' ? resource : null,
+    client: source === 'mcp' ? registeredClient : null,
   });
   const url = new URL(INTERVALS_AUTH_URL);
   url.searchParams.set('client_id', effectiveClientId);
@@ -732,30 +694,39 @@ function beginBridgeAuthorization(res, params) {
 
 router.post('/oauth/register', (req, res) => {
   const body = req.body && typeof req.body === 'object' ? req.body : {};
-  const metadata = readMcpRegistrationMetadata(body);
+  const result = readClientMetadata(body);
 
-  if (!metadata) {
+  if (!result.ok) {
+    logOauth('warn', '[oauth][register][rejected]', summarizeClientMetadataInput(body, result));
     return res.status(400).json({
-      error: 'invalid_client_metadata',
-      error_description: 'Only public web MCP clients using authorization_code, PKCE and valid HTTPS redirect_uris are supported',
+      error: result.error,
+      error_description: result.reason,
     });
+  }
+  const metadata = result.metadata;
+  const registeredClientId = createRegisteredMcpClient(metadata);
+  if (!registeredClientId) {
+    return res.status(400).json({ error: 'invalid_client_metadata', error_description: 'client_metadata_too_large' });
   }
 
   const response = {
-    client_id: createRegisteredMcpClient(metadata),
+    client_id: registeredClientId,
     client_id_issued_at: Math.floor(Date.now() / 1000),
     client_name: metadata.clientName,
     redirect_uris: metadata.redirectUris,
-    grant_types: ['authorization_code'],
-    response_types: ['code'],
+    grant_types: metadata.grantTypes,
+    response_types: metadata.responseTypes,
     token_endpoint_auth_method: 'none',
+    application_type: metadata.applicationType,
   };
 
   logOauth('log', '[oauth][register]', {
-    clientName: metadata.clientName,
+    clientNameHash: hashPrefix(metadata.clientName),
     redirectUris: metadata.redirectUris,
     redirectUriCount: metadata.redirectUris.length,
     clientId: response.client_id,
+    applicationType: metadata.applicationType,
+    grantTypes: metadata.grantTypes,
   });
   return res.status(201).json(response);
 });
@@ -767,9 +738,9 @@ router.post('/oauth/authorize', (req, res) => {
       return res.status(400).json({ error: 'invalid_request' });
     }
 
-    const client = readRegisteredMcpClient(consent.clientId);
+    const client = consent.client;
     const redirectUri = trimToString(consent.redirectUri);
-    if (!client || !client.redirectUris.includes(redirectUri)) {
+    if (!client || !isAllowedExternalRedirect('mcp', redirectUri, client.clientId, client)) {
       return res.status(400).json({ error: 'invalid_client' });
     }
 
@@ -783,6 +754,8 @@ router.post('/oauth/authorize', (req, res) => {
       responseType: trimToString(consent.responseType) || 'code',
       codeChallenge: trimToString(consent.codeChallenge),
       codeChallengeMethod: trimToString(consent.codeChallengeMethod),
+      resource: trimToString(consent.resource),
+      registeredClient: client,
     });
   } catch (error) {
     if (error && error.status) {
@@ -792,7 +765,7 @@ router.post('/oauth/authorize', (req, res) => {
   }
 });
 
-router.get('/oauth/authorize', (req, res, next) => {
+router.get('/oauth/authorize', async (req, res, next) => {
   try {
     const q = req.query || {};
     const redirect_uri = trimToString(q.redirect_uri);
@@ -801,9 +774,17 @@ router.get('/oauth/authorize', (req, res, next) => {
     const scope = trimToString(q.scope);
     const codeChallenge = trimToString(q.code_challenge);
     const codeChallengeMethod = trimToString(q.code_challenge_method);
-    const registeredMcpClient = readRegisteredMcpClient(requestedClientId);
+    const resolvedMcpClient = await resolveMcpClient(requestedClientId);
+    const registeredMcpClient = resolvedMcpClient.client;
     if (requestedClientId.startsWith(MCP_CLIENT_ID_PREFIX) && !registeredMcpClient) {
       return res.status(400).json({ error: 'invalid_client' });
+    }
+    if (resolvedMcpClient.error) {
+      logOauth('warn', '[oauth][cimd][rejected]', {
+        reason: resolvedMcpClient.error.reason,
+        clientHost: parseCimdClientId(requestedClientId)?.hostname || null,
+      });
+      return res.status(400).json({ error: resolvedMcpClient.error.error || 'invalid_client' });
     }
     const source = registeredMcpClient
       ? 'mcp'
@@ -811,22 +792,28 @@ router.get('/oauth/authorize', (req, res, next) => {
     const uid = q.uid || q.user_id || '';
 
     if (source === 'mcp') {
+      const resource = trimToString(q.resource);
+      const mcpScopes = normalizeMcpScopes(scope);
       if (
         trimToString(q.response_type) !== 'code'
-        || !registeredMcpClient.redirectUris.includes(redirect_uri)
+        || !isAllowedExternalRedirect('mcp', redirect_uri, requestedClientId, registeredMcpClient)
         || !readBridgePkce(codeChallenge, codeChallengeMethod)
+        || resource !== getMcpResource()
+        || !mcpScopes
       ) {
-        return res.status(400).json({ error: 'invalid_request' });
+        return res.status(400).json({ error: mcpScopes ? 'invalid_request' : 'invalid_scope' });
       }
 
       return renderMcpConsentPage(res, registeredMcpClient, {
         clientId: registeredMcpClient.clientId,
         redirectUri: redirect_uri,
         originalState: state,
-        scope,
+        scope: mcpScopes.join(' '),
         responseType: trimToString(q.response_type),
         codeChallenge,
         codeChallengeMethod,
+        resource,
+        client: registeredMcpClient,
       });
     }
 
@@ -912,8 +899,9 @@ router.get('/oauth/callback', async (req, res, next) => {
   }
   const redirectUri = trimToString(stateRecord.redirectUri);
   const downstreamClientId = trimToString(stateRecord.downstreamClientId);
+  const registeredClient = stateRecord.client || null;
 
-  if (!isAllowedExternalRedirect(source, redirectUri, downstreamClientId)) {
+  if (!isAllowedExternalRedirect(source, redirectUri, downstreamClientId, registeredClient)) {
     return res.status(400).json({ error: 'invalid_redirect_uri' });
   }
 
@@ -923,6 +911,7 @@ router.get('/oauth/callback', async (req, res, next) => {
       error: upstreamError,
       error_description: trimToString(q.error_description),
       state: trimToString(stateRecord.originalState),
+      ...(source === 'mcp' ? { iss: getIssuer() } : {}),
     }));
   }
 
@@ -931,6 +920,7 @@ router.get('/oauth/callback', async (req, res, next) => {
     return res.redirect(302, appendParams(redirectUri, {
       error: 'invalid_request',
       state: trimToString(stateRecord.originalState),
+      ...(source === 'mcp' ? { iss: getIssuer() } : {}),
     }));
   }
 
@@ -944,6 +934,9 @@ router.get('/oauth/callback', async (req, res, next) => {
     intervalsRedirectUri: trimToString(stateRecord.intervalsRedirectUri) || getIntervalsCallbackUrl(),
     codeChallenge: trimToString(stateRecord.codeChallenge),
     codeChallengeMethod: trimToString(stateRecord.codeChallengeMethod),
+    resource: trimToString(stateRecord.resource),
+    client: registeredClient,
+    scope: trimToString(stateRecord.scope),
   });
 
   logOauth('log', '[oauth][callback]', {
@@ -955,6 +948,7 @@ router.get('/oauth/callback', async (req, res, next) => {
   return res.redirect(302, appendParams(redirectUri, {
     code: bridgeCode,
     state: trimToString(stateRecord.originalState),
+    iss: getIssuer(),
   }));
 });
 
@@ -964,6 +958,8 @@ router.post('/oauth/revoke', async (req, res) => {
 
   const agentRevocation = revokeAgentAccessToken(token);
   if (agentRevocation.matched) return res.status(200).end();
+
+  if (await revokeMcpToken(token)) return res.status(200).end();
 
   try {
     const upstream = await fetch('https://intervals.icu/api/v1/disconnect-app', {
@@ -1010,6 +1006,19 @@ router.post('/oauth/token', async (req, res) => {
       return res.json(result.body);
     }
 
+    if (grantType === 'refresh_token') {
+      const refreshToken = trimToString(b.refresh_token);
+      const clientId = trimToString(b.client_id) || getBasicAuthCredentials(req).clientId;
+      const resource = trimToString(b.resource);
+      if (!refreshToken || !clientId || resource !== getMcpResource()) {
+        return res.status(400).json({ error: 'invalid_grant' });
+      }
+      const refreshed = await refreshMcpTokens(refreshToken, { clientId, resource });
+      if (!refreshed) return res.status(400).json({ error: 'invalid_grant' });
+      logOauth('log', '[oauth][token][refreshed]', { clientId, resource });
+      return res.json(refreshed.response);
+    }
+
     const code = trimToString(b.code || b.authorization_code);
     if (!code) return res.status(400).json({ error: 'invalid_grant' });
 
@@ -1044,6 +1053,14 @@ router.post('/oauth/token', async (req, res) => {
         && requestedClientId !== bridgeRecord.downstreamClientId
       ) {
         return res.status(400).json({ error: 'invalid_client' });
+      }
+
+      if (
+        bridgeRecord
+        && bridgeRecord.source === 'mcp'
+        && (trimToString(b.resource) !== bridgeRecord.resource || bridgeRecord.resource !== getMcpResource())
+      ) {
+        return res.status(400).json({ error: 'invalid_target' });
       }
 
       if (!bridgeRecord && redirectUri) {
@@ -1133,10 +1150,11 @@ router.post('/oauth/token', async (req, res) => {
       if (!response.token_type) response.token_type = 'Bearer';
       if (response.expires_in === undefined) response.expires_in = 315360000;
 
+      let resolvedIntervalsAuth = null;
       if (response.access_token) {
         try {
-          await resolveDirectIntervalsAuth(response.access_token, {
-            source: source === 'mcp' ? 'claude' : source,
+          resolvedIntervalsAuth = await resolveDirectIntervalsAuth(response.access_token, {
+            source,
           });
         } catch (error) {
           logOauth('error', '[oauth][token][user_sync_failed]', {
@@ -1145,6 +1163,30 @@ router.post('/oauth/token', async (req, res) => {
           });
           return res.status(error?.status || 502).json({ error: 'user_sync_failed' });
         }
+      }
+
+      if (source === 'mcp') {
+        if (!resolvedIntervalsAuth?.userId || !resolvedIntervalsAuth?.athleteId || !bridgeRecord?.client) {
+          return res.status(502).json({ error: 'user_sync_failed' });
+        }
+        const diagnostic = clientDiagnostic(bridgeRecord.client);
+        const tokenResponse = await issueMcpTokens({
+          subject: resolvedIntervalsAuth.userId,
+          userId: resolvedIntervalsAuth.athleteId,
+          clientId: bridgeRecord.downstreamClientId,
+          resource: bridgeRecord.resource,
+          scopes: bridgeRecord.scope,
+          allowRefresh: bridgeRecord.client.grantTypes.includes('refresh_token'),
+          ...diagnostic,
+        });
+        logOauth('log', '[oauth][token][issued]', {
+          clientId: bridgeRecord.downstreamClientId,
+          resource: bridgeRecord.resource,
+          allowRefresh: bridgeRecord.client.grantTypes.includes('refresh_token'),
+          clientNameHash: hashPrefix(diagnostic.clientName),
+          clientHost: diagnostic.clientHost,
+        });
+        return res.json(tokenResponse);
       }
 
       return res.json(response);
