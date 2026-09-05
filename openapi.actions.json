@@ -110,7 +110,7 @@
         "operationId": "getActivityDetailFromDB",
         "x-openai-isConsequential": false,
         "summary": "Get detailed package for one completed training",
-        "description": "Read-only detailed package for one selected completed workout. Use after getTrainings identifies the exact training_id. Do not batch this action across many workouts. The response omits rawData, route coordinates, latlng, and raw stream arrays.",
+        "description": "Read-only details for one selected completed workout. Call after getTrainings returns its exact training_id; never batch across workouts. When available, second-by-second CSV is attached automatically. JSON omits rawData, route coordinates, latlng, and raw stream arrays.",
         "parameters": [
           {
             "name": "training_id",
@@ -172,7 +172,7 @@
         "operationId": "getWellness",
         "x-openai-isConsequential": false,
         "summary": "Get day-by-day wellness for any date window",
-        "description": "Read complete cached wellness series for any window. Align values by dates[i]; null is missing, not zero. Use personal trends. On 413 retry suggestedWindows; an empty list means one day itself is too large.",
+        "description": "Read complete cached wellness for any window. Align by dates[i]; null is missing. healthCoverage.initialSync=partial means source history may be incomplete; complete=true means untruncated local delivery. On 413 retry suggestedWindows; empty means one day is too large.",
         "parameters": [
           {
             "name": "oldest",
@@ -1567,6 +1567,51 @@
               "$ref": "#/components/schemas/WellnessDateRange"
             }
           },
+          "healthCoverage": {
+            "type": "object",
+            "description": "Availability of substantive health fields in this cached response plus the status of the initial source sync.",
+            "properties": {
+              "healthDays": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "fieldDays": {
+                "type": "object",
+                "properties": {
+                  "weight": { "type": "integer", "minimum": 0 },
+                  "restingHr": { "type": "integer", "minimum": 0 },
+                  "hrv": { "type": "integer", "minimum": 0 },
+                  "sleep": { "type": "integer", "minimum": 0 },
+                  "steps": { "type": "integer", "minimum": 0 }
+                },
+                "required": ["weight", "restingHr", "hrv", "sleep", "steps"],
+                "additionalProperties": false
+              },
+              "initialSync": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "status": { "type": "string" },
+                      "window": {
+                        "type": "array",
+                        "items": { "type": ["string", "null"] },
+                        "minItems": 2,
+                        "maxItems": 2
+                      },
+                      "partialAttempts": { "type": "integer", "minimum": 0 },
+                      "retryExhausted": { "type": "boolean" }
+                    },
+                    "required": ["status", "window", "partialAttempts", "retryExhausted"],
+                    "additionalProperties": false
+                  },
+                  { "type": "null" }
+                ]
+              }
+            },
+            "required": ["healthDays", "fieldDays", "initialSync"],
+            "additionalProperties": false
+          },
           "complete": {
             "type": "boolean",
             "enum": [
@@ -1583,6 +1628,7 @@
           "series",
           "customSeries",
           "missingRanges",
+          "healthCoverage",
           "complete"
         ],
         "additionalProperties": false
@@ -3209,7 +3255,7 @@
       },
       "ActivityDetailResponse": {
         "type": "object",
-        "description": "AI-ready detailed passport for one completed workout. Prefer stages for the complete readable stage table; detail may append recorded range averages and coverage only when time alignment is reliable. Raw source payloads, route coordinates, latlng, and raw stream arrays are intentionally omitted.",
+        "description": "AI-ready detailed passport for one completed workout. Prefer stages for the complete readable stage table; detail may append recorded range averages and coverage only when time alignment is reliable. Raw source payloads, route coordinates, latlng, and raw stream arrays are omitted from JSON; available second-by-second data is attached as CSV through openaiFileResponse.",
         "properties": {
           "overview": {
             "$ref": "#/components/schemas/ActivityDetailOverview"
@@ -3242,7 +3288,8 @@
             "$ref": "#/components/schemas/ActivityDetailListSection"
           },
           "splitsDetailed": {
-            "$ref": "#/components/schemas/ActivityDetailListSection"
+            "$ref": "#/components/schemas/ActivityDetailListSection",
+            "description": "Saved split rows remain visible. splitsKmQuality describes calculation confidence. timeBasis is moving, estimated_moving, elapsed_or_unknown, or null; mayIncludePauses=true means rows may be described but must not be used for pace, progress, or execution-quality comparisons."
           },
           "terrainSummary": {
             "oneOf": [
@@ -3303,6 +3350,31 @@
           },
           "sizeEstimate": {
             "$ref": "#/components/schemas/ActivityDetailSizeEstimate"
+          },
+          "streamFile": {
+            "type": "object",
+            "description": "Accounting for the automatically attached second-by-second CSV file.",
+            "properties": {
+              "format": { "type": "string", "enum": ["csv"] },
+              "rows": { "type": "integer", "minimum": 1 },
+              "channels": { "type": "array", "items": { "type": "string" } },
+              "parts": { "type": "integer", "minimum": 1, "maximum": 10 },
+              "urls": {
+                "type": "array",
+                "description": "Short-lived read-only URLs for the CSV parts.",
+                "minItems": 1,
+                "maxItems": 10,
+                "items": { "type": "string", "format": "uri" }
+              }
+            },
+            "required": ["format", "rows", "channels", "parts", "urls"],
+            "additionalProperties": false
+          },
+          "openaiFileResponse": {
+            "type": "array",
+            "description": "Short-lived URLs for up to ten CSV files. Present only when a usable stream exists.",
+            "maxItems": 10,
+            "items": { "type": "string", "format": "uri" }
           }
         },
         "required": [
@@ -3652,6 +3724,36 @@
               "none",
               "unavailable"
             ]
+          },
+          "splitsKmQuality": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "reliable",
+              "estimated",
+              "unavailable",
+              null
+            ],
+            "description": "Calculation confidence for splitsDetailed."
+          },
+          "timeBasis": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "moving",
+              "estimated_moving",
+              "elapsed_or_unknown",
+              null
+            ],
+            "description": "Time basis for splitsDetailed. elapsed_or_unknown means pauses may be included."
+          },
+          "mayIncludePauses": {
+            "type": "boolean",
+            "description": "When true, split pace must not be used for pace, progress, or execution-quality comparisons."
           }
         },
         "required": [

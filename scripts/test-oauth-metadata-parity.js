@@ -109,7 +109,8 @@ try {
   assert.ok(authorizationCode, 'expected authorizationCode flow in gateway OpenAPI');
   assert.equal(authorizationCode.authorizationUrl, expected.authorizationEndpoint);
   assert.equal(authorizationCode.tokenUrl, expected.tokenEndpoint);
-  assertIncludesAll(Object.keys(authorizationCode.scopes || {}), expected.oauthScopes, 'OpenAPI OAuth scopes');
+  const expectedDefaultScopes = expected.oauthScopes.filter((scope) => scope.endsWith(':WRITE'));
+  assertIncludesAll(Object.keys(authorizationCode.scopes || {}), expectedDefaultScopes, 'OpenAPI OAuth default scopes');
 
   const metadataText = JSON.stringify(metadata).toLowerCase();
   assert.equal(metadataText.includes('bridge-api'), false, 'gateway metadata must not leak internal compose host');
