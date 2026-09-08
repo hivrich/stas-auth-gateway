@@ -14,6 +14,7 @@ const OLD_ENV = {
   LEGACY_STAS_ID_TOKEN_EXCHANGE_ENABLED: process.env.LEGACY_STAS_ID_TOKEN_EXCHANGE_ENABLED,
   STAS_BASE: process.env.STAS_BASE,
   STAS_KEY: process.env.STAS_KEY,
+  MCP_DCR_CONFIDENTIAL_REDIRECT_URIS: process.env.MCP_DCR_CONFIDENTIAL_REDIRECT_URIS,
 };
 
 process.env.NODE_ENV = 'test';
@@ -27,6 +28,7 @@ delete process.env.ENABLE_LEGACY_STAS_ID_OAUTH;
 delete process.env.LEGACY_STAS_ID_OAUTH_ENABLED;
 delete process.env.ENABLE_LEGACY_STAS_ID_TOKEN_EXCHANGE;
 delete process.env.LEGACY_STAS_ID_TOKEN_EXCHANGE_ENABLED;
+delete process.env.MCP_DCR_CONFIDENTIAL_REDIRECT_URIS;
 
 const oauthPage = require('../middleware/oauth_page');
 const oauth = require('../routes/oauth');
@@ -150,6 +152,7 @@ async function request(baseUrl, path, options = {}) {
     status: response.status,
     contentType: response.headers.get('content-type') || '',
     location: response.headers.get('location') || '',
+    wwwAuthenticate: response.headers.get('www-authenticate') || '',
     body: await response.text(),
   };
 }
@@ -246,6 +249,11 @@ function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function decodeSignedMcpClientId(clientId) {
+  const signed = String(clientId).replace(/^stas_mcp_/, '');
+  return JSON.parse(Buffer.from(signed.slice(0, signed.lastIndexOf('.')), 'base64url').toString('utf8'));
+}
+
 async function captureConsole(fn) {
   const originalLog = console.log;
   const originalError = console.error;
@@ -307,7 +315,7 @@ async function registerMcpClient(baseUrl, options = {}) {
       redirect_uris: options.redirectUris || [PERPLEXITY_CALLBACK],
       grant_types: options.grantTypes || ['authorization_code', 'refresh_token'],
       response_types: ['code'],
-      token_endpoint_auth_method: 'none',
+      token_endpoint_auth_method: options.tokenEndpointAuthMethod || 'none',
       application_type: options.applicationType || 'web',
     },
   });
@@ -422,6 +430,25 @@ async function main() {
     assert.equal(universalRegisterBody.token_endpoint_auth_method, 'none');
     assert.deepEqual(universalRegisterBody.grant_types, ['authorization_code', 'refresh_token']);
     assert.ok(universalRegisterBody.client_id.length < 4096);
+    assert.equal(decodeSignedMcpClientId(universalRegisterBody.client_id).v, 1, 'public DCR clients must remain legacy-v1 compatible');
+
+    process.env.MCP_DCR_CONFIDENTIAL_REDIRECT_URIS = PERPLEXITY_CALLBACK;
+    const compatibilityRegister = await request(baseUrl, '/gw/oauth/register', {
+      method: 'POST',
+      json: {
+        client_name: 'Any hosted MCP client',
+        redirect_uris: [PERPLEXITY_CALLBACK],
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        token_endpoint_auth_method: 'none',
+      },
+    });
+    delete process.env.MCP_DCR_CONFIDENTIAL_REDIRECT_URIS;
+    assert.equal(compatibilityRegister.status, 201, compatibilityRegister.body);
+    const compatibilityRegisterBody = JSON.parse(compatibilityRegister.body);
+    assert.equal(compatibilityRegisterBody.token_endpoint_auth_method, 'client_secret_post');
+    assert.match(compatibilityRegisterBody.client_secret, /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(decodeSignedMcpClientId(compatibilityRegisterBody.client_id).v, 2);
 
     const nativeHttpsRegister = await request(baseUrl, '/gw/oauth/register', {
       method: 'POST',
@@ -464,14 +491,41 @@ async function main() {
     });
     assert.equal(duplicateRedirectRegister.status, 400);
 
-    const confidentialRegister = await request(baseUrl, '/gw/oauth/register', {
+    const confidentialPostRegister = await request(baseUrl, '/gw/oauth/register', {
       method: 'POST',
       json: {
+        client_name: 'Hosted MCP client',
         redirect_uris: [PERPLEXITY_CALLBACK],
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
         token_endpoint_auth_method: 'client_secret_post',
       },
     });
-    assert.equal(confidentialRegister.status, 400);
+    assert.equal(confidentialPostRegister.status, 201, confidentialPostRegister.body);
+    const confidentialPostRegisterBody = JSON.parse(confidentialPostRegister.body);
+    assert.match(confidentialPostRegisterBody.client_id, /^stas_mcp_/);
+    assert.match(confidentialPostRegisterBody.client_secret, /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(confidentialPostRegisterBody.client_secret_expires_at, 0);
+    assert.equal(confidentialPostRegisterBody.token_endpoint_auth_method, 'client_secret_post');
+    assert.doesNotMatch(confidentialPostRegisterBody.client_id, new RegExp(escapeRegExp(confidentialPostRegisterBody.client_secret)));
+
+    const confidentialBasicRegisterBody = await registerMcpClient(baseUrl, {
+      clientName: 'Hosted Basic MCP client',
+      tokenEndpointAuthMethod: 'client_secret_basic',
+    });
+    assert.match(confidentialBasicRegisterBody.client_secret, /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(confidentialBasicRegisterBody.token_endpoint_auth_method, 'client_secret_basic');
+
+    const confidentialNativeRegister = await request(baseUrl, '/gw/oauth/register', {
+      method: 'POST',
+      json: {
+        redirect_uris: ['http://127.0.0.1:3030/callback'],
+        application_type: 'native',
+        token_endpoint_auth_method: 'client_secret_post',
+      },
+    });
+    assert.equal(confidentialNativeRegister.status, 400);
+    assert.match(confidentialNativeRegister.body, /confidential_native_client_not_allowed/);
 
     const tamperedClientId = `${universalRegisterBody.client_id.slice(0, -1)}x`;
     const tamperedAuthorize = await request(baseUrl, buildAuthorizePath({
@@ -715,6 +769,290 @@ async function main() {
       upstreamHits.filter((hit) => new URL(hit.url).pathname === '/api/v1/disconnect-app').length,
       0,
     );
+
+    const missingSecretBridge = await issueMcpBridgeCode(baseUrl, {
+      registration: confidentialPostRegisterBody,
+      upstreamCode: 'intervals-code-confidential-missing-secret',
+    });
+    const beforeMissingSecretHits = tokenExchangeHitCount();
+    const missingSecretExchange = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      json: {
+        grant_type: 'authorization_code',
+        code: missingSecretBridge.bridgeCode,
+        client_id: confidentialPostRegisterBody.client_id,
+        redirect_uri: PERPLEXITY_CALLBACK,
+        code_verifier: DEFAULT_PKCE_VERIFIER,
+        resource: MCP_RESOURCE,
+      },
+    });
+    assert.equal(missingSecretExchange.status, 401);
+    assert.match(missingSecretExchange.body, /invalid_client/);
+    assert.equal(tokenExchangeHitCount(), beforeMissingSecretHits);
+
+    const wrongSecretBridge = await issueMcpBridgeCode(baseUrl, {
+      registration: confidentialPostRegisterBody,
+      upstreamCode: 'intervals-code-confidential-wrong-secret',
+    });
+    const wrongSecretExchange = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      json: {
+        grant_type: 'authorization_code',
+        code: wrongSecretBridge.bridgeCode,
+        client_id: confidentialPostRegisterBody.client_id,
+        client_secret: 'wrong-confidential-secret',
+        redirect_uri: PERPLEXITY_CALLBACK,
+        code_verifier: DEFAULT_PKCE_VERIFIER,
+        resource: MCP_RESOURCE,
+      },
+    });
+    assert.equal(wrongSecretExchange.status, 401);
+    assert.match(wrongSecretExchange.body, /invalid_client/);
+
+    const basicMissingBridge = await issueMcpBridgeCode(baseUrl, {
+      registration: confidentialBasicRegisterBody,
+      upstreamCode: 'intervals-code-confidential-basic-missing',
+    });
+    const basicMissingExchange = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      json: {
+        grant_type: 'authorization_code',
+        code: basicMissingBridge.bridgeCode,
+        redirect_uri: PERPLEXITY_CALLBACK,
+        code_verifier: DEFAULT_PKCE_VERIFIER,
+        resource: MCP_RESOURCE,
+      },
+    });
+    assert.equal(basicMissingExchange.status, 401);
+    assert.match(basicMissingExchange.wwwAuthenticate, /^Basic /);
+
+    const basicWrongClientBridge = await issueMcpBridgeCode(baseUrl, {
+      registration: confidentialBasicRegisterBody,
+      upstreamCode: 'intervals-code-confidential-basic-wrong-client',
+    });
+    const basicWrongClientAuthorization = `Basic ${Buffer.from(`wrong-client-id:${confidentialBasicRegisterBody.client_secret}`).toString('base64')}`;
+    const basicWrongClientExchange = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      headers: { authorization: basicWrongClientAuthorization },
+      json: {
+        grant_type: 'authorization_code',
+        code: basicWrongClientBridge.bridgeCode,
+        redirect_uri: PERPLEXITY_CALLBACK,
+        code_verifier: DEFAULT_PKCE_VERIFIER,
+        resource: MCP_RESOURCE,
+      },
+    });
+    assert.equal(basicWrongClientExchange.status, 401);
+    assert.match(basicWrongClientExchange.wwwAuthenticate, /^Basic /);
+
+    const basicWrongSecretBridge = await issueMcpBridgeCode(baseUrl, {
+      registration: confidentialBasicRegisterBody,
+      upstreamCode: 'intervals-code-confidential-basic-wrong-secret',
+    });
+    const basicWrongSecretAuthorization = `Basic ${Buffer.from(`${confidentialBasicRegisterBody.client_id}:wrong-basic-secret`).toString('base64')}`;
+    const basicWrongSecretExchange = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      headers: { authorization: basicWrongSecretAuthorization },
+      json: {
+        grant_type: 'authorization_code',
+        code: basicWrongSecretBridge.bridgeCode,
+        redirect_uri: PERPLEXITY_CALLBACK,
+        code_verifier: DEFAULT_PKCE_VERIFIER,
+        resource: MCP_RESOURCE,
+      },
+    });
+    assert.equal(basicWrongSecretExchange.status, 401);
+    assert.match(basicWrongSecretExchange.wwwAuthenticate, /^Basic /);
+
+    const mixedSecretBridge = await issueMcpBridgeCode(baseUrl, {
+      registration: confidentialBasicRegisterBody,
+      upstreamCode: 'intervals-code-confidential-mixed-secret',
+    });
+    const mixedSecretExchange = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      headers: {
+        authorization: `Basic ${Buffer.from(`${confidentialBasicRegisterBody.client_id}:${confidentialBasicRegisterBody.client_secret}`).toString('base64')}`,
+      },
+      json: {
+        grant_type: 'authorization_code',
+        code: mixedSecretBridge.bridgeCode,
+        client_id: confidentialBasicRegisterBody.client_id,
+        redirect_uri: PERPLEXITY_CALLBACK,
+        code_verifier: DEFAULT_PKCE_VERIFIER,
+        resource: MCP_RESOURCE,
+      },
+    });
+    assert.equal(mixedSecretExchange.status, 401);
+    assert.match(mixedSecretExchange.body, /invalid_client/);
+    assert.match(mixedSecretExchange.wwwAuthenticate, /^Basic /);
+
+    const confidentialPostBridge = await issueMcpBridgeCode(baseUrl, {
+      registration: confidentialPostRegisterBody,
+      upstreamCode: 'intervals-code-confidential-post',
+    });
+    const confidentialPostExchange = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      json: {
+        grant_type: 'authorization_code',
+        code: confidentialPostBridge.bridgeCode,
+        client_id: confidentialPostRegisterBody.client_id,
+        client_secret: confidentialPostRegisterBody.client_secret,
+        redirect_uri: PERPLEXITY_CALLBACK,
+        code_verifier: DEFAULT_PKCE_VERIFIER,
+        resource: MCP_RESOURCE,
+      },
+    });
+    assert.equal(confidentialPostExchange.status, 200, confidentialPostExchange.body);
+    const confidentialPostTokens = JSON.parse(confidentialPostExchange.body);
+
+    const missingRefreshSecret = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      json: {
+        grant_type: 'refresh_token',
+        refresh_token: confidentialPostTokens.refresh_token,
+        client_id: confidentialPostRegisterBody.client_id,
+        resource: MCP_RESOURCE,
+      },
+    });
+    assert.equal(missingRefreshSecret.status, 401);
+    assert.match(missingRefreshSecret.body, /invalid_client/);
+
+    const wrongRefreshSecret = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      json: {
+        grant_type: 'refresh_token',
+        refresh_token: confidentialPostTokens.refresh_token,
+        client_id: confidentialPostRegisterBody.client_id,
+        client_secret: 'wrong-refresh-secret',
+        resource: MCP_RESOURCE,
+      },
+    });
+    assert.equal(wrongRefreshSecret.status, 401);
+    assert.match(wrongRefreshSecret.body, /invalid_client/);
+
+    const confidentialPostRefresh = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      json: {
+        grant_type: 'refresh_token',
+        refresh_token: confidentialPostTokens.refresh_token,
+        client_id: confidentialPostRegisterBody.client_id,
+        client_secret: confidentialPostRegisterBody.client_secret,
+        resource: MCP_RESOURCE,
+      },
+    });
+    assert.equal(confidentialPostRefresh.status, 200, confidentialPostRefresh.body);
+    const confidentialPostRefreshedTokens = JSON.parse(confidentialPostRefresh.body);
+
+    const missingRevokeSecret = await request(baseUrl, '/gw/oauth/revoke', {
+      method: 'POST',
+      json: { token: confidentialPostRefreshedTokens.access_token },
+    });
+    assert.equal(missingRevokeSecret.status, 401);
+    assert.match(missingRevokeSecret.body, /invalid_client/);
+    const wrongRevokeSecret = await request(baseUrl, '/gw/oauth/revoke', {
+      method: 'POST',
+      json: {
+        token: confidentialPostRefreshedTokens.access_token,
+        client_id: confidentialPostRegisterBody.client_id,
+        client_secret: 'wrong-revoke-secret',
+      },
+    });
+    assert.equal(wrongRevokeSecret.status, 401);
+    assert.match(wrongRevokeSecret.body, /invalid_client/);
+    const confidentialPostRevoke = await request(baseUrl, '/gw/oauth/revoke', {
+      method: 'POST',
+      json: {
+        token: confidentialPostRefreshedTokens.access_token,
+        client_id: confidentialPostRegisterBody.client_id,
+        client_secret: confidentialPostRegisterBody.client_secret,
+      },
+    });
+    assert.equal(confidentialPostRevoke.status, 200);
+
+    const confidentialBasicBridge = await issueMcpBridgeCode(baseUrl, {
+      registration: confidentialBasicRegisterBody,
+      upstreamCode: 'intervals-code-confidential-basic',
+    });
+    const confidentialBasicAuthorization = `Basic ${Buffer.from(`${confidentialBasicRegisterBody.client_id}:${confidentialBasicRegisterBody.client_secret}`).toString('base64')}`;
+    const confidentialBasicExchange = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      headers: { authorization: confidentialBasicAuthorization },
+      json: {
+        grant_type: 'authorization_code',
+        code: confidentialBasicBridge.bridgeCode,
+        redirect_uri: PERPLEXITY_CALLBACK,
+        code_verifier: DEFAULT_PKCE_VERIFIER,
+        resource: MCP_RESOURCE,
+      },
+    });
+    assert.equal(confidentialBasicExchange.status, 200, confidentialBasicExchange.body);
+    const confidentialBasicTokens = JSON.parse(confidentialBasicExchange.body);
+
+    const confidentialBasicMissingRefresh = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      json: {
+        grant_type: 'refresh_token',
+        refresh_token: confidentialBasicTokens.refresh_token,
+        resource: MCP_RESOURCE,
+      },
+    });
+    assert.equal(confidentialBasicMissingRefresh.status, 401);
+    assert.match(confidentialBasicMissingRefresh.wwwAuthenticate, /^Basic /);
+
+    const confidentialBasicWrongClientRefresh = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      headers: { authorization: basicWrongClientAuthorization },
+      json: {
+        grant_type: 'refresh_token',
+        refresh_token: confidentialBasicTokens.refresh_token,
+        resource: MCP_RESOURCE,
+      },
+    });
+    assert.equal(confidentialBasicWrongClientRefresh.status, 401);
+    assert.match(confidentialBasicWrongClientRefresh.wwwAuthenticate, /^Basic /);
+
+    const confidentialBasicWrongSecretRefresh = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      headers: { authorization: basicWrongSecretAuthorization },
+      json: {
+        grant_type: 'refresh_token',
+        refresh_token: confidentialBasicTokens.refresh_token,
+        resource: MCP_RESOURCE,
+      },
+    });
+    assert.equal(confidentialBasicWrongSecretRefresh.status, 401);
+    assert.match(confidentialBasicWrongSecretRefresh.wwwAuthenticate, /^Basic /);
+
+    const confidentialBasicMixedRefresh = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      headers: { authorization: confidentialBasicAuthorization },
+      json: {
+        grant_type: 'refresh_token',
+        refresh_token: confidentialBasicTokens.refresh_token,
+        client_id: confidentialBasicRegisterBody.client_id,
+        resource: MCP_RESOURCE,
+      },
+    });
+    assert.equal(confidentialBasicMixedRefresh.status, 401);
+    assert.match(confidentialBasicMixedRefresh.wwwAuthenticate, /^Basic /);
+
+    const confidentialBasicRefresh = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST',
+      headers: { authorization: confidentialBasicAuthorization },
+      json: {
+        grant_type: 'refresh_token',
+        refresh_token: confidentialBasicTokens.refresh_token,
+        resource: MCP_RESOURCE,
+      },
+    });
+    assert.equal(confidentialBasicRefresh.status, 200, confidentialBasicRefresh.body);
+    const confidentialBasicRefreshedTokens = JSON.parse(confidentialBasicRefresh.body);
+    const confidentialBasicRevoke = await request(baseUrl, '/gw/oauth/revoke', {
+      method: 'POST',
+      headers: { authorization: confidentialBasicAuthorization },
+      json: { token: confidentialBasicRefreshedTokens.access_token },
+    });
+    assert.equal(confidentialBasicRevoke.status, 200);
 
     const wrongClientBridge = await issueMcpBridgeCode(baseUrl, { registration: universalRegisterBody });
     const wrongClientExchange = await request(baseUrl, '/gw/oauth/token', {
@@ -1138,7 +1476,19 @@ async function main() {
     assert.equal(unsupportedTokenSource.status, 400);
     assert.match(unsupportedTokenSource.body, /invalid_request/);
 
+    let generatedSecretForLogTest = '';
     const leakLogs = await captureConsole(async () => {
+      const confidentialRegistrationForLog = await request(baseUrl, '/gw/oauth/register', {
+        method: 'POST',
+        json: {
+          client_name: 'Confidential log test',
+          redirect_uris: [PERPLEXITY_CALLBACK],
+          token_endpoint_auth_method: 'client_secret_post',
+        },
+      });
+      assert.equal(confidentialRegistrationForLog.status, 201);
+      generatedSecretForLogTest = JSON.parse(confidentialRegistrationForLog.body).client_secret;
+
       const rejectedRegistration = await request(baseUrl, '/gw/oauth/register', {
         method: 'POST',
         json: {
@@ -1206,6 +1556,7 @@ async function main() {
       'https://client.example/oauth/callback',
       CHATGPT_CALLBACK,
       'code=',
+      generatedSecretForLogTest,
     ]) {
       assert.doesNotMatch(leakLogs, new RegExp(escapeRegExp(forbidden)), `log leaked ${forbidden}`);
     }

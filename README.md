@@ -6,8 +6,9 @@
 
 - отдаёт OAuth metadata для внешних клиентов;
 - принимает OAuth от GPT и Claude;
-- для Claude поддерживает Dynamic Client Registration;
-- сам подставляет серверные Intervals credentials для Claude, без ручного `client id / secret` у пользователя;
+- поддерживает Dynamic Client Registration для совместимых Remote MCP-клиентов;
+- сам подставляет серверные Intervals credentials для MCP-клиентов;
+- выдаёт публичным native/CIMD-клиентам регистрацию без секрета, а HTTPS web-клиентам — одноразово показанный client secret, когда они запрашивают `client_secret_basic` или `client_secret_post`;
 - после успешного входа синхронизирует пользователя в STAS;
 - проксирует чтение и запись данных между STAS и Intervals.
 
@@ -35,6 +36,7 @@
 - AGENT_AUTH_ENABLED — включает Agent Auth metadata/flow только вместе с нормальным `AGENT_AUTH_TOKEN_SECRET`.
 - AGENT_AUTH_TOKEN_SECRET — минимум 32 символа, не placeholder. Без него Agent Auth не рекламируется.
 - OAUTH_RATE_LIMIT_WINDOW_MS / OAUTH_RATE_LIMIT_MAX — локальный in-memory rate limit для чувствительных OAuth endpoints.
+- MCP_DCR_CONFIDENTIAL_REDIRECT_URIS — optional comma-separated exact HTTPS callback allowlist. For a listed callback, a web client that asks for public DCR (`none`) is upgraded to `client_secret_post` and receives a generated secret. Default is empty/standards-safe; use only for a hosted client known to require a secret after public registration.
 
 ## Current local security behavior
 
@@ -44,6 +46,7 @@
 - `/gw/oauth/authorize`, `/gw/oauth/callback`, `/gw/oauth/register`, `/gw/oauth/revoke` and `/gw/oauth/token` are rate-limited in-process and do not receive broad wildcard CORS headers.
 - Public discovery/schema endpoints stay readable: `/.well-known/oauth-authorization-server`, `/gw/openapi.json`, `/gw/openapi.actions.json`.
 - OAuth logs redact `code`, `state`, tokens, `client_secret`, `code_verifier`, and full redirect URLs.
+- Confidential MCP client secrets are random 256-bit values returned only in the DCR response. The signed stateless `client_id` contains only a server-keyed verifier, not the secret, so no client table or database migration is required.
 - OAuth state, bridge codes, rate limits, direct-token cache, and Agent Auth sessions are in memory. Production must run one gateway process or use shared storage before scale-out.
 - Canonical OpenAPI is `openapi.actions.json`; `/gw/openapi.json` is only an alias to the same JSON. Stale schema variants are not copied into the Docker image.
 

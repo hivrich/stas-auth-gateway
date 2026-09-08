@@ -131,8 +131,19 @@ HTTPS URL своего metadata-документа как `client_id`. Bridge з
 
 ## Что важно для универсальной регистрации
 
-- ручной `client_secret` от пользователя не нужен;
-- `token_endpoint_auth_method` для DCR клиента = `none`;
+- public DCR и CIMD-клиенты используют `token_endpoint_auth_method=none` без ручного секрета;
+- HTTPS web-клиенты могут запросить `client_secret_basic` или `client_secret_post`;
+  в этом случае bridge генерирует случайный secret, возвращает его только в
+  ответе регистрации и требует при code exchange, refresh и revoke;
+- подписанный `client_id` confidential-клиента содержит только HMAC-verifier
+  секрета, поэтому отдельная таблица клиентов и миграция БД не нужны;
+- native/loopback и CIMD-клиенты остаются public: выдать им надёжно хранимый
+  secret через DCR/CIMD невозможно;
+- для известной несовместимости hosted-клиента можно явно указать его точный
+  HTTPS callback в `MCP_DCR_CONFIDENTIAL_REDIRECT_URIS`; тогда только DCR с
+  полным совпадением всех callback будет повышен с `none` до
+  `client_secret_post`. По умолчанию список пуст и стандартный ответ `none`
+  не меняется;
 - поддерживаются remote web и native clients с `authorization_code`, optional
   `refresh_token` и PKCE `S256`; loopback callback native-клиента может менять порт;
 - web callback и claimed HTTPS callback native-клиента обязаны использовать
@@ -249,14 +260,16 @@ ids. Ротация `INTERVALS_CLIENT_SECRET` имеет эти дополнит
 2. DCR:
    - `POST /gw/oauth/register`
    - unique signed `client_id`
-   - reject HTTP, localhost/private IP, credentials, fragments and unsupported auth methods
+   - reject HTTP outside native loopback, private IP, credentials, fragments and unsupported auth methods
+   - accept `none` for public clients and `client_secret_basic` / `client_secret_post` for HTTPS web clients
 
 3. OAuth:
    - `GET /gw/oauth/authorize`
-   - consent screen before Intervals for dynamically registered MCP clients
+   - immediate Intervals sign-in after validated MCP authorization request
    - `GET /gw/oauth/callback`
    - `POST /gw/oauth/token`
    - exact client/callback binding and PKCE replay/mismatch rejection
+   - confidential client authentication at code exchange, refresh and revoke
    - `POST /gw/oauth/revoke`
    - для GPT Intervals authorize URL должен содержать `redirect_uri=https://intervals.stas.run/gw/oauth/callback`, а не ChatGPT callback
 

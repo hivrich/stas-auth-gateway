@@ -84,6 +84,33 @@ async function testRegistration() {
   assert.equal(modern.ok, true);
   assert.deepEqual(modern.metadata.grantTypes, ['authorization_code', 'refresh_token']);
 
+  for (const tokenEndpointAuthMethod of ['client_secret_basic', 'client_secret_post']) {
+    const confidentialWeb = readClientMetadata({
+      redirect_uris: ['https://www.perplexity.ai/rest/connections/oauth_callback'],
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      token_endpoint_auth_method: tokenEndpointAuthMethod,
+      application_type: 'web',
+    });
+    assert.equal(confidentialWeb.ok, true);
+    assert.equal(confidentialWeb.metadata.tokenEndpointAuthMethod, tokenEndpointAuthMethod);
+  }
+
+  const confidentialNative = readClientMetadata({
+    redirect_uris: [NATIVE_REGISTERED_CALLBACK],
+    token_endpoint_auth_method: 'client_secret_post',
+    application_type: 'native',
+  });
+  assert.equal(confidentialNative.ok, false);
+  assert.equal(confidentialNative.reason, 'confidential_native_client_not_allowed');
+
+  const confidentialCimd = readClientMetadata({
+    ...cimdBody(),
+    token_endpoint_auth_method: 'client_secret_basic',
+  }, { expectedClientId: CIMD_URL });
+  assert.equal(confidentialCimd.ok, false);
+  assert.equal(confidentialCimd.reason, 'cimd_confidential_client_not_allowed');
+
   const actualClaude = readClientMetadata(actualClaudeCimdBody(), { expectedClientId: CLAUDE_CIMD_URL });
   assert.equal(actualClaude.ok, true);
   assert.equal(actualClaude.metadata.applicationType, 'web');
