@@ -6,9 +6,9 @@ This is the current production deploy path for `intervals.stas.run`.
 
 Production runs from the `stas.run` Docker Compose stack:
 
-- Host alias: `intervals-prod`
+- Host alias: `stas-prod` (SSH as `deploy`)
 - Public host: `intervals.stas.run`
-- Current public IP: `162.248.162.6`
+- Current public IP: `157.180.45.93` (Hetzner)
 - Compose directory: `/opt/stas`
 - Compose file: `/opt/stas/docker-compose.yml`
 - Gateway source: `/opt/stas/bridge-api`
@@ -27,17 +27,20 @@ Do not deploy gateway changes to `109.172.46.200` for the current `intervals.sta
 
 ## Source Of Truth
 
-Current local repo:
+Canonical local source before a deploy:
 
 ```bash
 /home/codex/codex-work/Projects/stas-auth-gateway-clean
 ```
 
-Current active branch after merge:
+It must be the clean, merged primary checkout on:
 
 ```bash
 main
 ```
+
+Never deploy from a feature worktree. Merge the reviewed change first, then
+update the clean primary `main` checkout before starting this runbook.
 
 ChatGPT Actions schema source:
 
@@ -75,13 +78,13 @@ Stop before any deploy unless all of these are true:
 - Legacy STAS-ID HTML and legacy token exchange flags are intentionally default-off.
 - If Agent Auth is enabled, `AGENT_AUTH_TOKEN_SECRET` is set to a non-placeholder value of at least 32 characters.
 - Production is confirmed to run one `bridge-api` process, or OAuth/Agent Auth state has shared storage. Current local state is in-memory.
-- Docker context excludes `.env*`, `.git`, `.codex`, `node_modules`, stale schemas, and static legacy OAuth pages.
+- Docker context excludes `.env*`, `.git`, `.git/`, `.codex`, `node_modules`, stale schemas, and static legacy OAuth pages.
 - `rsync --dry-run` has been reviewed, then a server-side backup has been created before the real sync.
 - No deploy targets the old `/opt/stas-auth-gateway*` checkout or old host references.
 
 ## Safe Deploy
 
-From the local gateway repo, sync the current repository contents to the production bridge source.
+From the clean, merged primary `main` gateway checkout (never a feature worktree), sync the current repository contents to the production bridge source.
 Do not sync local dependencies, git/Codex metadata, env files, private directories, keys, certs, logs, rendered secret dumps, or backups.
 
 Create one shared exclude file before the dry-run and keep the same shell open through the backup and real sync.
@@ -92,6 +95,7 @@ DEPLOY_EXCLUDES_FILE="$(mktemp)"
 trap 'rm -f "$DEPLOY_EXCLUDES_FILE"' EXIT
 cat > "$DEPLOY_EXCLUDES_FILE" <<'EOF'
 node_modules/
+.git
 .git/
 .codex/
 .private/
@@ -143,14 +147,14 @@ First run the mandatory dry-run and review every created, updated, and deleted p
 
 ```bash
 rsync -azn --delete --itemize-changes --exclude-from="$DEPLOY_EXCLUDES_FILE" \
-  ./ intervals-prod:/opt/stas/bridge-api/
+  ./ stas-prod:/opt/stas/bridge-api/
 ```
 
 After the dry-run output is clean and deploy is explicitly approved, create the server backup before any real sync:
 
 ```bash
 DEPLOY_EXCLUDES_B64="$(base64 < "$DEPLOY_EXCLUDES_FILE" | tr -d '\n')"
-ssh intervals-prod "DEPLOY_EXCLUDES_B64='$DEPLOY_EXCLUDES_B64' bash -s" <<'EOF'
+ssh stas-prod "DEPLOY_EXCLUDES_B64='$DEPLOY_EXCLUDES_B64' bash -s" <<'EOF'
 set -euo pipefail
 cd /opt/stas/bridge-api
 backup="/opt/stas/legacy-cleanup/bridge-api-predeploy-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -169,7 +173,7 @@ Run the real sync only after the backup command has completed successfully:
 
 ```bash
 rsync -az --delete --itemize-changes --exclude-from="$DEPLOY_EXCLUDES_FILE" \
-  ./ intervals-prod:/opt/stas/bridge-api/
+  ./ stas-prod:/opt/stas/bridge-api/
 ```
 
 Then run the deploy commands on the server:
