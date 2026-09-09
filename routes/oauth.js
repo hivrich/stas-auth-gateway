@@ -31,6 +31,7 @@ const {
   revokeMcpToken,
 } = require('../lib/mcp-oauth-tokens');
 const { verifyPrivateKeyJwt } = require('../lib/mcp-private-key-jwt');
+const { markToken, tokenContext, tokenIngress } = require('../lib/oauth-token-diagnostics');
 const { normalizeMcpScopes } = require('../lib/mcp-oauth-scopes');
 
 const INTERVALS_AUTH_URL = 'https://intervals.icu/oauth/authorize';
@@ -179,16 +180,6 @@ function logOauth(level, event, fields) {
     const method = console[level] || console.log;
     method.call(console, event, JSON.stringify(sanitizeLogFields(fields)));
   } catch {}
-}
-
-function summarizeUpstreamOAuthError(payload, text) {
-  const error = payload && typeof payload === 'object' && typeof payload.error === 'string'
-    ? payload.error
-    : null;
-  return {
-    error,
-    bodyHash: hashPrefix(text),
-  };
 }
 
 function envFlagEnabled(...names) {
@@ -615,19 +606,25 @@ function readRegisteredMcpClient(clientId) {
 }
 
 async function validateMcpClientCredentials(req, client, options = {}) {
+  markToken(req, 'client_unresolved');
   if (!client) return { ok: false, status: 400, error: 'invalid_client' };
+  tokenContext(req, undefined, client.tokenEndpointAuthMethod || 'none');
   const credentials = getMcpClientCredentials(req);
+  markToken(req, 'client_mixed');
   if (credentials.mixed) return { ok: false, status: 401, error: 'invalid_client', authMethod: client.tokenEndpointAuthMethod };
 
   const method = client.tokenEndpointAuthMethod || 'none';
+  markToken(req, 'client_method');
   if (method === 'private_key_jwt') {
+    markToken(req, 'assertion_verification');
+    const diagnostic = (reason) => markToken(req, reason);
     if (options.deferReplayConsumption) {
-      const consumeAssertion = await verifyPrivateKeyJwt.prepare(req, client);
+      const consumeAssertion = await verifyPrivateKeyJwt.prepare(req, client, diagnostic);
       return consumeAssertion
         ? { ok: true, clientId: client.clientId, consumeAssertion }
         : { ok: false, status: 401, error: 'invalid_client', authMethod: method };
     }
-    return await verifyPrivateKeyJwt(req, client)
+    return await verifyPrivateKeyJwt(req, client, diagnostic)
       ? { ok: true, clientId: client.clientId }
       : { ok: false, status: 401, error: 'invalid_client', authMethod: method };
   }
@@ -651,10 +648,12 @@ async function validateMcpClientCredentials(req, client, options = {}) {
     clientId = credentials.bodyClientId || (options.allowInferredPublicClientId ? client.clientId : '');
   }
 
+  markToken(req, 'client_binding');
   if (!clientId || clientId !== client.clientId) {
     return { ok: false, status: method === 'none' ? 400 : 401, error: 'invalid_client', authMethod: method };
   }
   if (method !== 'none') {
+    markToken(req, 'client_credentials');
     const actual = clientSecretVerifier(clientSecret);
     const expected = trimToString(client.clientSecretVerifier);
     if (!clientSecret || !expected || !timingSafeStringEqual(actual, expected)) {
@@ -1047,10 +1046,11 @@ router.get('/oauth/callback', async (req, res, next) => {
     scope: trimToString(stateRecord.scope),
   });
 
-  logOauth('log', '[oauth][callback]', {
-    source,
-    redirectUri,
-    effectiveClientId: stateRecord.effectiveClientId || null,
+  logOauth('log', '[oauth][callback][complete]', {
+    has_code: true,
+    has_state: Boolean(trimToString(stateRecord.originalState)),
+    has_iss: true,
+    destination: source === 'mcp' ? 'registered_client' : 'legacy_client',
   });
 
   return res.redirect(302, appendAuthorizationResponse(redirectUri, {
@@ -1103,55 +1103,69 @@ router.post('/oauth/revoke', async (req, res) => {
   }
 });
 
-router.post('/oauth/token', async (req, res) => {
+router.post('/oauth/token', tokenIngress, async (req, res) => {
+  markToken(req, 'route_entered');
   try {
     const b = Object.assign({}, req.body || {});
     const grantType = trimToString(b.grant_type);
+    tokenContext(req, grantType === AGENT_AUTH_GRANT_TYPE ? 'agent' : grantType);
 
     if (grantType === AGENT_AUTH_GRANT_TYPE) {
+      markToken(req, 'agent_unconfigured');
       if (!isAgentAuthConfigured()) {
         return res.status(503).json({ error: 'service_unavailable', reason: 'agent_auth_not_configured' });
       }
 
       const claimToken = trimToString(b.claim_token);
+      markToken(req, 'agent_claim_missing');
       if (!claimToken) return res.status(400).json({ error: 'invalid_request' });
 
       const result = pollAgentClaimToken(claimToken);
+      markToken(req, 'agent_poll_rejected');
       if (!result.ok) {
         const body = { error: result.error };
         if (result.interval) body.interval = result.interval;
         return res.status(result.status || 400).json(body);
       }
 
+      markToken(req, 'success');
       return res.json(result.body);
     }
 
     if (grantType === 'refresh_token') {
       const refreshToken = trimToString(b.refresh_token);
       const resource = readCanonicalMcpResource(b.resource);
+      markToken(req, 'refresh_missing');
       if (!refreshToken) return res.status(400).json({ error: 'invalid_grant' });
+      markToken(req, 'resource_binding');
       if (!resource) return res.status(400).json({ error: 'invalid_target' });
       const tokenClient = getMcpTokenClient(refreshToken);
+      markToken(req, 'refresh_invalid');
       if (!tokenClient) return res.status(400).json({ error: 'invalid_grant' });
+      markToken(req, 'client_unresolved');
       const client = await resolveMcpTokenClient(tokenClient);
       if (!client) return res.status(400).json({ error: 'invalid_client' });
       const authentication = await validateMcpClientCredentials(req, client);
       if (!authentication.ok) return sendInvalidClient(res, authentication);
       const clientId = authentication.clientId;
+      markToken(req, 'refresh_rejected');
       const refreshed = await refreshMcpTokens(refreshToken, { clientId, resource });
       if (!refreshed) return res.status(400).json({ error: 'invalid_grant' });
-      logOauth('log', '[oauth][token][refreshed]', { clientId, resource });
+      markToken(req, 'success');
       return res.json(refreshed.response);
     }
 
     const code = trimToString(b.code || b.authorization_code);
+    markToken(req, 'code_missing');
     if (!code) return res.status(400).json({ error: 'invalid_grant' });
 
     if (!code.startsWith('c_')) {
       const bridgeRecord = code.startsWith('gpt_') ? peekBridgeCode(code) : null;
+      markToken(req, 'code_not_found');
       if (code.startsWith('gpt_') && !bridgeRecord) {
         return res.status(400).json({ error: 'invalid_grant' });
       }
+      markToken(req, 'grant_unsupported');
       if (bridgeRecord && grantType && grantType !== 'authorization_code') {
         return res.status(400).json({ error: 'unsupported_grant_type' });
       }
@@ -1167,14 +1181,18 @@ router.post('/oauth/token', async (req, res) => {
         redirectUri,
       });
 
+      markToken(req, 'source_unknown');
       if (!source) {
         return res.status(400).json({ error: 'invalid_request' });
       }
 
+      tokenContext(req, undefined, bridgeRecord?.client?.tokenEndpointAuthMethod);
+      markToken(req, 'redirect_binding');
       if (bridgeRecord && requestedRedirectUri && requestedRedirectUri !== bridgeRecord.redirectUri) {
         return res.status(400).json({ error: 'invalid_grant', error_description: 'redirect_uri mismatch' });
       }
 
+      markToken(req, 'client_binding');
       if (
         bridgeRecord
         && bridgeRecord.source === 'mcp'
@@ -1184,6 +1202,7 @@ router.post('/oauth/token', async (req, res) => {
         return sendInvalidClient(res, { status: method === 'none' ? 400 : 401, authMethod: method });
       }
 
+      markToken(req, 'resource_binding');
       if (
         bridgeRecord
         && bridgeRecord.source === 'mcp'
@@ -1195,12 +1214,14 @@ router.post('/oauth/token', async (req, res) => {
         return res.status(400).json({ error: 'invalid_target' });
       }
 
+      markToken(req, 'redirect_binding');
       if (!bridgeRecord && redirectUri) {
         if (!isAllowedExternalRedirect(source, redirectUri, requestedClientId)) {
           return res.status(400).json({ error: 'invalid_grant', error_description: 'invalid redirect_uri' });
         }
       }
 
+      markToken(req, 'client_configuration');
       const useServerClientForChatGpt = source === 'gpt' && isAllowedChatGptRedirectUri(redirectUri) && (!requestedClientId || !requestedClientSecret);
       const clientConfig = source === 'claude' || source === 'mcp' || useServerClientForChatGpt
         ? getClaudeIntervalsAuthConfig()
@@ -1212,11 +1233,13 @@ router.post('/oauth/token', async (req, res) => {
         return res.status(400).json({ error: 'invalid_client' });
       }
 
+      markToken(req, 'client_binding');
       if (bridgeRecord && bridgeRecord.effectiveClientId && clientId !== bridgeRecord.effectiveClientId) {
         return res.status(400).json({ error: 'invalid_client' });
       }
 
       if (bridgeRecord) {
+        markToken(req, 'pkce_binding');
         const pkce = verifyBridgePkce(bridgeRecord, codeVerifier);
         if (!pkce.ok) {
           return res.status(400).json({ error: pkce.error });
@@ -1228,16 +1251,6 @@ router.post('/oauth/token', async (req, res) => {
       form.set('client_id', clientId);
       form.set('client_secret', clientSecret);
       form.set('code', bridgeRecord ? bridgeRecord.upstreamCode : code);
-
-      const upstreamPayload = {
-        source,
-        redirectUri: redirectUri || null,
-        intervalsRedirectUri: bridgeRecord ? bridgeRecord.intervalsRedirectUri : null,
-        hasCodeVerifier: Boolean(codeVerifier),
-        requestedClientId: requestedClientId || null,
-        effectiveClientId: clientId,
-        usedServerClientFallback: useServerClientForChatGpt,
-      };
 
       if (bridgeRecord) {
         form.set('redirect_uri', bridgeRecord.intervalsRedirectUri);
@@ -1254,6 +1267,7 @@ router.post('/oauth/token', async (req, res) => {
         : { ok: true };
       if (!authentication.ok) return sendInvalidClient(res, authentication);
       if (bridgeRecord) {
+        markToken(req, 'code_reserved');
         const reservation = reserveBridgeCode(code, bridgeRecord);
         if (!reservation) return res.status(400).json({ error: 'invalid_grant' });
         try {
@@ -1265,6 +1279,7 @@ router.post('/oauth/token', async (req, res) => {
           // No await between successful insert and local finalization. This
           // isn't a cross-store transaction: ambiguous commits/crashes fail
           // closed, and stale reservations can never start an upstream call.
+          markToken(req, 'code_finalization');
           if (!finalizeBridgeCode(code, bridgeRecord, reservation)) {
             return res.status(400).json({ error: 'invalid_grant' });
           }
@@ -1273,7 +1288,7 @@ router.post('/oauth/token', async (req, res) => {
         }
       }
 
-      logOauth('log', '[oauth][token][request]', upstreamPayload);
+      markToken(req, 'upstream_unavailable');
 
       const upstream = await fetch(INTERVALS_TOKEN_URL, {
         method: 'POST',
@@ -1294,10 +1309,7 @@ router.post('/oauth/token', async (req, res) => {
       }
 
       if (!upstream.ok) {
-        logOauth('error', '[oauth][token][intervals_error]', {
-          status: upstream.status,
-          ...summarizeUpstreamOAuthError(payload, text),
-        });
+        markToken(req, 'upstream_rejected');
         if (payload && typeof payload === 'object') {
           return res.status(upstream.status).json(payload);
         }
@@ -1310,24 +1322,23 @@ router.post('/oauth/token', async (req, res) => {
 
       let resolvedIntervalsAuth = null;
       if (response.access_token) {
+        markToken(req, 'user_sync_failed');
         try {
           resolvedIntervalsAuth = await resolveDirectIntervalsAuth(response.access_token, {
             source,
           });
         } catch (error) {
-          logOauth('error', '[oauth][token][user_sync_failed]', {
-            status: error?.status || 502,
-            error: error?.code || error?.message || 'user_sync_failed',
-          });
           return res.status(error?.status || 502).json({ error: 'user_sync_failed' });
         }
       }
 
       if (source === 'mcp') {
+        markToken(req, 'user_sync_failed');
         if (!resolvedIntervalsAuth?.userId || !resolvedIntervalsAuth?.athleteId || !bridgeRecord?.client) {
           return res.status(502).json({ error: 'user_sync_failed' });
         }
         const diagnostic = clientDiagnostic(bridgeRecord.client);
+        markToken(req, 'issuance_failed');
         const tokenResponse = await issueMcpTokens({
           subject: resolvedIntervalsAuth.userId,
           userId: resolvedIntervalsAuth.athleteId,
@@ -1338,33 +1349,26 @@ router.post('/oauth/token', async (req, res) => {
           allowRefresh: bridgeRecord.client.grantTypes.includes('refresh_token'),
           ...diagnostic,
         });
-        logOauth('log', '[oauth][token][issued]', {
-          clientId: bridgeRecord.downstreamClientId,
-          resource: bridgeRecord.resource,
-          allowRefresh: bridgeRecord.client.grantTypes.includes('refresh_token'),
-          clientNameHash: hashPrefix(diagnostic.clientName),
-          clientHost: diagnostic.clientHost,
-        });
+        markToken(req, 'success');
         return res.json(tokenResponse);
       }
 
+      markToken(req, 'success');
       return res.json(response);
     }
 
+    markToken(req, 'legacy_disabled');
     if (!isLegacyStasIdTokenExchangeEnabled()) {
       return res.status(400).json({ error: 'legacy_token_exchange_disabled' });
     }
 
+    markToken(req, 'legacy_removed');
     return res.status(400).json({
       error: 'legacy_token_exchange_removed',
       error_description: 'Legacy c_ authorization codes can no longer be exchanged for unsigned t_ tokens.',
     });
   } catch (error) {
     if (error && error.status) {
-      logOauth('error', '[oauth][token][config_error]', {
-        status: error.status,
-        error: error.message || 'server_error',
-      });
       return res.status(error.status).json({ error: error.message || 'server_error' });
     }
 

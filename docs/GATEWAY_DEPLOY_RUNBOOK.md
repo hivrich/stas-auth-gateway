@@ -218,11 +218,17 @@ gateway source or run this gateway release helper.
 
 ## Required Checks
 
+For a connection that completes the callback but fails before token issuance,
+use the privacy-safe token stages described in
+[OAuth token diagnostics](OAUTH_TOKEN_DIAGNOSTICS.md). Do not enable body,
+header, assertion or query logging to investigate an individual attempt.
+
 Local checks before deploy:
 
 ```bash
 npm run test:route-order
 npm run test:oauth-release-safety
+npm run test:oauth-token-diagnostics
 npm run test:openapi-contract
 npm run test:oauth
 npm run test:icu-post
