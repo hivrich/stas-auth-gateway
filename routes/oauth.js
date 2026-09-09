@@ -25,11 +25,12 @@ const {
 const {
   getIssuer,
   getMcpResource,
-  getMcpTokenClientId,
+  getMcpTokenClient,
   issueMcpTokens,
   refreshMcpTokens,
   revokeMcpToken,
 } = require('../lib/mcp-oauth-tokens');
+const { verifyPrivateKeyJwt } = require('../lib/mcp-private-key-jwt');
 const { normalizeMcpScopes } = require('../lib/mcp-oauth-scopes');
 
 const INTERVALS_AUTH_URL = 'https://intervals.icu/oauth/authorize';
@@ -39,6 +40,7 @@ const INTERVALS_SCOPE_RE = /\b(?:ACTIVITY|WELLNESS|CALENDAR|CHATS|LIBRARY|SETTIN
 const DEFAULT_INTERVALS_SCOPE = 'ACTIVITY:WRITE,WELLNESS:WRITE,CALENDAR:WRITE,CHATS:WRITE,LIBRARY:WRITE,SETTINGS:WRITE';
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const OAUTH_CODE_TTL_MS = 10 * 60 * 1000;
+const OAUTH_CODE_RESERVATION_MS = 10 * 1000;
 const BRIDGE_PKCE_METHOD = 'S256';
 const MCP_CLIENT_ID_PREFIX = 'stas_mcp_';
 const MCP_CLIENT_ID_VERSION = 1;
@@ -418,13 +420,29 @@ function createBridgeCode(record) {
   return code;
 }
 
-function takeBridgeCode(code) {
+function peekBridgeCode(code) {
   cleanupBridgeCodes();
   const record = pendingBridgeCodes.get(code);
-  if (!record) return null;
+  return record || null;
+}
+
+function reserveBridgeCode(code, record) {
+  if (peekBridgeCode(code) !== record) return null;
+  if (record.reservation?.expiresAt > Date.now()) return null;
+  const reservation = { expiresAt: Math.min(record.expiresAt, Date.now() + OAUTH_CODE_RESERVATION_MS) };
+  record.reservation = reservation;
+  return reservation;
+}
+
+function releaseBridgeCode(record, reservation) {
+  if (record.reservation === reservation) delete record.reservation;
+}
+
+function finalizeBridgeCode(code, record, reservation) {
+  if (pendingBridgeCodes.get(code) !== record || record.reservation !== reservation
+    || reservation.expiresAt <= Date.now()) return false;
   pendingBridgeCodes.delete(code);
-  if (Number(record.expiresAt) <= Date.now()) return null;
-  return record;
+  return true;
 }
 
 function readBridgePkce(codeChallenge, codeChallengeMethod, options = {}) {
@@ -596,12 +614,26 @@ function readRegisteredMcpClient(clientId) {
   }
 }
 
-function validateMcpClientCredentials(req, client, options = {}) {
+async function validateMcpClientCredentials(req, client, options = {}) {
   if (!client) return { ok: false, status: 400, error: 'invalid_client' };
   const credentials = getMcpClientCredentials(req);
   if (credentials.mixed) return { ok: false, status: 401, error: 'invalid_client', authMethod: client.tokenEndpointAuthMethod };
 
   const method = client.tokenEndpointAuthMethod || 'none';
+  if (method === 'private_key_jwt') {
+    if (options.deferReplayConsumption) {
+      const consumeAssertion = await verifyPrivateKeyJwt.prepare(req, client);
+      return consumeAssertion
+        ? { ok: true, clientId: client.clientId, consumeAssertion }
+        : { ok: false, status: 401, error: 'invalid_client', authMethod: method };
+    }
+    return await verifyPrivateKeyJwt(req, client)
+      ? { ok: true, clientId: client.clientId }
+      : { ok: false, status: 401, error: 'invalid_client', authMethod: method };
+  }
+  if (req.body?.client_assertion !== undefined || req.body?.client_assertion_type !== undefined) {
+    return { ok: false, status: 400, error: 'invalid_client' };
+  }
   let clientId = '';
   let clientSecret = '';
   if (method === 'client_secret_basic') {
@@ -653,6 +685,17 @@ async function resolveMcpClient(clientId) {
     },
     error: null,
   };
+}
+
+async function resolveMcpTokenClient(tokenClient) {
+  if (tokenClient.clientId.startsWith(MCP_CLIENT_ID_PREFIX)) return readRegisteredMcpClient(tokenClient.clientId);
+  // Legacy/public tokens retain their established authentication contract.
+  // Key-authenticated tokens pin that method, so a changed/unavailable CIMD
+  // document can never turn refresh or revocation into a public-client path.
+  if (tokenClient.tokenEndpointAuthMethod === 'none') return tokenClient;
+  if (tokenClient.tokenEndpointAuthMethod !== 'private_key_jwt') return null;
+  const { client } = await resolveMcpClient(tokenClient.clientId);
+  return client?.tokenEndpointAuthMethod === 'private_key_jwt' ? client : null;
 }
 
 function isAllowedExternalRedirect(source, redirectUri, downstreamClientId = '', registeredClient = null) {
@@ -1023,16 +1066,11 @@ router.post('/oauth/revoke', async (req, res) => {
   const agentRevocation = revokeAgentAccessToken(token);
   if (agentRevocation.matched) return res.status(200).end();
 
-  const mcpTokenClientId = getMcpTokenClientId(token);
-  if (mcpTokenClientId) {
-    const client = mcpTokenClientId.startsWith(MCP_CLIENT_ID_PREFIX)
-      ? readRegisteredMcpClient(mcpTokenClientId)
-      : {
-        clientId: mcpTokenClientId,
-        tokenEndpointAuthMethod: 'none',
-      };
-    if (!client) return res.status(200).end();
-    const authentication = validateMcpClientCredentials(req, client, {
+  const mcpTokenClient = getMcpTokenClient(token);
+  if (mcpTokenClient) {
+    const client = await resolveMcpTokenClient(mcpTokenClient);
+    if (!client) return sendInvalidClient(res, { status: 401 });
+    const authentication = await validateMcpClientCredentials(req, client, {
       allowInferredPublicClientId: true,
     });
     if (!authentication.ok) return sendInvalidClient(res, authentication);
@@ -1093,13 +1131,11 @@ router.post('/oauth/token', async (req, res) => {
       const resource = readCanonicalMcpResource(b.resource);
       if (!refreshToken) return res.status(400).json({ error: 'invalid_grant' });
       if (!resource) return res.status(400).json({ error: 'invalid_target' });
-      const tokenClientId = getMcpTokenClientId(refreshToken);
-      if (!tokenClientId) return res.status(400).json({ error: 'invalid_grant' });
-      const client = tokenClientId.startsWith(MCP_CLIENT_ID_PREFIX)
-        ? readRegisteredMcpClient(tokenClientId)
-        : { clientId: tokenClientId, tokenEndpointAuthMethod: 'none' };
+      const tokenClient = getMcpTokenClient(refreshToken);
+      if (!tokenClient) return res.status(400).json({ error: 'invalid_grant' });
+      const client = await resolveMcpTokenClient(tokenClient);
       if (!client) return res.status(400).json({ error: 'invalid_client' });
-      const authentication = validateMcpClientCredentials(req, client);
+      const authentication = await validateMcpClientCredentials(req, client);
       if (!authentication.ok) return sendInvalidClient(res, authentication);
       const clientId = authentication.clientId;
       const refreshed = await refreshMcpTokens(refreshToken, { clientId, resource });
@@ -1112,9 +1148,12 @@ router.post('/oauth/token', async (req, res) => {
     if (!code) return res.status(400).json({ error: 'invalid_grant' });
 
     if (!code.startsWith('c_')) {
-      const bridgeRecord = code.startsWith('gpt_') ? takeBridgeCode(code) : null;
+      const bridgeRecord = code.startsWith('gpt_') ? peekBridgeCode(code) : null;
       if (code.startsWith('gpt_') && !bridgeRecord) {
         return res.status(400).json({ error: 'invalid_grant' });
+      }
+      if (bridgeRecord && grantType && grantType !== 'authorization_code') {
+        return res.status(400).json({ error: 'unsupported_grant_type' });
       }
 
       const basic = getBasicAuthCredentials(req);
@@ -1136,17 +1175,13 @@ router.post('/oauth/token', async (req, res) => {
         return res.status(400).json({ error: 'invalid_grant', error_description: 'redirect_uri mismatch' });
       }
 
-      if (bridgeRecord && bridgeRecord.source === 'mcp') {
-        const authentication = validateMcpClientCredentials(req, bridgeRecord.client);
-        if (!authentication.ok) return sendInvalidClient(res, authentication);
-      }
-
       if (
         bridgeRecord
         && bridgeRecord.source === 'mcp'
         && requestedClientId !== bridgeRecord.downstreamClientId
       ) {
-        return res.status(400).json({ error: 'invalid_client' });
+        const method = bridgeRecord.client?.tokenEndpointAuthMethod || 'none';
+        return sendInvalidClient(res, { status: method === 'none' ? 400 : 401, authMethod: method });
       }
 
       if (
@@ -1212,6 +1247,32 @@ router.post('/oauth/token', async (req, res) => {
         if (codeVerifier) form.set('code_verifier', codeVerifier);
       }
 
+      // Pure redirect/client/resource/PKCE/config checks above consume neither
+      // the code nor an assertion. Key loading/verification also stays pure.
+      const authentication = bridgeRecord?.source === 'mcp'
+        ? await validateMcpClientCredentials(req, bridgeRecord.client, { deferReplayConsumption: true })
+        : { ok: true };
+      if (!authentication.ok) return sendInvalidClient(res, authentication);
+      if (bridgeRecord) {
+        const reservation = reserveBridgeCode(code, bridgeRecord);
+        if (!reservation) return res.status(400).json({ error: 'invalid_grant' });
+        try {
+          // Only the reservation owner can reach the durable replay insert.
+          // A rejected/outage insert releases the code for a correct retry.
+          if (authentication.consumeAssertion && !await authentication.consumeAssertion()) {
+            return sendInvalidClient(res, { status: 401 });
+          }
+          // No await between successful insert and local finalization. This
+          // isn't a cross-store transaction: ambiguous commits/crashes fail
+          // closed, and stale reservations can never start an upstream call.
+          if (!finalizeBridgeCode(code, bridgeRecord, reservation)) {
+            return res.status(400).json({ error: 'invalid_grant' });
+          }
+        } finally {
+          releaseBridgeCode(bridgeRecord, reservation);
+        }
+      }
+
       logOauth('log', '[oauth][token][request]', upstreamPayload);
 
       const upstream = await fetch(INTERVALS_TOKEN_URL, {
@@ -1271,6 +1332,7 @@ router.post('/oauth/token', async (req, res) => {
           subject: resolvedIntervalsAuth.userId,
           userId: resolvedIntervalsAuth.athleteId,
           clientId: bridgeRecord.downstreamClientId,
+          clientAuthMethod: bridgeRecord.client.tokenEndpointAuthMethod,
           resource: bridgeRecord.resource,
           scopes: bridgeRecord.scope,
           allowRefresh: bridgeRecord.client.grantTypes.includes('refresh_token'),

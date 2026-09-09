@@ -12,6 +12,8 @@
     "test:legacy-aliases": "node scripts/test-legacy-aliases.js",
     "test:oauth": "node scripts/test-oauth-flow.js",
     "test:mcp-oauth": "node scripts/test-mcp-oauth-core.js",
+    "test:private-key-jwt": "node --test scripts/test-private-key-jwt.js",
+    "test:oauth-release-safety": "node --test scripts/test-oauth-release-safety.js",
     "test:mcp-bearer": "node scripts/test-mcp-bearer-integration.js",
     "test:db-proxy": "node scripts/test-db-proxy.js",
     "test:single-call-writes": "node scripts/test-single-call-writes.js",
