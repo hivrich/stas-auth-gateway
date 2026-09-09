@@ -47,6 +47,7 @@
 - Public discovery/schema endpoints stay readable: `/.well-known/oauth-authorization-server`, `/gw/openapi.json`, `/gw/openapi.actions.json`.
 - OAuth logs redact `code`, `state`, tokens, `client_secret`, `code_verifier`, and full redirect URLs.
 - Confidential MCP client secrets are random 256-bit values returned only in the DCR response. The signed stateless `client_id` contains only a server-keyed verifier, not the secret, so no client table or database migration is required.
+- CIMD clients may authenticate with `private_key_jwt` using RS256 public keys from `jwks` or `jwks_uri`. Code exchange, refresh, and revocation all enforce the signed assertion; refresh tokens retain the method and cannot downgrade to `none`. This path requires the additive replay-table migration described in [the rollout notes](docs/PRIVATE_KEY_JWT.md).
 - OAuth state, bridge codes, rate limits, direct-token cache, and Agent Auth sessions are in memory. Production must run one gateway process or use shared storage before scale-out.
 - Canonical OpenAPI is `openapi.actions.json`; `/gw/openapi.json` is only an alias to the same JSON. Stale schema variants are not copied into the Docker image.
 

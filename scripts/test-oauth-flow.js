@@ -1154,6 +1154,170 @@ async function main() {
     assert.equal(JSON.parse(codexExchange.body).scope, 'ACTIVITY:READ');
 
     const cimdClientId = 'https://claude.ai/oauth/mcp-oauth-client-metadata';
+    // A real-shaped ChatGPT CIMD fixture with local ephemeral keys exercises
+    // the complete bridge and every client-authenticated MCP endpoint.
+    const fixture = require('./fixtures/private-key-jwt');
+    const replayStore = require('../lib/mcp-oauth-tokens').__testing.resetTokenStore();
+    const signingKey = fixture.makeKey();
+    let signingMetadata = fixture.metadata();
+    let signingFetches = 0;
+    const signingOptions = {
+      lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+      fetchImpl: async (url) => {
+        signingFetches += 1;
+        return new Response(JSON.stringify(url === fixture.JWKS_URI
+          ? { keys: [signingKey.jwk] } : signingMetadata), { headers: { 'content-type': 'application/json' } });
+      },
+    };
+    registrationTesting.setCimdOptions(signingOptions);
+    const privateBridge = () => issueMcpBridgeCode(baseUrl, {
+      registration: fixture.metadata(), resources: [MCP_RESOURCE],
+    });
+    const exchangePrivate = async (bodyPatch = {}, includeAssertion = true) => {
+      const bridge = await privateBridge();
+      return request(baseUrl, '/gw/oauth/token', {
+        method: 'POST', json: {
+          grant_type: 'authorization_code', code: bridge.bridgeCode,
+          client_id: fixture.CLIENT_ID, redirect_uri: fixture.CALLBACK,
+          code_verifier: DEFAULT_PKCE_VERIFIER, resource: MCP_RESOURCE,
+          ...(includeAssertion ? fixture.assertionRequest(signingKey).body : {}), ...bodyPatch,
+        },
+      });
+    };
+    const missingPrivateAssertion = await exchangePrivate({}, false);
+    assert.equal(missingPrivateAssertion.status, 401);
+    assert.deepEqual(JSON.parse(missingPrivateAssertion.body), { error: 'invalid_client' });
+    for (const patch of [{ code_verifier: WRONG_PKCE_VERIFIER }, { redirect_uri: 'https://other.example/callback' }, { resource: 'https://other.example/mcp' }]) {
+      const invalid = await exchangePrivate(patch);
+      assert.equal(invalid.status, 400);
+    }
+    let signedExchange;
+    const assertionForLogs = fixture.assertionRequest(signingKey).body;
+    const privateLogs = await captureConsole(async () => { signedExchange = await exchangePrivate(assertionForLogs); });
+    assert.equal(privateLogs.includes(assertionForLogs.client_assertion), false);
+    assert.equal(privateLogs.includes(signingKey.jwk.n), false);
+    assert.equal(signedExchange.status, 200, signedExchange.body);
+    const signedTokens = JSON.parse(signedExchange.body);
+    assert.ok(signedTokens.refresh_token);
+    const signedRefreshBody = {
+      grant_type: 'refresh_token', refresh_token: signedTokens.refresh_token,
+      resource: MCP_RESOURCE, client_id: fixture.CLIENT_ID,
+    };
+    const unsignedRefresh = await request(baseUrl, '/gw/oauth/token', { method: 'POST', json: signedRefreshBody });
+    assert.equal(unsignedRefresh.status, 401);
+    const refreshAssertion = fixture.assertionRequest(signingKey).body;
+    const signedRefresh = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST', json: { ...signedRefreshBody, ...refreshAssertion },
+    });
+    assert.equal(signedRefresh.status, 200, signedRefresh.body);
+    const rotatedTokens = JSON.parse(signedRefresh.body);
+    const unsignedRevocation = await request(baseUrl, '/gw/oauth/revoke', {
+      method: 'POST', json: { token: rotatedTokens.access_token },
+    });
+    assert.equal(unsignedRevocation.status, 401);
+    const replayRevocation = await request(baseUrl, '/gw/oauth/revoke', {
+      method: 'POST', json: { token: rotatedTokens.access_token, ...refreshAssertion },
+    });
+    assert.equal(replayRevocation.status, 401);
+    const signedRevocation = await request(baseUrl, '/gw/oauth/revoke', {
+      method: 'POST', json: { token: rotatedTokens.refresh_token, ...fixture.assertionRequest(signingKey).body },
+    });
+    assert.equal(signedRevocation.status, 200);
+    assert.equal((await require('../lib/mcp-oauth-tokens').resolveMcpAccessToken(rotatedTokens.access_token)).auth, null);
+    const revokedRefresh = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST', json: { ...signedRefreshBody, refresh_token: rotatedTokens.refresh_token, ...fixture.assertionRequest(signingKey).body },
+    });
+    assert.equal(revokedRefresh.status, 400);
+    assert.match(revokedRefresh.body, /invalid_grant/);
+    const downgradeTokens = JSON.parse((await exchangePrivate()).body);
+    signingMetadata = fixture.metadata({ token_endpoint_auth_method: 'none' });
+    registrationTesting.setCimdOptions(signingOptions);
+    const downgraded = await request(baseUrl, '/gw/oauth/token', {
+      method: 'POST', json: { ...signedRefreshBody, refresh_token: downgradeTokens.refresh_token },
+    });
+    assert.equal(downgraded.status, 400);
+    assert.match(downgraded.body, /invalid_client/);
+    assert.equal(signingFetches, 3, 'one CIMD + one JWKS + one explicit CIMD invalidation');
+
+    signingMetadata = fixture.metadata();
+    registrationTesting.setCimdOptions(signingOptions);
+    const privateGrant = async () => {
+      const bridge = await privateBridge();
+      return {
+        grant_type: 'authorization_code', code: bridge.bridgeCode,
+        redirect_uri: fixture.CALLBACK, code_verifier: DEFAULT_PKCE_VERIFIER,
+        resource: MCP_RESOURCE, ...fixture.assertionRequest(signingKey).body,
+      };
+    };
+    const postPrivate = (json) => request(baseUrl, '/gw/oauth/token', { method: 'POST', json });
+    const retriableGrant = await privateGrant();
+    const beforeInvalidBindings = replayStore.assertions.size;
+    const beforeInvalidUpstream = upstreamHits.length;
+    for (const patch of [
+      { code_verifier: WRONG_PKCE_VERIFIER }, { resource: 'https://other.example/mcp' },
+      { client_id: 'wrong-client' }, { redirect_uri: 'https://other.example/callback' },
+      { grant_type: 'unsupported' },
+    ]) {
+      const rejected = await postPrivate({ ...retriableGrant, ...patch });
+      assert.equal(rejected.status, patch.client_id ? 401 : 400);
+      assert.equal(replayStore.assertions.size, beforeInvalidBindings, 'Invalid bindings must not consume JTI');
+      assert.equal(upstreamHits.length, beforeInvalidUpstream, 'Invalid bindings must not exchange upstream');
+    }
+    assert.equal((await postPrivate(retriableGrant)).status, 200, 'Same code and assertion survive binding errors');
+
+    const storeFailureGrant = await privateGrant();
+    const consumeAssertion = replayStore.consumeClientAssertion.bind(replayStore);
+    replayStore.consumeClientAssertion = async () => { throw new Error('temporary DB outage before insertion'); };
+    const beforeStoreFailure = replayStore.assertions.size;
+    const beforeStoreFailureUpstream = upstreamHits.length;
+    try {
+      assert.equal((await postPrivate(storeFailureGrant)).status, 401);
+      assert.equal(replayStore.assertions.size, beforeStoreFailure);
+      assert.equal(upstreamHits.length, beforeStoreFailureUpstream);
+    } finally {
+      replayStore.consumeClientAssertion = consumeAssertion;
+    }
+    assert.equal((await postPrivate(storeFailureGrant)).status, 200, 'Same pair survives certain replay-store outage');
+
+    const concurrentGrant = await privateGrant();
+    const beforeConcurrent = upstreamHits.filter((hit) => hit.url === 'https://intervals.icu/api/oauth/token').length;
+    const beforeConcurrentAssertions = replayStore.assertions.size;
+    const concurrentResponses = await Promise.all(Array.from({ length: 8 }, () => postPrivate(concurrentGrant)));
+    assert.equal(concurrentResponses.filter((response) => response.status === 200).length, 1);
+    assert.equal(concurrentResponses.filter((response) => response.status === 400).length, 7);
+    assert.equal(upstreamHits.filter((hit) => hit.url === 'https://intervals.icu/api/oauth/token').length - beforeConcurrent, 1);
+    assert.equal(replayStore.assertions.size - beforeConcurrentAssertions, 1);
+
+    const recoveringJwksUri = 'https://chatgpt.com/oauth/recovering-jwks.json';
+    signingMetadata = fixture.metadata({ jwks_uri: recoveringJwksUri });
+    let jwksAvailable = false;
+    let recoveringKeyFetches = 0;
+    registrationTesting.setCimdOptions({
+      ...signingOptions,
+      fetchImpl: async (url) => {
+        if (url !== recoveringJwksUri) return signingOptions.fetchImpl(url);
+        recoveringKeyFetches += 1;
+        if (!jwksAvailable) throw new Error('temporary JWKS outage');
+        return new Response(JSON.stringify({ keys: [signingKey.jwk] }), { headers: { 'content-type': 'application/json' } });
+      },
+    });
+    const keyFailureGrant = await privateGrant();
+    const beforeKeyFailure = replayStore.assertions.size;
+    const beforeKeyFailureUpstream = upstreamHits.length;
+    assert.equal((await postPrivate(keyFailureGrant)).status, 401);
+    assert.equal(replayStore.assertions.size, beforeKeyFailure);
+    assert.equal(upstreamHits.length, beforeKeyFailureUpstream);
+    jwksAvailable = true;
+    const realNow = Date.now;
+    const recoveredAt = realNow() + 61_000;
+    Date.now = () => recoveredAt;
+    try {
+      assert.equal((await postPrivate(keyFailureGrant)).status, 200, 'Same pair survives JWKS outage and cooldown');
+      assert.equal(recoveringKeyFetches, 2);
+    } finally {
+      Date.now = realNow;
+    }
+
     registrationTesting.setCimdOptions({
       lookup: async () => [{ address: '93.184.216.34', family: 4 }],
       fetchImpl: async () => new Response(JSON.stringify({

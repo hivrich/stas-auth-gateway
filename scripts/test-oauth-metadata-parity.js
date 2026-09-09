@@ -86,9 +86,10 @@ try {
   assertIncludesAll(metadata.grant_types_supported || [], ['authorization_code', expected.agentAuthClaimGrantType], 'grant_types_supported');
   assertIncludesAll(
     metadata.token_endpoint_auth_methods_supported || [],
-    ['client_secret_basic', 'client_secret_post', 'none'],
+    ['client_secret_basic', 'client_secret_post', 'none', 'private_key_jwt'],
     'token_endpoint_auth_methods_supported',
   );
+  assert.deepEqual(metadata.token_endpoint_auth_signing_alg_values_supported, ['RS256']);
 
   assert.ok(metadata.agent_auth, 'expected gateway metadata to advertise Agent Auth when configured');
   assert.equal(metadata.agent_auth.skill, expected.agentAuthSkillUrl);

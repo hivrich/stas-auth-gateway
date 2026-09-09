@@ -13,6 +13,9 @@ COPY middleware ./middleware
 COPY routes ./routes
 COPY scripts/test-icu-post-oauth.js ./scripts/test-icu-post-oauth.js
 COPY scripts/test-oauth-flow.js ./scripts/test-oauth-flow.js
+COPY scripts/fixtures/private-key-jwt.js ./scripts/fixtures/private-key-jwt.js
+COPY scripts/check-oauth-replay-readiness.js ./scripts/check-oauth-replay-readiness.js
+COPY scripts/check-private-key-jwt-discovery.js ./scripts/check-private-key-jwt-discovery.js
 
 ENV PORT=3001
 EXPOSE 3001
