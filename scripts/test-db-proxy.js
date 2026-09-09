@@ -280,6 +280,8 @@ async function main() {
     assert.strictEqual(dbProxy.__testing.getDbProxyTimeoutMs('GET', '/activity_detail'), 40000);
     assert.strictEqual(dbProxy.__testing.getDbProxyTimeoutMs('GET', '/user_summary/v2'), 15000);
     assert.strictEqual(dbProxy.__testing.getDbProxyTimeoutMs('GET', 'user_summary/v2'), 15000);
+    assert.strictEqual(dbProxy.__testing.getDbProxyTimeoutMs('GET', '/user_summary/v3'), 15000);
+    assert.strictEqual(dbProxy.__testing.getDbProxyTimeoutMs('GET', 'user_summary/v3'), 15000);
     assert.strictEqual(dbProxy.__testing.getDbProxyTimeoutMs('GET', '/user_summary'), 10000);
     assert.strictEqual(dbProxy.__testing.getDbProxyTimeoutMs('POST', '/user_summary/v2'), 10000);
     assert.strictEqual(dbProxy.__testing.getDbProxyTimeoutMs('POST', '/activity_detail'), 10000);
@@ -344,6 +346,10 @@ async function main() {
     });
 
     observed = await runRequestWithObservedTimeout({}, 'user-42', { path: '/user_summary/v2' });
+    assert.strictEqual(observed.response.statusCode, 200);
+    assert.deepStrictEqual(observed.delays, [15000]);
+
+    observed = await runRequestWithObservedTimeout({}, 'user-42', { path: '/user_summary/v3' });
     assert.strictEqual(observed.response.statusCode, 200);
     assert.deepStrictEqual(observed.delays, [15000]);
 

@@ -29,7 +29,7 @@ const expectedActionsPaths = [
   '/gw/api/db/profile_changes/{changeId}/restore',
   '/gw/icu/events',
   '/gw/trainings',
-  '/gw/api/db/user_summary/v2',
+  '/gw/api/db/user_summary/v3',
   '/gw/strategy',
 ];
 
@@ -423,7 +423,17 @@ async function main() {
     'GPT Builder requires properties to be present for wellness custom-field objects',
   );
 
-  const userSummaryV2 = gatewaySchema.paths['/gw/api/db/user_summary/v2'].get;
+  const userSummaryV3 = gatewaySchema.paths['/gw/api/db/user_summary/v3'].get;
+  assert.equal(userSummaryV3.operationId, 'getUserSummaryGw');
+  assert.match(userSummaryV3.description, /If evidenceArchive exists/);
+  assert.equal(
+    gatewaySchema.components.schemas.UserSummaryV3CompleteResponse.properties.openaiFileResponse.maxItems,
+    1,
+  );
+  assert.equal(
+    gatewaySchema.components.schemas.UserSummaryV3PartialResponse.properties.openaiFileResponse.maxItems,
+    1,
+  );
   for (const pathItem of Object.values(gatewaySchema.paths)) {
     for (const operation of Object.values(pathItem)) {
       if (operation?.operationId && operation.description) {

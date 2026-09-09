@@ -8,7 +8,7 @@ const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
 const STAS_KEY  = process.env.STAS_KEY  ;
 const DEFAULT_DB_PROXY_TIMEOUT_MS = 10000;
 const ACTIVITY_DETAIL_TIMEOUT_MS = 40000;
-const USER_SUMMARY_V2_TIMEOUT_MS = 15000;
+const USER_SUMMARY_TIMEOUT_MS = 15000;
 
 function safeJSON(text, fallback=null) {
   try { return JSON.parse(text); } catch { return fallback; }
@@ -27,8 +27,8 @@ function requestBodyForFetch(req) {
 function getDbProxyTimeoutMs(method, path) {
   const normalizedMethod = String(method || 'GET').toUpperCase();
   const normalizedPath = `/${String(path || '').replace(/^\/+/, '')}`;
-  if (normalizedMethod === 'GET' && normalizedPath === '/user_summary/v2') {
-    return USER_SUMMARY_V2_TIMEOUT_MS;
+  if (normalizedMethod === 'GET' && ['/user_summary/v2', '/user_summary/v3'].includes(normalizedPath)) {
+    return USER_SUMMARY_TIMEOUT_MS;
   }
   if (normalizedMethod === 'GET' && normalizedPath === '/activity_detail') {
     return ACTIVITY_DETAIL_TIMEOUT_MS;

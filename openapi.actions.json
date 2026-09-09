@@ -780,12 +780,12 @@
         }
       }
     },
-    "/gw/api/db/user_summary/v2": {
+    "/gw/api/db/user_summary/v3": {
       "get": {
         "operationId": "getUserSummaryGw",
         "x-openai-isConsequential": false,
-        "summary": "Get full user summary via gateway in up to three parts",
-        "description": "Read part 1. If partial, read parts 2..parts with expectedVersion=summaryVersion, merge data, then answer. On version_mismatch restart. goalsProjection.view=compact_v1: join item.id to profile.goalItems.publicId; omitted goal fields are duplicate/inherited/empty. Use data.chatFooter exactly.",
+        "summary": "Get full user summary via gateway v3 in up to three parts",
+        "description": "On partial, get parts using summaryVersion; merge data and profileContinuation.fields into profile. If evidenceArchive exists, follow attached registry instructions. Restart on version_mismatch. goalsProjection.view=compact_v1: join item.id to profile.goalItems.publicId. Use data.chatFooter exactly.",
         "parameters": [
           {
             "name": "part",
@@ -818,7 +818,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserSummaryV2Response"
+                  "$ref": "#/components/schemas/UserSummaryV3Response"
                 }
               }
             }
@@ -828,7 +828,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserSummaryV2InvalidRequestResponse"
+                  "$ref": "#/components/schemas/UserSummaryV3InvalidRequestResponse"
                 }
               }
             }
@@ -848,7 +848,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserSummaryV2SmallErrorResponse"
+                  "$ref": "#/components/schemas/UserSummaryV3SmallErrorResponse"
                 }
               }
             }
@@ -858,7 +858,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserSummaryV2VersionMismatchResponse"
+                  "$ref": "#/components/schemas/UserSummaryV3VersionMismatchResponse"
                 }
               }
             }
@@ -868,7 +868,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserSummaryV2TooLargeResponse"
+                  "$ref": "#/components/schemas/UserSummaryV3TooLargeResponse"
                 }
               }
             }
@@ -1958,17 +1958,17 @@
         ],
         "additionalProperties": false
       },
-      "UserSummaryV2Response": {
+      "UserSummaryV3Response": {
         "oneOf": [
           {
-            "$ref": "#/components/schemas/UserSummaryV2CompleteResponse"
+            "$ref": "#/components/schemas/UserSummaryV3CompleteResponse"
           },
           {
-            "$ref": "#/components/schemas/UserSummaryV2PartialResponse"
+            "$ref": "#/components/schemas/UserSummaryV3PartialResponse"
           }
         ]
       },
-      "UserSummaryV2CompleteResponse": {
+      "UserSummaryV3CompleteResponse": {
         "type": "object",
         "properties": {
           "status": {
@@ -1982,6 +1982,12 @@
           },
           "data": {
             "$ref": "#/components/schemas/UserSummaryData"
+          },
+          "openaiFileResponse": {
+            "type": "array",
+            "description": "Short-lived URL for the normalized Summary evidence registry. Together with inline decision fields it reconstructs every original evidence view.",
+            "maxItems": 1,
+            "items": { "type": "string", "format": "uri" }
           }
         },
         "required": [
@@ -1991,7 +1997,7 @@
         ],
         "additionalProperties": false
       },
-      "UserSummaryV2PartialResponse": {
+      "UserSummaryV3PartialResponse": {
         "type": "object",
         "properties": {
           "status": {
@@ -2020,6 +2026,12 @@
           },
           "data": {
             "$ref": "#/components/schemas/UserSummaryData"
+          },
+          "openaiFileResponse": {
+            "type": "array",
+            "description": "Short-lived URL for the normalized Summary evidence registry. Present only on part 1; together with inline decision fields it reconstructs every original evidence view.",
+            "maxItems": 1,
+            "items": { "type": "string", "format": "uri" }
           }
         },
         "required": [
@@ -2031,7 +2043,7 @@
         ],
         "additionalProperties": false
       },
-      "UserSummaryV2InvalidRequestResponse": {
+      "UserSummaryV3InvalidRequestResponse": {
         "type": "object",
         "properties": {
           "status": {
@@ -2046,7 +2058,7 @@
         ],
         "additionalProperties": false
       },
-      "UserSummaryV2SmallErrorResponse": {
+      "UserSummaryV3SmallErrorResponse": {
         "type": "object",
         "properties": {
           "error": {
@@ -2058,7 +2070,7 @@
         ],
         "additionalProperties": false
       },
-      "UserSummaryV2VersionMismatchResponse": {
+      "UserSummaryV3VersionMismatchResponse": {
         "type": "object",
         "properties": {
           "status": {
@@ -2077,7 +2089,7 @@
         ],
         "additionalProperties": false
       },
-      "UserSummaryV2TooLargeResponse": {
+      "UserSummaryV3TooLargeResponse": {
         "type": "object",
         "properties": {
           "status": {
