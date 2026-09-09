@@ -13,6 +13,7 @@
     "test:oauth": "node scripts/test-oauth-flow.js",
     "test:mcp-oauth": "node scripts/test-mcp-oauth-core.js",
     "test:private-key-jwt": "node --test scripts/test-private-key-jwt.js",
+    "test:oauth-token-diagnostics": "node scripts/test-oauth-token-diagnostics.js",
     "test:oauth-release-safety": "node --test scripts/test-oauth-release-safety.js",
     "test:mcp-bearer": "node scripts/test-mcp-bearer-integration.js",
     "test:db-proxy": "node scripts/test-db-proxy.js",

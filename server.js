@@ -23,12 +23,15 @@ const {
 const { buildOAuthAuthorizationServerMetadata } = require('./lib/oauth-metadata');
 const { buildStasSourceHeaders } = require('./lib/request-source');
 const { getRequestUserId } = require('./lib/request-auth');
+const { tokenIngress, tokenParserError } = require('./lib/oauth-token-diagnostics');
 
 const PORT = process.env.PORT || 3337;
 
 function createApp() {
   const app = express();
   app.set('trust proxy', 1);
+  // Observe token requests before rate limiting or either body parser can exit.
+  app.use(tokenIngress);
   app.use(securityHeaders());
   app.use(publicDiscoveryCors());
   app.use(sensitiveOAuthCorsGuard());
@@ -99,8 +102,10 @@ function createApp() {
   app.use('/gw/icu', icu);
 
   app.use((req, res) => res.status(404).json({ error: 'not_found', path: req.path }));
-  app.use((err, _req, res, _next) => {
-    console.error('[ERR]', err && err.stack || err);
+  app.use((err, req, res, _next) => {
+    // Parser stacks can include submitted JSON. Keep the existing HTTP result,
+    // but token diagnostics must never emit that body or arbitrary error text.
+    if (!tokenParserError(req, err)) console.error('[ERR]', err && err.stack || err);
     res.status(500).json({ error: 'internal_error' });
   });
 
