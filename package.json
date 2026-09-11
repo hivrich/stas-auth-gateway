@@ -20,6 +20,7 @@
     "test:single-call-writes": "node scripts/test-single-call-writes.js",
     "test:agent-auth": "node scripts/test-agent-auth.js",
     "test:route-order": "node scripts/test-server-route-order.js",
+    "test:request-id": "node scripts/test-request-id.js",
     "test:openapi-contract": "node scripts/test-openapi-contract.js",
     "test:oauth-metadata-parity": "node scripts/test-oauth-metadata-parity.js"
   },

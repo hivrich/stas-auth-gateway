@@ -22,7 +22,8 @@ const {
 } = require('./middleware/security');
 const { buildOAuthAuthorizationServerMetadata } = require('./lib/oauth-metadata');
 const { buildStasSourceHeaders } = require('./lib/request-source');
-const { getRequestUserId } = require('./lib/request-auth');
+const { getStasRequestId, requestIdIngress } = require('./lib/request-id');
+const { getRequestUserId, getResolvedAuth } = require('./lib/request-auth');
 const { tokenIngress, tokenParserError } = require('./lib/oauth-token-diagnostics');
 
 const PORT = process.env.PORT || 3337;
@@ -30,6 +31,9 @@ const PORT = process.env.PORT || 3337;
 function createApp() {
   const app = express();
   app.set('trust proxy', 1);
+  // First middleware: every later log record and outbound call can carry one
+  // accepted-or-generated x-stas-request-id, and every response echoes it.
+  app.use(requestIdIngress);
   // Observe token requests before rate limiting or either body parser can exit.
   app.use(tokenIngress);
   app.use(securityHeaders());
@@ -66,7 +70,16 @@ function createApp() {
   app.get('/gw/api/me', (req, res) => {
     const uid = getRequestUserId(req);
     if (!uid) return res.status(401).json({ status: 401, error: 'missing_or_invalid_token' });
-    res.json({ ok: true, user_id: String(uid), email: null });
+    try {
+      console.log('[auth][me]', JSON.stringify({
+        stas_request_id: getStasRequestId(req),
+        method: req.method,
+        path: '/gw/api/me',
+        status: 200,
+        auth_mode: getResolvedAuth(req)?.authMode || null,
+      }));
+    } catch {}
+    return res.json({ ok: true, user_id: String(uid), email: null });
   });
 
   app.post('/gw/strategy', async (req, res) => {
@@ -101,12 +114,30 @@ function createApp() {
   catch(e){ console.error("[icu][DELETE] attach failed:", e && e.message); }
   app.use('/gw/icu', icu);
 
-  app.use((req, res) => res.status(404).json({ error: 'not_found', path: req.path }));
+  app.use((req, res) => {
+    try {
+      console.warn('[http][not_found]', JSON.stringify({
+        stas_request_id: getStasRequestId(req),
+        method: req.method,
+        path: String(req.path || '').split('?')[0] || null,
+      }));
+    } catch {}
+    return res.status(404).json({ error: 'not_found', path: req.path });
+  });
   app.use((err, req, res, _next) => {
-    // Parser stacks can include submitted JSON. Keep the existing HTTP result,
-    // but token diagnostics must never emit that body or arbitrary error text.
-    if (!tokenParserError(req, err)) console.error('[ERR]', err && err.stack || err);
-    res.status(500).json({ error: 'internal_error' });
+    // Token diagnostics still observe parser failures and keep their HTTP
+    // result; the log record itself only ever carries server-owned fields.
+    const parserError = tokenParserError(req, err);
+    try {
+      console.error('[http][unhandled_error]', JSON.stringify({
+        stas_request_id: getStasRequestId(req),
+        method: req.method,
+        path: String(req.path || '').split('?')[0] || null,
+        status: 500,
+        category: parserError ? 'body_rejected' : 'internal_error',
+      }));
+    } catch {}
+    return res.status(500).json({ error: 'internal_error' });
   });
 
   return app;

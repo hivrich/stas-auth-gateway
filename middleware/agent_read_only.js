@@ -1,3 +1,5 @@
+const { getStasRequestId } = require('../lib/request-id');
+
 const AGENT_READ_ROUTES = new Set([
   'GET /gw/api/me',
   'GET /gw/trainings',
@@ -31,6 +33,7 @@ module.exports = function agentReadOnlyGuard() {
 
     try {
       console.warn('[agent_auth][deny]', JSON.stringify({
+        stas_request_id: getStasRequestId(req),
         method: req.method,
         path: requestPath(req),
         registration_id: req.auth.registrationId || null,

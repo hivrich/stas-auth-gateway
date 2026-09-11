@@ -1,6 +1,7 @@
 const express = require('express');
 const { pipeProxy } = require('../helpers/simpleProxy');
 const { getRequestUserId } = require('../lib/request-auth');
+const { stasRequestIdForwardHeaders } = require('../lib/request-id');
 
 const STAS_BASE = process.env.STAS_INTERNAL_BASE_URL || 'http://127.0.0.1:3336';
 const STAS_KEY  = process.env.STAS_API_KEY || '';
@@ -54,7 +55,7 @@ router.get('/api/db/user_summary', async (req, res) => {
     qs.set('user_id', String(uid));
     const env = fs.readFileSync('/opt/stas-db-bridge/.env','utf8');
     const apikey = (env.split(/\r?\n/).find(x=>/^API_KEY=/.test(x))||'').split('=',2)[1].trim();
-    const r = await fetch(`http://127.0.0.1:3336/api/db/user_summary?${qs.toString()}`, { headers: { 'X-API-Key': apikey }});
+    const r = await fetch(`http://127.0.0.1:3336/api/db/user_summary?${qs.toString()}`, { headers: { 'X-API-Key': apikey, ...stasRequestIdForwardHeaders(req) }});
     if (!r.ok) return res.status(r.status).json({ ok:false, status:r.status });
     const j = await r.json();
     return res.json(j);

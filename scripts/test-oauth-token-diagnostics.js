@@ -79,7 +79,9 @@ function assertEvents(entries, count = 1) {
     assert.equal(item.method, 'POST');
     assert.equal(item.stage, REASONS[item.reason]);
     assert.ok(['lt_100ms', 'lt_1s', 'lt_10s', 'gte_10s'].includes(item.duration));
-    assert.deepEqual(Object.keys(item).sort(), ['request_id','method','path','content_type','stage','reason','grant','client_method','status','completion','duration'].sort());
+    assert.ok(item.stas_request_id === null || /^[a-f0-9-]{36}$/.test(item.stas_request_id),
+      'token diagnostics carry the ingress-accepted caller id, null without ingress');
+    assert.deepEqual(Object.keys(item).sort(), ['request_id','stas_request_id','method','path','content_type','stage','reason','grant','client_method','status','completion','duration'].sort());
   }
   return outcomes;
 }

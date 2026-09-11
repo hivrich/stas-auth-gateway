@@ -1,6 +1,7 @@
 const express = require('express');
 const router  = express.Router();
 const { getRequestUserId } = require('../lib/request-auth');
+const { getStasRequestId } = require('../lib/request-id');
 const { buildStasSourceHeaders } = require('../lib/request-source');
 
 // === Config to STAS DB Bridge ===
@@ -12,6 +13,25 @@ const USER_SUMMARY_TIMEOUT_MS = 15000;
 
 function safeJSON(text, fallback=null) {
   try { return JSON.parse(text); } catch { return fallback; }
+}
+
+// Log-safe upstream error category: timeout vs any other upstream failure.
+// Raw error text, URLs and query strings never reach the log sink.
+function upstreamErrorCategory(error) {
+  const name = String(error?.name || '');
+  const code = String(error?.code || '');
+  const message = String(error?.message || '');
+  return (name === 'AbortError' || name === 'TimeoutError' || code === 'ABORT_ERR' ||
+    /\b(abort|aborted|timeout|timed out)\b/i.test(message)) ? 'upstream_timeout' : 'upstream_error';
+}
+
+function proxyLogFields(req, extra = {}) {
+  return JSON.stringify({
+    stas_request_id: getStasRequestId(req),
+    method: req.method,
+    path: req.path,
+    ...extra,
+  });
 }
 
 function methodCanHaveBody(method) {
@@ -51,7 +71,7 @@ router.use(async (req, res) => {
   for (const [k, v] of q.entries()) url.searchParams.set(k, v);
 
   const started = Date.now();
-  console.log(`[db_proxy][REQ] ${req.method} ${req.originalUrl} → ${url.toString()}`);
+  try { console.log(`[db_proxy][REQ] ${proxyLogFields(req, { upstream_path: url.pathname })}`); } catch {}
 
   // Most DB proxy calls stay short; activity_detail can wait on live activity/stream fetches.
   const timeoutMs = getDbProxyTimeoutMs(req.method, req.path);
@@ -81,12 +101,19 @@ router.use(async (req, res) => {
     const ct  = r.headers.get('content-type') || 'application/json; charset=utf-8';
 
     // No heavy transforms anymore — просто проксируем как есть
-    console.log(`[db_proxy][RES] ${r.status} {bytes:${body.length}} ${Date.now()-started}ms`);
+    try { console.log(`[db_proxy][RES] ${proxyLogFields(req, {
+      status: r.status,
+      duration_ms: Date.now() - started,
+      bytes: body.length,
+    })}`); } catch {}
     res.status(r.status).set('content-type', ct).send(body);
   } catch (e) {
-    const ms = Date.now() - started;
-    console.error(`[db_proxy][ERR] ${e?.message || e} after ${ms}ms`);
     const status = e?.name === 'AbortError' || String(e.message||'').includes('aborted') ? 504 : 502;
+    try { console.error(`[db_proxy][ERR] ${proxyLogFields(req, {
+      status,
+      duration_ms: Date.now() - started,
+      category: upstreamErrorCategory(e),
+    })}`); } catch {}
     res.status(status).json({ error: status === 504 ? 'gateway_timeout' : 'bad_gateway' });
   } finally {
     clearTimeout(timer);

@@ -1,5 +1,6 @@
 const express = require('express');
 const router  = express.Router();
+const { getStasRequestId } = require('../lib/request-id');
 const { getIcuRequestAuth } = require('../lib/icu-request-auth');
 
 function buildAuthHeaders(auth, mode) {
@@ -10,6 +11,23 @@ function buildAuthHeaders(auth, mode) {
     headers.Authorization = `Bearer ${auth.token}`;
   }
   return headers;
+}
+
+// Log-safe upstream error category: timeout vs any other upstream failure.
+function upstreamErrorCategory(error) {
+  const name = String(error?.name || '');
+  const message = String(error?.message || '');
+  return (name === 'AbortError' || name === 'TimeoutError' ||
+    /\b(abort|aborted|timeout|timed out)\b/i.test(message)) ? 'upstream_timeout' : 'upstream_error';
+}
+
+function icuLogFields(req, extra = {}) {
+  return JSON.stringify({
+    stas_request_id: getStasRequestId(req),
+    method: req.method,
+    path: req.path,
+    ...extra,
+  });
 }
 
 // GET /gw/icu/events?days=7 (или oldest/newest)
@@ -26,7 +44,7 @@ router.get('/events', async (req, res) => {
     if (!qs.has('days') && !qs.has('oldest') && !qs.has('newest')) qs.set('days','7');
 
     const icuUrl = new URL(`/api/v1/athlete/${encodeURIComponent(auth.athleteId)}/events?${qs.toString()}`, 'https://intervals.icu');
-    try { console.log("[icu][DBG] GET", icuUrl, { athlete_id: auth.athleteId, auth_mode: auth.authMode }); } catch(e){}
+    try { console.log(`[icu][DBG] ${icuLogFields(req, { auth_mode: auth.authMode })}`); } catch(e){}
 
     let ir = await fetch(icuUrl, { headers: buildAuthHeaders(auth, 'bearer') });
     if ((ir.status === 401 || ir.status === 403) && auth.authMode === 'legacy') {
@@ -61,7 +79,10 @@ router.get('/events', async (req, res) => {
     if (e?.status === 409) {
       return res.status(409).json({ error: 'intervals_reconnect_required' });
     }
-    console.error('[icu.events]', e && e.stack || e);
+    try { console.error(`[icu.events][ERR] ${icuLogFields(req, {
+      status: 502,
+      category: upstreamErrorCategory(e),
+    })}`); } catch(e2){}
     return res.status(502).json({ error: 'bad_gateway' });
   }
 });
