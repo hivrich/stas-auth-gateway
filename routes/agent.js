@@ -166,7 +166,9 @@ async function handleAgentCallback(req, res, next) {
 
     const upstreamError = trimToString(req.query?.error);
     if (upstreamError) {
-      console.warn("[agent_auth][callback][upstream_error]", JSON.stringify({ error: upstreamError }));
+      // Upstream OAuth error codes are enum-style; bound them anyway so no
+      // arbitrary query value can flood or leak into the log sink.
+      console.warn("[agent_auth][callback][upstream_error]", JSON.stringify({ error: upstreamError.slice(0, 64) || null }));
       renderErrorPage(400, res);
       return true;
     }

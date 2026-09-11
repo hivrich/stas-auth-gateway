@@ -1,4 +1,5 @@
 const http = require('http'); const https = require('https'); const { URL } = require('url');
+const { STAS_REQUEST_ID_HEADER } = require('../lib/request-id');
 function stripHopByHop(h) {
   const out = {...h};
   for (const k of ['connection','keep-alive','proxy-authenticate','proxy-authorization','te','trailers','transfer-encoding','upgrade','content-length']) {
@@ -13,7 +14,15 @@ function pipeProxy(targetBase, req, res, extraHeaders = {}, pathRewrite = (p)=>p
   const rewrittenPath = pathRewrite(req.originalUrl || req.url);
   const u = new URL(rewrittenPath, base);
 
-  const headers = { ...stripHopByHop(req.headers), ...extraHeaders, host: base.host, connection: 'close' };
+  // Override any raw incoming header with the validated request id, so a
+  // replaced (malformed or overlong) caller value cannot leak downstream.
+  const headers = {
+    ...stripHopByHop(req.headers),
+    ...extraHeaders,
+    ...(req?.stasRequestId ? { [STAS_REQUEST_ID_HEADER]: req.stasRequestId } : {}),
+    host: base.host,
+    connection: 'close',
+  };
   const opts = {
     protocol: base.protocol,
     hostname: base.hostname,

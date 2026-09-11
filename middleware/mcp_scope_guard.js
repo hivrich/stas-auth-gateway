@@ -1,4 +1,5 @@
 const { getResolvedAuth } = require('../lib/request-auth');
+const { getStasRequestId } = require('../lib/request-id');
 const { scopeAllows } = require('../lib/mcp-oauth-scopes');
 
 function classifyMcpScopeCategory(pathname) {
@@ -29,6 +30,14 @@ module.exports = function mcpScopeGuard() {
     if (scopeAllows(auth.scopes, category, write)) return next();
 
     const requiredScope = `${category}:${write ? 'WRITE' : 'READ'}`;
+    try {
+      console.warn('[auth][scope_denied]', JSON.stringify({
+        stas_request_id: getStasRequestId(req),
+        method: req.method,
+        path: pathname,
+        required_scope: requiredScope,
+      }));
+    } catch {}
     res.setHeader('WWW-Authenticate', `Bearer error="insufficient_scope", scope="${requiredScope}"`);
     return res.status(403).json({ error: 'insufficient_scope', scope: requiredScope });
   };
