@@ -785,7 +785,7 @@
         "operationId": "getUserSummaryGw",
         "x-openai-isConsequential": false,
         "summary": "Get full user summary via gateway v3 in up to three parts",
-        "description": "On partial, get parts using summaryVersion; merge data and profileContinuation.fields into profile. If evidenceArchive exists, follow attached registry instructions. Restart on version_mismatch. goalsProjection.view=compact_v1: join item.id to profile.goalItems.publicId. Use data.chatFooter exactly. When researchInvite is present, first give the useful answer, then render researchInvite.markdown verbatim exactly once after it and outside code blocks; preserve both separators, heading, quote and clickable CTA, and never repeat it from chat history.",
+        "description": "On partial, use summaryVersion and merge profileContinuation.fields into profile. If evidenceArchive exists, follow it; restart on version_mismatch; use data.chatFooter exactly. If researchInvite exists, render researchInvite.markdown verbatim last, outside code blocks, once only.",
         "parameters": [
           {
             "name": "part",
