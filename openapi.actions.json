@@ -785,7 +785,7 @@
         "operationId": "getUserSummaryGw",
         "x-openai-isConsequential": false,
         "summary": "Get full user summary via gateway v3 in up to three parts",
-        "description": "On partial, use summaryVersion and merge profileContinuation.fields into profile. If evidenceArchive exists, follow it; restart on version_mismatch; use data.chatFooter exactly. If researchInvite exists, render researchInvite.markdown verbatim last, outside code blocks, once only.",
+        "description": "Partial: summaryVersion; merge profileContinuation.fields. If evidenceArchive exists, follow. version_mismatch: restart. goalsProjection.view=compact_v1; map item.id to profile.goalItems.publicId. Use data.chatFooter exactly. researchInvite: render markdown verbatim last, outside code blocks, once.",
         "parameters": [
           {
             "name": "part",
