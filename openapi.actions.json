@@ -57,7 +57,7 @@
         "operationId": "getChatFooter",
         "x-openai-isConsequential": false,
         "summary": "Get the authoritative footer before every reply",
-        "description": "Call before every final reply. Render only chatFooter after the answer. If absent, omit the footer and never invent links.",
+        "description": "Call before every final reply. After the useful answer, render current researchInvite markdown once as a separate block, then exact chatFooter. If absent, omit it; never invent links.",
         "parameters": [
           {
             "name": "section",
@@ -785,7 +785,7 @@
         "operationId": "getUserSummaryGw",
         "x-openai-isConsequential": false,
         "summary": "Get full user summary via gateway v3 in up to three parts",
-        "description": "Partial: summaryVersion; merge profileContinuation.fields. If evidenceArchive exists, follow. version_mismatch: restart. goalsProjection.view=compact_v1; map item.id to profile.goalItems.publicId. Use data.chatFooter exactly. researchInvite: render markdown verbatim last, outside code blocks, once.",
+        "description": "summaryVersion; merge profileContinuation.fields. If evidenceArchive exists, follow. version_mismatch: restart. goalsProjection.view=compact_v1; map item.id to profile.goalItems.publicId. researchInvite: render markdown verbatim once, separately, before data.chatFooter. Use data.chatFooter exactly.",
         "parameters": [
           {
             "name": "part",
@@ -1928,6 +1928,9 @@
         "properties": {
           "chatFooter": {
             "$ref": "#/components/schemas/ChatFooter"
+          },
+          "researchInvite": {
+            "$ref": "#/components/schemas/AiResearchInvite"
           }
         },
         "additionalProperties": true
