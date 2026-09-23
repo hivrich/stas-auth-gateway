@@ -69,6 +69,36 @@
                 "footer"
               ]
             }
+          },
+          {
+            "name": "locale",
+            "in": "query",
+            "required": false,
+            "description": "Always pass the current reply language using an enum value.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "zh",
+                "cs",
+                "nl",
+                "en",
+                "fr",
+                "de",
+                "hi",
+                "id",
+                "it",
+                "ja",
+                "ko",
+                "pl",
+                "pt",
+                "ru",
+                "es",
+                "th",
+                "tr",
+                "uk",
+                "vi"
+              ]
+            }
           }
         ],
         "responses": {
