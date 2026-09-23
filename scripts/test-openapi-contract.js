@@ -352,6 +352,14 @@ async function main() {
   const chatFooter = gatewaySchema.paths['/gw/api/db/user_summary'].get;
   assert.equal(chatFooter.operationId, 'getChatFooter');
   assert.equal(
+    chatFooter.parameters.find((parameter) => parameter.name === 'locale').description,
+    'Always pass the current reply language using an enum value.',
+  );
+  assert.deepEqual(
+    chatFooter.parameters.find((parameter) => parameter.name === 'locale').schema.enum,
+    ['zh', 'cs', 'nl', 'en', 'fr', 'de', 'hi', 'id', 'it', 'ja', 'ko', 'pl', 'pt', 'ru', 'es', 'th', 'tr', 'uk', 'vi'],
+  );
+  assert.equal(
     chatFooter.responses['200'].content['application/json'].schema['$ref'],
     '#/components/schemas/ChatFooterResponse',
   );

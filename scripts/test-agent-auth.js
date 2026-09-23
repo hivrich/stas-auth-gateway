@@ -123,6 +123,8 @@ global.fetch = async (url, options = {}) => {
 
   if (parsed.origin === 'http://stas.local.test' && parsed.pathname === '/api/db/user_summary') {
     assert.equal(parsed.searchParams.get('user_id'), '15487');
+    assert.equal(parsed.searchParams.get('section'), 'footer');
+    assert.equal(parsed.searchParams.get('locale'), 'ru');
     return textResponse(JSON.stringify({ ok: true, summary: 'read-only' }), 200, 'application/json; charset=utf-8');
   }
 
@@ -406,7 +408,7 @@ async function main() {
     assert.equal(response.status, 200);
     assert.deepEqual(response.body, [{ id: 'training-1' }]);
 
-    response = await request(baseUrl, '/gw/api/db/user_summary', { token: agentToken });
+    response = await request(baseUrl, '/gw/api/db/user_summary?section=footer&locale=ru', { token: agentToken });
     assert.equal(response.status, 200);
     assert.equal(response.body.summary, 'read-only');
 
