@@ -1556,6 +1556,12 @@
         "type": "object",
         "description": "Cached Intervals.icu wellness. dates[i] aligns with every series value at index i. complete=true means no locally stored field was truncated, not that the provider supplied every metric.",
         "properties": {
+          "measurementContext": { "type": "object", "properties": { "measurementSystem": { "type": "string", "enum": ["metric", "us"] }, "swimUnit": { "type": "string", "enum": ["m", "yd"] }, "guidance": { "type": "string" } } },
+          "measurementDisplay": {
+            "type": "object",
+            "description": "Presentation only. Align weight.values with dates[i]. Canonical series.weight remains kg; unknown custom scales are unchanged.",
+            "properties": { "weight": { "type": "object", "properties": { "unit": { "type": "string", "enum": ["kg", "lb"] }, "values": { "type": "array", "items": { "type": ["number", "null"] } } }, "required": ["unit", "values"] } }
+          },
           "format": {
             "type": "string",
             "enum": [
@@ -3465,10 +3471,10 @@
       },
       "ActivityMetricSummary": {
         "type": "object",
-        "description": "Compact confirmed metric summary. A metric with samples=null and coveragePct=null is a provider-supplied whole-activity value, not a time series. status=partial requires stating quality.reasons; absence is never zero.",
+        "description": "Compact metric summary. A metric with samples=null and coveragePct=null is a provider-supplied whole-activity value, not a time series. Provider running averages with derivation=provider_reported_or_computed may be manufacturer-reported or calculated by Intervals. status=partial requires stating quality.reasons; absence is never zero.",
         "properties": {
           "status": { "type": "string", "enum": ["available", "partial", "unavailable"] },
-          "sourcesUsed": { "type": "array", "items": { "type": "string", "enum": ["intervals_activity", "intervals_streams", "original_fit_records", "original_fit_session"] } },
+          "sourcesUsed": { "type": "array", "items": { "type": "string", "enum": ["intervals_activity", "intervals_streams", "intervals_interval", "intervals_lap", "original_fit_records", "original_fit_session"] } },
           "availableMetrics": { "type": "array", "items": { "type": "string" } },
           "wholeActivity": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/ActivityMetric" } },
           "quality": { "type": "object", "additionalProperties": true }
@@ -3478,7 +3484,9 @@
       "ActivityMetric": {
         "type": "object",
         "properties": {
-          "unit": { "type": "string" }, "source": { "type": "string" },
+          "unit": { "type": "string" },
+          "source": { "type": "string", "enum": ["intervals_activity", "intervals_streams", "intervals_interval", "intervals_lap", "original_fit_records", "original_fit_session"] },
+          "derivation": { "type": "string", "enum": ["provider_reported_or_computed", "provider_computed"] },
           "samples": { "type": ["number", "null"] }, "coveragePct": { "type": ["number", "null"] },
           "avg": { "type": ["number", "null"] }, "median": { "type": ["number", "null"] },
           "min": { "type": ["number", "null"] }, "max": { "type": ["number", "null"] }
@@ -4007,14 +4015,15 @@
           },
           "recordedMetrics": {
             "type": "object",
-            "description": "Optional per-interval or per-lap averages from safely aligned recorded streams. Only avg and coveragePct are supplied; it is omitted when alignment is not reliable.",
+            "description": "Optional per-interval or per-lap recorded metrics. Stream/FIT records require safe alignment and report numeric coverage; Intervals interval/lap averages have unknown coverage (null). Provider averages are marked provider_reported_or_computed.",
             "additionalProperties": {
               "type": "object",
               "properties": {
                 "avg": { "type": "number" },
-                "coveragePct": { "type": "number" },
+                "coveragePct": { "type": ["number", "null"] },
                 "unit": { "type": "string" },
-                "source": { "type": "string", "enum": ["intervals_streams", "original_fit_records"] }
+                "source": { "type": "string", "enum": ["intervals_streams", "intervals_interval", "intervals_lap", "original_fit_records"] },
+                "derivation": { "type": "string", "enum": ["provider_reported_or_computed", "provider_computed"] }
               },
               "required": ["avg", "coveragePct", "unit", "source"],
               "additionalProperties": false
@@ -4279,6 +4288,9 @@
       "ActivityDetailWeatherSummary": {
         "type": "object",
         "properties": {
+          "sourceUnitWarnings": { "type": "array", "items": { "type": "string", "enum": ["temperature", "windSpeed"] }, "description": "Legacy alias units are unconfirmed; do not infer units from field names or convert these aliases." },
+          "temperatureDisplay": { "type": "string", "description": "Ready-labeled temperature in the current preference; canonical temperatureC remains Celsius." },
+          "windSpeedDisplay": { "type": "string", "description": "Ready-labeled wind in m/s or mph; canonical windSpeedMps remains m/s." },
           "temperatureC": {
             "type": [
               "number",
