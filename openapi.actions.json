@@ -2983,7 +2983,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Athlete-written workout notes from the cached Intervals activity description and current STAS report. The current report is not appended again when its full text is already contained in the description; existing repeated text is preserved. Notes alone do not mean an STAS report was submitted; check reportStatus in get_trainings."
           },
           "sportMetrics": {
             "type": "object",
@@ -3042,7 +3043,7 @@
           },
           "listDetail": {
             "$ref": "#/components/schemas/TrainingListDetail",
-            "description": "Accounting for this bounded list projection. It reports rows returned, truncation, and fields omitted under the response budget; use getActivityDetailFromDB for one exact selected workout."
+            "description": "Accounting for this bounded list projection, including whether workout notes were shortened to fit the response budget. For complete notes, use getActivityDetailFromDB for one selected workout."
           }
         },
         "required": [
@@ -3201,7 +3202,8 @@
             "$ref": "#/components/schemas/TrainingListSectionAccounting"
           },
           "userReportTruncated": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "True when the combined athlete-written workout notes were shortened to fit the bounded list response."
           },
           "responseBudgetAdjusted": {
             "type": "boolean"
@@ -3561,7 +3563,7 @@
               "string",
               "null"
             ],
-            "description": "User self-report for the workout if available."
+            "description": "Athlete-written workout notes from the cached Intervals activity description and current STAS report. The current report is not appended again when its full text is already contained in the description; existing repeated text is preserved. Notes alone do not mean an STAS report was submitted; check reportStatus in get_trainings."
           },
           "externalAssessment": {
             "$ref": "#/components/schemas/ActivityDetailGenericObject"
