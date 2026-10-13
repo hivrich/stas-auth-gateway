@@ -2742,7 +2742,8 @@
             "type": "integer"
           },
           "created": {
-            "type": "integer"
+            "type": "integer",
+            "description": "Saved events whose external_id was not found in the read window: new events, or events moved from a distant date (updated in place by Intervals.icu)."
           },
           "updated": {
             "type": "integer",
