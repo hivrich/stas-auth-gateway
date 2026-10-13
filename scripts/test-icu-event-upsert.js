@@ -20,6 +20,7 @@ let localOrigin = '';
 let store = [];
 let nextId = 1000;
 let calls = [];
+let bulkAsOtherEntry = false; // имитация другого способа входа: bulk upsert не видит чужой external_id и создаёт новое событие
 
 function jsonResponse(body, status = 200) {
   return {
@@ -74,7 +75,7 @@ global.fetch = async (url, options = {}) => {
     const body = JSON.parse(options.body);
     assert.ok(Array.isArray(body));
     const out = body.map((incoming) => {
-      const found = store.find((e) => e.external_id && e.external_id === incoming.external_id);
+      const found = bulkAsOtherEntry ? undefined : store.find((e) => e.external_id && e.external_id === incoming.external_id);
       if (found) {
         Object.assign(found, incoming, { id: found.id });
         return { ...found };
@@ -116,6 +117,7 @@ function ev(daysFromToday, extra = {}) {
 function reset(initial = []) {
   store = initial.map((e) => ({ id: nextId++, ...e }));
   calls = [];
+  bulkAsOtherEntry = false;
 }
 
 async function main() {
@@ -134,8 +136,8 @@ async function main() {
     let r = await post(baseUrl, '?dry_run=false', [ev(3)]);
     assert.equal(r.status, 200);
     assert.deepEqual(
-      { ok: r.body.ok, dry_run: r.body.dry_run, created: r.body.created, updated: r.body.updated, skipped: r.body.skipped, errors: r.body.errors },
-      { ok: true, dry_run: false, created: 1, updated: 0, skipped: 0, errors: [] },
+      { ok: r.body.ok, dry_run: r.body.dry_run, created: r.body.created, updated: r.body.updated, duplicated: r.body.duplicated, skipped: r.body.skipped, errors: r.body.errors },
+      { ok: true, dry_run: false, created: 1, updated: 0, duplicated: 0, skipped: 0, errors: [] },
     );
     assert.equal(r.body.reason, undefined);
     assert.equal(store.length, 1);
@@ -147,6 +149,7 @@ async function main() {
     assert.equal(r.status, 200);
     assert.equal(r.body.created, 0);
     assert.equal(r.body.updated, 1);
+    assert.equal(r.body.duplicated, 0);
     assert.equal(r.body.skipped, 0);
     assert.equal(r.body.reason, undefined);
     assert.equal(store.length, 1, 'no duplicate');
@@ -193,6 +196,49 @@ async function main() {
     assert.equal(store.length, 2);
     assert.equal(store.find((e) => e.external_id === 'note:custom-1').id, noteId);
     assert.equal(r.body.icu.length, 2);
+
+    // Событие существует, а bulk вернул ДРУГОЙ id (другой способ входа) -> duplicated:1, updated:0
+    reset();
+    await post(baseUrl, '?dry_run=false', [ev(3)]);
+    assert.equal(store.length, 1);
+    bulkAsOtherEntry = true;
+    r = await post(baseUrl, '?dry_run=false', [ev(3, { description: 'v2' })]);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.created, 0);
+    assert.equal(r.body.updated, 0);
+    assert.equal(r.body.duplicated, 1);
+    assert.equal(r.body.skipped, 0);
+    assert.equal(store.length, 2, 'the mock really created a duplicate');
+    bulkAsOtherEntry = false;
+
+    // Известное ограничение: событие вне окна чтения (перенесено с +120 на +3 дня), upsert обновил его
+    // по external_id, но в карте предварительного чтения его нет -> считается created:1.
+    reset();
+    await post(baseUrl, '?dry_run=false', [ev(120, { external_id: 'plan:moved-run' })]);
+    const movedId = store[0].id;
+    r = await post(baseUrl, '?dry_run=false', [ev(3, { external_id: 'plan:moved-run' })]);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.created, 1, 'known limitation: out-of-window update counts as created');
+    assert.equal(r.body.updated, 0);
+    assert.equal(r.body.duplicated, 0);
+    assert.equal(store.length, 1, 'but it is not a duplicate');
+    assert.equal(store[0].id, movedId);
+
+    // external_id без префикса plan:/note: в upsert -> 400, в Intervals ничего не уходит
+    for (const bad of ['race:2026-10-20-marathon', 'foo']) {
+      reset();
+      r = await post(baseUrl, '?dry_run=false', [ev(3), ev(4, { external_id: bad })]);
+      assert.equal(r.status, 400);
+      assert.deepEqual(r.body, { error: 'bad_request', message: 'external_id must start with plan: or note:' });
+      assert.equal(calls.length, 0, 'nothing must reach Intervals');
+      assert.equal(store.length, 0);
+    }
+    // dedupe=false и dry_run префикс не проверяют
+    reset();
+    r = await post(baseUrl, '?dry_run=false&dedupe=false', [ev(3, { external_id: 'race:x' })]);
+    assert.equal(r.status, 200);
+    r = await post(baseUrl, '?dry_run=true', [ev(3, { external_id: 'foo' })]);
+    assert.equal(r.status, 200);
 
     // dry_run (по умолчанию и явный) ничего не пишет и не читает
     for (const q of ['', '?dry_run=true']) {

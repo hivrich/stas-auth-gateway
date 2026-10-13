@@ -2748,6 +2748,10 @@
             "type": "integer",
             "description": "Existing events (same external_id) updated in place."
           },
+          "duplicated": {
+            "type": "integer",
+            "description": "Events whose external_id existed, but Intervals.icu wrote a different event id (a duplicate); 0 normally."
+          },
           "skipped": {
             "type": "integer"
           },
