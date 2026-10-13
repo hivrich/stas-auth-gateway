@@ -192,14 +192,27 @@ async function main() {
     ]);
     console.log('ok - partial delete (deleted_ids) puts missing ids into failed');
 
-    // 200 только со счётчиком, меньше запрошенного: консервативно все id в failed.
+    // 200 только со счётчиком, 0 < счётчик < запрошенного: какие удалились — неизвестно.
     bulkDeleteResponder = () => jsonResponse({ deleted_count: 1 });
     response = await request(baseUrl, planDelete, { method: 'DELETE' });
     assert.equal(response.body.ok, false);
+    assert.equal(response.body.error, 'delete_unconfirmed');
     assert.equal(response.body.deleted_count, 1);
+    assert.equal(response.body.requested_count, 3);
+    assert.deepEqual(response.body.unconfirmed_ids, ['116274129', '116274131', '116274133']);
+    assert.deepEqual(response.body.failed, []);
+    console.log('ok - partial delete (count only) reports unconfirmed_ids, not failed');
+
+    // Счётчик 0: точно ничего не удалено, все id в failed.
+    bulkDeleteResponder = () => jsonResponse(0);
+    response = await request(baseUrl, planDelete, { method: 'DELETE' });
+    assert.equal(response.body.ok, false);
+    assert.equal(response.body.error, 'delete_incomplete');
+    assert.equal(response.body.deleted_count, 0);
+    assert.equal(response.body.unconfirmed_ids, undefined);
     assert.deepEqual(response.body.failed.map(item => item.id), ['116274129', '116274131', '116274133']);
     assert.ok(response.body.failed.every(item => item.reason === 'not_deleted_by_intervals'));
-    console.log('ok - partial delete (count only) marks all unconfirmed ids as failed');
+    console.log('ok - count 0 puts all ids into failed');
 
     // Только счётчик, равный запрошенному: как раньше, ok:true.
     bulkDeleteResponder = () => jsonResponse(3);
