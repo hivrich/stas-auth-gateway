@@ -636,7 +636,7 @@
         "operationId": "createPlannedWorkoutsGw",
         "x-openai-isConsequential": false,
         "summary": "Write confirmed planned events",
-        "description": "An explicit request to save the exact understood events is sufficient confirmation. Call once with dry_run=false. Gateway normalizes, deduplicates, writes, and returns the result. Do not read the calendar, preview, or read back in the save turn.",
+        "description": "An explicit request to save the exact understood events is sufficient confirmation. Call once with dry_run=false. Gateway normalizes, writes, and returns the result: events whose external_id already exists in Intervals.icu are updated in place, new ones are created. Do not read the calendar, preview, or read back in the save turn.",
         "requestBody": {
           "required": true,
           "content": {
@@ -2742,7 +2742,27 @@
             "type": "integer"
           },
           "created": {
-            "type": "integer"
+            "type": "integer",
+            "description": "Saved events whose external_id was not found in the read window: new events, or events moved from a distant date (updated in place by Intervals.icu)."
+          },
+          "updated": {
+            "type": "integer",
+            "description": "Existing events (same external_id) updated in place."
+          },
+          "duplicated": {
+            "type": "integer",
+            "description": "Events whose external_id existed, but Intervals.icu wrote a different event id (a duplicate); 0 normally."
+          },
+          "unconfirmed": {
+            "type": "integer",
+            "description": "Events whose write was not confirmed by the Intervals.icu response (no matching row with id); not counted as created or updated."
+          },
+          "unconfirmed_external_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "external_id of each unconfirmed event."
           },
           "skipped": {
             "type": "integer"

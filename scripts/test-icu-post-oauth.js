@@ -60,16 +60,19 @@ global.fetch = async (url, options = {}) => {
 
   if (parsed.origin === 'https://intervals.icu' && parsed.pathname === '/api/v1/athlete/0/events') {
     assert.equal(options.headers.Authorization, 'Bearer intervals-access-token');
-    if ((options.method || 'GET') === 'GET') {
-      assert.equal(parsed.searchParams.get('external_id_prefix'), 'plan:');
-      return jsonResponse([]);
-    }
+    assert.equal((options.method || 'GET'), 'GET');
+    assert.equal(parsed.searchParams.get('oldest'), '2026-06-22');
+    return jsonResponse([]);
+  }
 
+  if (parsed.origin === 'https://intervals.icu' && parsed.pathname === '/api/v1/athlete/0/events/bulk') {
+    assert.equal(options.headers.Authorization, 'Bearer intervals-access-token');
     assert.equal(options.method, 'POST');
-    const body = JSON.parse(options.body || '{}');
-    assert.equal(body.name, 'STAS oauth write test');
-    assert.equal(body.external_id, 'plan:2026-06-22:oauth-write-test');
-    return jsonResponse({ id: 123456, external_id: body.external_id, name: body.name }, 201);
+    assert.equal(parsed.searchParams.get('upsert'), 'true');
+    const body = JSON.parse(options.body || '[]');
+    assert.equal(body[0].name, 'STAS oauth write test');
+    assert.equal(body[0].external_id, 'plan:2026-06-22:oauth-write-test');
+    return jsonResponse([{ id: 123456, external_id: body[0].external_id, name: body[0].name }]);
   }
 
   return jsonResponse({ error: 'unexpected_upstream', url: parsed.toString() }, 500);
@@ -153,7 +156,10 @@ async function main() {
     assert.equal(response.body.created, 1);
     assert.equal(response.body.icu[0].external_id, 'plan:2026-06-22:oauth-write-test');
 
-    const calendarHits = upstreamHits.filter((hit) => new URL(hit.url).pathname === '/api/v1/athlete/0/events');
+    assert.equal(response.body.updated, 0);
+    assert.equal(response.body.skipped, 0);
+
+    const calendarHits = upstreamHits.filter((hit) => new URL(hit.url).pathname.startsWith('/api/v1/athlete/0/events'));
     assert.equal(calendarHits.length, 2);
     assert.deepEqual(calendarHits.map((hit) => hit.method), ['GET', 'POST']);
     assert.equal(calendarHits.every((hit) => hit.headers.Authorization === 'Bearer intervals-access-token'), true);
