@@ -2752,6 +2752,17 @@
             "type": "integer",
             "description": "Events whose external_id existed, but Intervals.icu wrote a different event id (a duplicate); 0 normally."
           },
+          "unconfirmed": {
+            "type": "integer",
+            "description": "Events whose write was not confirmed by the Intervals.icu response (no matching row with id); not counted as created or updated."
+          },
+          "unconfirmed_external_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "external_id of each unconfirmed event."
+          },
           "skipped": {
             "type": "integer"
           },
