@@ -14,6 +14,11 @@ const attachDelete = require('../lib/attach_delete');
 const originalFetch = global.fetch;
 let localOrigin = '';
 const upstreamHits = [];
+// Ответ мок-Intervals на bulk-delete; тесты частичного удаления подменяют его.
+let bulkDeleteResponder = (body) => {
+  assert.deepEqual(body, [{ id: 116577024 }]);
+  return jsonResponse({ deleted_ids: [116577024] });
+};
 const broadCalendar = [
   { id: 116577024, external_id: 'test:write-check:2026-06-18', name: 'STAS write test' },
   { id: 116274129, external_id: 'plan:2026-06-18:easy-run', name: 'Easy run' },
@@ -67,9 +72,7 @@ global.fetch = async (url, options = {}) => {
   }
 
   if (parsed.origin === 'https://intervals.icu' && parsed.pathname === '/api/v1/athlete/0/events/bulk-delete') {
-    const body = JSON.parse(options.body || '[]');
-    assert.deepEqual(body, [{ id: 116577024 }]);
-    return jsonResponse({ deleted_ids: [116577024] });
+    return bulkDeleteResponder(JSON.parse(options.body || '[]'));
   }
 
   return jsonResponse({ error: 'unexpected_upstream', url: parsed.toString() }, 500);
@@ -159,6 +162,64 @@ async function main() {
     assert.ok(deleteHit, 'expected bulk-delete call');
 
     console.log('ok - delete dry-run and real delete are filtered by external_id');
+
+    // Полное удаление нескольких событий: ok:true, failed пуст.
+    const planDelete = '/gw/icu/events?external_id_prefix=plan%3A&oldest=2026-06-18&newest=2026-06-19&dry_run=false';
+    bulkDeleteResponder = (body) => {
+      assert.deepEqual(body, [{ id: 116274129 }, { id: 116274131 }, { id: 116274133 }]);
+      return jsonResponse({ deleted_ids: [116274129, 116274131, 116274133] });
+    };
+    response = await request(baseUrl, planDelete, { method: 'DELETE' });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.ok, true);
+    assert.equal(response.body.deleted_count, 3);
+    assert.deepEqual(response.body.deleted_ids, ['116274129', '116274131', '116274133']);
+    assert.deepEqual(response.body.failed, []);
+    assert.equal(response.body.error, undefined);
+    console.log('ok - full delete reports ok:true and empty failed');
+
+    // 200, но Intervals вернул не все id: неудалённые в failed, ok не true.
+    bulkDeleteResponder = () => jsonResponse({ deleted_ids: [116274129] });
+    response = await request(baseUrl, planDelete, { method: 'DELETE' });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.ok, false);
+    assert.equal(response.body.error, 'delete_incomplete');
+    assert.equal(response.body.deleted_count, 1);
+    assert.deepEqual(response.body.deleted_ids, ['116274129']);
+    assert.deepEqual(response.body.failed, [
+      { id: '116274131', status: 200, reason: 'not_deleted_by_intervals' },
+      { id: '116274133', status: 200, reason: 'not_deleted_by_intervals' },
+    ]);
+    console.log('ok - partial delete (deleted_ids) puts missing ids into failed');
+
+    // 200 только со счётчиком, меньше запрошенного: консервативно все id в failed.
+    bulkDeleteResponder = () => jsonResponse({ deleted_count: 1 });
+    response = await request(baseUrl, planDelete, { method: 'DELETE' });
+    assert.equal(response.body.ok, false);
+    assert.equal(response.body.deleted_count, 1);
+    assert.deepEqual(response.body.failed.map(item => item.id), ['116274129', '116274131', '116274133']);
+    assert.ok(response.body.failed.every(item => item.reason === 'not_deleted_by_intervals'));
+    console.log('ok - partial delete (count only) marks all unconfirmed ids as failed');
+
+    // Только счётчик, равный запрошенному: как раньше, ok:true.
+    bulkDeleteResponder = () => jsonResponse(3);
+    response = await request(baseUrl, planDelete, { method: 'DELETE' });
+    assert.equal(response.body.ok, true);
+    assert.equal(response.body.deleted_count, 3);
+    assert.deepEqual(response.body.failed, []);
+    console.log('ok - full delete (count only) stays ok:true');
+
+    // Ошибка запроса: ok:false, все id в failed со статусом ответа, без reason.
+    bulkDeleteResponder = () => jsonResponse({ error: 'boom' }, 500);
+    response = await request(baseUrl, planDelete, { method: 'DELETE' });
+    assert.equal(response.body.ok, false);
+    assert.equal(response.body.error, undefined);
+    assert.deepEqual(response.body.failed, [
+      { id: '116274129', status: 500 },
+      { id: '116274131', status: 500 },
+      { id: '116274133', status: 500 },
+    ]);
+    console.log('ok - upstream error keeps previous failed shape');
   } finally {
     server.close();
     global.fetch = originalFetch;
