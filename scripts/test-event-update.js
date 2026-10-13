@@ -249,6 +249,7 @@ async function main() {
     // Scope guard для MCP-токенов: событие -> CALENDAR, отметка старта -> ACTIVITY.
     assert.equal(classifyMcpScopeCategory('/gw/icu/events/5001'), 'CALENDAR');
     assert.equal(classifyMcpScopeCategory('/gw/icu/activities/i100/race'), 'ACTIVITY');
+    assert.equal(classifyMcpScopeCategory('/gw/icu/activities/i100/race/'), 'ACTIVITY');
     console.log('ok - scope categories: event -> CALENDAR, race -> ACTIVITY');
   } finally {
     live.close();
