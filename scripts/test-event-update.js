@@ -11,6 +11,7 @@ process.env.STAS_BASE = process.env.STAS_BASE || 'http://stas.local.test';
 const bearerUid = require('../routes/_bearer_uid');
 const attachEventUpdate = require('../lib/attach_event_update');
 const { classifyMcpScopeCategory } = require('../middleware/mcp_scope_guard').__testing;
+const requestAuthTesting = require('../lib/request-auth').__testing;
 
 const originalFetch = global.fetch;
 let localOrigin = '';
@@ -251,6 +252,50 @@ async function main() {
     assert.equal(classifyMcpScopeCategory('/gw/icu/activities/i100/race'), 'ACTIVITY');
     assert.equal(classifyMcpScopeCategory('/gw/icu/activities/i100/race/'), 'ACTIVITY');
     console.log('ok - scope categories: event -> CALENDAR, race -> ACTIVITY');
+
+    // --- Серверный вызов STAS (X-API-Key = STAS_KEY): без ensure-intervals-user ---
+    const ensureHits = () => upstreamHits.filter(h => h.path === '/api/db/ensure-intervals-user').length;
+    const athleteHits = () => upstreamHits.filter(h => h.path === '/api/v1/athlete/0').length;
+    const serverKey = { 'X-API-Key': process.env.STAS_KEY };
+
+    requestAuthTesting.clearDirectTokenCache();
+    reset();
+    r = await request(baseUrl, '/gw/icu/events/5001?dry_run=false', { json: { name: 'Server move' }, headers: serverKey });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.updated, 1);
+    assert.equal(puts().length, 1, 'server call writes the event');
+    assert.equal(ensureHits(), 0, 'server call must not hit ensure-intervals-user');
+    assert.equal(athleteHits(), 1, 'userId comes from /athlete/0');
+    assert.equal(requestAuthTesting.getDirectTokenCacheKeys().length, 0, 'server call is not cached');
+    console.log('ok - STAS key: write passes without ensure-intervals-user, not cached');
+
+    reset();
+    r = await request(baseUrl, '/gw/icu/events/5001?dry_run=false', { json: { name: 'x' }, headers: { 'X-API-Key': 'wrong-key' } });
+    assert.equal(r.status, 200);
+    assert.equal(ensureHits(), 1, 'wrong key behaves as no key');
+    console.log('ok - wrong key -> ensure-intervals-user is called as before');
+
+    requestAuthTesting.clearDirectTokenCache();
+    reset();
+    r = await request(baseUrl, '/gw/icu/events/5001?dry_run=false', { json: { name: 'x' } });
+    assert.equal(r.status, 200);
+    assert.equal(ensureHits(), 1, 'no key -> ensure-intervals-user as before');
+    assert.equal(requestAuthTesting.getDirectTokenCacheKeys().length, 1, 'normal call is cached');
+    console.log('ok - no key -> ensure-intervals-user is called and cached as before');
+
+    // Пустой/не заданный STAS_KEY не совпадает ни с каким заголовком.
+    const isServer = requestAuthTesting.isStasServerRequest;
+    const savedKey = process.env.STAS_KEY;
+    assert.equal(isServer({ headers: { 'x-api-key': savedKey } }), true);
+    assert.equal(isServer({ headers: { 'x-api-key': `${savedKey}x` } }), false);
+    assert.equal(isServer({ headers: {} }), false);
+    process.env.STAS_KEY = '';
+    assert.equal(isServer({ headers: { 'x-api-key': '' } }), false);
+    assert.equal(isServer({ headers: { 'x-api-key': savedKey } }), false);
+    delete process.env.STAS_KEY;
+    assert.equal(isServer({ headers: { 'x-api-key': 'undefined' } }), false);
+    process.env.STAS_KEY = savedKey;
+    console.log('ok - empty or unset STAS_KEY never matches');
   } finally {
     live.close();
     global.fetch = originalFetch;
