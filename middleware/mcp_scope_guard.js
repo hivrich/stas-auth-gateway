@@ -7,7 +7,8 @@ function classifyMcpScopeCategory(pathname) {
   if (!path || path === '/gw/api/me' || path === '/api/me') return null;
   if (/calendar|\/events?(?:\/|$)|plan/.test(path)) return 'CALENDAR';
   if (/wellness|health/.test(path)) return 'WELLNESS';
-  if (/activity|training|workout/.test(path)) return 'ACTIVITY';
+  // Отметка старта у активности: слово activities иначе попало бы в SETTINGS.
+  if (/activity|\/activities\/[^/]+\/race$|training|workout/.test(path)) return 'ACTIVITY';
   if (/chat/.test(path)) return 'CHATS';
   if (/library/.test(path)) return 'LIBRARY';
   return 'SETTINGS';

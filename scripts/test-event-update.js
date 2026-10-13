@@ -10,6 +10,7 @@ process.env.STAS_BASE = process.env.STAS_BASE || 'http://stas.local.test';
 
 const bearerUid = require('../routes/_bearer_uid');
 const attachEventUpdate = require('../lib/attach_event_update');
+const { classifyMcpScopeCategory } = require('../middleware/mcp_scope_guard').__testing;
 
 const originalFetch = global.fetch;
 let localOrigin = '';
@@ -244,6 +245,11 @@ async function main() {
     assert.equal(r.status, 400);
     assert.equal(upstreamHits.filter(h => h.path.includes('/activity/')).length, 0, 'validation errors must not reach Intervals');
     console.log('ok - race bad body / bad id -> 400 without upstream calls');
+
+    // Scope guard для MCP-токенов: событие -> CALENDAR, отметка старта -> ACTIVITY.
+    assert.equal(classifyMcpScopeCategory('/gw/icu/events/5001'), 'CALENDAR');
+    assert.equal(classifyMcpScopeCategory('/gw/icu/activities/i100/race'), 'ACTIVITY');
+    console.log('ok - scope categories: event -> CALENDAR, race -> ACTIVITY');
   } finally {
     live.close();
     global.fetch = originalFetch;
