@@ -10,7 +10,7 @@ delete process.env.DB_BRIDGE_API_KEY;
 process.env.STAS_BASE = 'http://stas.local.test';
 
 const getStasKey = require('../lib/get_stas_key');
-const { fetchIntervals, parseRetryAfter, parseRetryAfterMs } = require('../lib/icu-attempt-ledger');
+const { fetchIntervals, forwardRetryAfter, parseRetryAfter, parseRetryAfterMs } = require('../lib/icu-attempt-ledger');
 const { icuListEventsWithAuth } = require('../lib/icu_write');
 const { buildStasSourceHeaders, getRequestSource, normalizeSource } = require('../lib/request-source');
 
@@ -73,13 +73,36 @@ async function main() {
     assert.equal(parseRetryAfterMs(bad), null, `"${bad}" is not a valid Retry-After`);
     assert.equal(parseRetryAfter(bad), null);
   }
-  // Огромные секунды ограничены сутками, пересылается ограниченное значение.
-  assert.equal(parseRetryAfterMs('99999999999999999999'), 86400000);
-  assert.deepEqual(parseRetryAfter('99999999999999999999'), { header: '86400', ms: 86400000 });
-  assert.equal(parseRetryAfterMs(new Date(Date.now() + 10 * 86400000).toUTCString()), 86400000);
+  // forwardRetryAfter: заголовок и ms из одного числа; невалидное - ничего не пересылается.
+  const fakeRes = () => { const headers = {}; return { headers, set: (k, v) => { headers[k] = v; } }; };
+  for (const bad of ['-1', '1.5', '1e3', 'garbage', '99999999999999999999']) {
+    const res = fakeRes();
+    assert.equal(forwardRetryAfter(res, bad), null);
+    assert.deepEqual(res.headers, {}, `"${bad}": nothing forwarded`);
+  }
+  const fwd = fakeRes();
+  assert.equal(forwardRetryAfter(fwd, '172800'), 172800000);
+  assert.deepEqual(fwd.headers, { 'Retry-After': '172800' });
+  const fwdDate = fakeRes();
+  const dateMs = forwardRetryAfter(fwdDate, new Date(Date.now() + 10 * 86400000).toUTCString());
+  assert.equal(fwdDate.headers['Retry-After'], String(Math.ceil(dateMs / 1000)));
+  assert.ok(Math.abs(dateMs - 864000000) < 2000);
+
+  // Без суточного лимита: header и ms из одного числа. Переполнение (20 цифр) - невалидно.
+  assert.deepEqual(parseRetryAfter('172800'), { header: '172800', ms: 172800000 });
+  assert.equal(parseRetryAfter('99999999999999999999'), null);
+  assert.equal(parseRetryAfter('1234567890'), null, 'more than 9 digits is invalid');
+  assert.deepEqual(parseRetryAfter('999999999'), { header: '999999999', ms: 999999999000 });
+  const now = Date.parse('2026-10-20T10:00:00Z');
+  assert.deepEqual(parseRetryAfter('Fri, 30 Oct 2026 10:00:00 GMT', now), { header: '864000', ms: 864000000 });
+  assert.deepEqual(parseRetryAfter('Tue, 20 Oct 2026 10:00:00 GMT', now), { header: '0', ms: 0 });
+  assert.deepEqual(parseRetryAfter('Mon, 19 Oct 2026 10:00:00 GMT', now), { header: '0', ms: 0 });
+  const tenDays = parseRetryAfter(new Date(Date.now() + 10 * 86400000).toUTCString());
+  assert.ok(Math.abs(tenDays.ms - 864000000) < 2000 && tenDays.header === String(Math.ceil(tenDays.ms / 1000)));
   const validDate = new Date(Date.now() + 20000).toUTCString();
   assert.deepEqual(Object.keys(parseRetryAfter(validDate)), ['header', 'ms']);
-  assert.equal(parseRetryAfter(validDate).header, validDate);
+  const vd = parseRetryAfter(validDate);
+  assert.equal(vd.header, String(Math.ceil(vd.ms / 1000)), 'header is seconds derived from the same ms');
   console.log('ok - Retry-After parses seconds and HTTP dates');
 
   // Bearer + Basic (повтор после 401) для сохранённых ключей: две записи, athlete_id без "i".

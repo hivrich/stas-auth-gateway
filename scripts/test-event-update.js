@@ -261,10 +261,10 @@ async function main() {
       body: JSON.stringify({ name: 'x' }),
     });
     assert.equal(r.status, 429);
-    assert.equal(r.headers.get('retry-after'), retryAfterHeader, 'Retry-After (HTTP date) is forwarded');
     const dateBody = await r.json();
     assert.equal(dateBody.error, 'rate_limited');
     assert.ok(dateBody.retry_after_ms > 20000 && dateBody.retry_after_ms <= 30000, 'date -> ms');
+    assert.equal(r.headers.get('retry-after'), String(Math.ceil(dateBody.retry_after_ms / 1000)), 'HTTP date is forwarded as seconds matching retry_after_ms');
     retryAfterHeader = '-1';
     r = await originalFetch(`${baseUrl}/gw/icu/events/5001?dry_run=false`, {
       method: 'PUT',
