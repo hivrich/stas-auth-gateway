@@ -29,6 +29,7 @@ let stasCalls = []; // запросы к /api/db/plan_changes
 let stasMode = 'ok'; // 'ok' | 'throw' | 'hang' | 'status500'
 let icuFail = null; // статус ошибки Intervals на запись
 let deleteResponse = null; // переопределение ответа bulk-delete
+let putOmitsUpdated = false; // ответ PUT события без updated
 
 function jsonResponse(body, status = 200) {
   return {
@@ -107,6 +108,11 @@ global.fetch = async (url, options = {}) => {
     if (method === 'GET') return jsonResponse({ ...ev });
     if (method === 'PUT') {
       if (icuFail) return jsonResponse({ error: 'icu says no' }, icuFail);
+      if (putOmitsUpdated) {
+        Object.assign(ev, JSON.parse(options.body));
+        const { updated, ...withoutUpdated } = ev;
+        return jsonResponse(withoutUpdated);
+      }
       Object.assign(ev, JSON.parse(options.body), { updated: '2026-10-14T11:00:00.000+00:00' });
       return jsonResponse({ ...ev });
     }
@@ -121,6 +127,7 @@ function reset(initial = []) {
   stasMode = 'ok';
   icuFail = null;
   deleteResponse = null;
+  putOmitsUpdated = false;
   callback.__testing.resetStats();
 }
 
@@ -363,6 +370,32 @@ async function main() {
     assert.equal(r.status, 422);
     assert.equal(stasCalls.length, 0);
     console.log('ok - PUT: changed callback; none on dry run/error');
+
+    // PUT: updated берётся только из ответа записи, не из чтения до записи
+    reset([{ ...plan(day(4)), updated: '2026-10-01T00:00:00.000+00:00' }]);
+    putOmitsUpdated = true;
+    r = await call(baseUrl, 'PUT', `/gw/icu/events/${store[0].id}?dry_run=false`, { body: { name: 'NoUpdated' } });
+    assert.equal(r.status, 200);
+    assert.equal(stasCalls.length, 1);
+    assert.equal(stasCalls[0].body.events[0].name, 'NoUpdated');
+    assert.equal('updated' in stasCalls[0].body.events[0], false, 'stale pre-write updated is not sent');
+    putOmitsUpdated = false;
+    stasCalls = [];
+    r = await call(baseUrl, 'PUT', `/gw/icu/events/${store[0].id}?dry_run=false`, { body: { name: 'WithUpdated' } });
+    assert.equal(r.status, 200);
+    assert.equal(stasCalls[0].body.events[0].updated, '2026-10-14T11:00:00.000+00:00');
+    console.log('ok - PUT: updated only from the Intervals response');
+
+    // Длинные поля обрезаются по лимитам приёмника STAS
+    reset();
+    r = await call(baseUrl, 'POST', '/gw/icu/events?dry_run=false', {
+      body: { events: [plan(day(4), { description: 'd'.repeat(30000), name: 'n'.repeat(600) })] },
+    });
+    assert.equal(r.status, 200);
+    assert.equal(stasCalls.length, 1);
+    assert.equal(stasCalls[0].body.events[0].description.length, 20000);
+    assert.equal(stasCalls[0].body.events[0].name.length, 500);
+    console.log('ok - callback truncates description to 20000 and name to 500');
 
     // STAS недоступен: ответ клиенту прежний, ровно один повтор в фоне
     for (const mode of ['throw', 'status500', 'hang']) {
