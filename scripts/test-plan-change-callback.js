@@ -348,6 +348,40 @@ async function main() {
     assert.equal(stasCalls[0].body.deleted[0].external_id, null);
     console.log('ok - DELETE: callback with listed rows restricted to deleted ids; none on dry run/empty/error');
 
+    // Удаление по id не от сайта: Intervals вернул только счётчик, часть id не прошла проверку.
+    // (а) обычное событие + невалидный id: в журнал только подтверждённое событие.
+    for (const countOnly of [1, { deleted_count: 1 }]) {
+      reset([plan(day(4))]);
+      const evA = store[0];
+      deleteResponse = countOnly;
+      r = await call(baseUrl, 'DELETE', `/gw/icu/events?dry_run=false&id=${evA.id},abc`);
+      assert.equal(r.body.ok, false);
+      assert.equal(r.body.error, 'delete_incomplete');
+      assert.ok(r.body.failed.some((f) => f.id === 'abc' && f.reason === 'invalid_id'), 'invalid id in failed');
+      assert.equal(icuHits.filter((h) => h.path.endsWith('/bulk-delete')).length, 1);
+      assert.equal(stasCalls.length, 1);
+      assert.deepEqual(stasCalls[0].body.deleted.map((x) => String(x.id)), [String(evA.id)]);
+    }
+    // (б) id с ведущим нулём: в журнал каноническая форма, не '0<id>'.
+    reset([plan(day(4))]);
+    const evB = store[0];
+    deleteResponse = 1;
+    r = await call(baseUrl, 'DELETE', `/gw/icu/events?dry_run=false&id=0${evB.id}`);
+    assert.equal(r.body.ok, true);
+    assert.equal(stasCalls.length, 1);
+    assert.deepEqual(stasCalls[0].body.deleted.map((x) => String(x.id)), [String(evB.id)]);
+    // (в) защищённое SICK по id не от сайта: не удаляется, журнал не вызывается.
+    reset([{ category: 'SICK', name: 'Sick', start_date_local: `${day(4)}T00:00:00`, external_id: `note:${day(4)}:range-sick-1` }]);
+    const evC = store[0];
+    deleteResponse = 1;
+    r = await call(baseUrl, 'DELETE', `/gw/icu/events?dry_run=false&id=${evC.id}`);
+    assert.equal(r.body.deleted_count, 0);
+    assert.equal(r.body.protected.count, 1);
+    assert.deepEqual(r.body.protected.ids.map(String), [String(evC.id)]);
+    assert.equal(icuHits.filter((h) => h.path.endsWith('/bulk-delete')).length, 0);
+    assert.equal(stasCalls.length, 0);
+    console.log('ok - DELETE by id not from the site: journal gets only confirmed canonical ids, none for protected');
+
     // PUT real: changed с событием Intervals; dry run и ошибка - без вызова
     reset([plan(day(4))]);
     const put = store[0];
