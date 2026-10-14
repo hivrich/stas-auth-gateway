@@ -56,10 +56,39 @@ function getDbProxyTimeoutMs(method, path) {
   return DEFAULT_DB_PROXY_TIMEOUT_MS;
 }
 
+// STAS endpoints that are internal: written only by the gateway itself
+// (lib/plan-change-callback.js, lib/icu-attempt-ledger.js), never via this proxy.
+// Compared in normalised form (lowercase, "-" and "_" equal).
+const INTERNAL_FIRST_SEGMENTS = Object.freeze(['plan_changes', 'intervals-attempts']);
+
+function comparable(segment) {
+  return String(segment || '').toLowerCase().replace(/-/g, '_');
+}
+const DENIED_SEGMENTS = new Set(INTERNAL_FIRST_SEGMENTS.map(comparable));
+
+// Returns { rest } (decoded, slash-collapsed path without edge slashes), { error: 'bad_path' }
+// for undecodable or ".." paths, or { denied: true } for an internal endpoint.
+function classifyDbPath(rawPath) {
+  let decoded;
+  try { decoded = decodeURIComponent(String(rawPath || '')); } catch { return { error: 'bad_path' }; }
+  const segments = decoded.toLowerCase().replace(/\\/g, '/').split('/').filter(Boolean);
+  // '.' and '..' would be dropped or resolved by new URL() after this check: refuse them outright.
+  if (segments.some((s) => s === '.' || s === '..')) return { error: 'bad_path' };
+  if (segments.length && DENIED_SEGMENTS.has(comparable(segments[0]))) return { denied: true };
+  return { rest: segments.join('/') };
+}
+
 // === Main proxy for /gw/api/db/* ===
 router.use(async (req, res) => {
+  const verdict = classifyDbPath(req.path);
+  if (verdict.error) return res.status(400).json({ status: 400, error: 'bad_request' });
+  if (verdict.denied) return res.status(404).json({ status: 404, error: 'not_found' });
+
   const rest = req.path.replace(/^\/+/, '');          // e.g. "trainings"
   const url  = new URL(`/api/db/${rest}`, STAS_BASE);
+  // Second check on the URL actually sent to STAS, after WHATWG normalisation.
+  const finalVerdict = classifyDbPath(url.pathname.replace(/^\/api\/db\/?/, ''));
+  if (finalVerdict.error || finalVerdict.denied) return res.status(404).json({ status: 404, error: 'not_found' });
 
   // Always use authenticated identity; query user_id/uid must not override it.
   const uid = getRequestUserId(req);
@@ -125,4 +154,6 @@ module.exports.__testing = {
   ACTIVITY_DETAIL_TIMEOUT_MS,
   DEFAULT_DB_PROXY_TIMEOUT_MS,
   getDbProxyTimeoutMs,
+  INTERNAL_FIRST_SEGMENTS,
+  classifyDbPath,
 };

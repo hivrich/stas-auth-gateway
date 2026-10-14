@@ -2,6 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const { getStasRequestId } = require('../lib/request-id');
 const { getIcuRequestAuth } = require('../lib/icu-request-auth');
+const { fetchIntervals, forwardRetryAfter } = require('../lib/icu-attempt-ledger');
 
 function buildAuthHeaders(auth, mode) {
   const headers = { Accept: 'application/json' };
@@ -46,9 +47,9 @@ router.get('/events', async (req, res) => {
     const icuUrl = new URL(`/api/v1/athlete/${encodeURIComponent(auth.athleteId)}/events?${qs.toString()}`, 'https://intervals.icu');
     try { console.log(`[icu][DBG] ${icuLogFields(req, { auth_mode: auth.authMode })}`); } catch(e){}
 
-    let ir = await fetch(icuUrl, { headers: buildAuthHeaders(auth, 'bearer') });
+    let ir = await fetchIntervals(icuUrl, { headers: buildAuthHeaders(auth, 'bearer') }, { req, auth, kind: 'bearer' });
     if ((ir.status === 401 || ir.status === 403) && auth.authMode === 'legacy') {
-      ir = await fetch(icuUrl, { headers: buildAuthHeaders(auth, 'basic') });
+      ir = await fetchIntervals(icuUrl, { headers: buildAuthHeaders(auth, 'basic') }, { req, auth, kind: 'basic' });
     }
 
     if ((ir.status === 401 || ir.status === 403) && auth.authMode === 'intervals') {
@@ -61,6 +62,17 @@ router.get('/events', async (req, res) => {
 
     const txt = await ir.text();
     const ct  = ir.headers.get('content-type') || 'application/json; charset=utf-8';
+
+    // 429 Intervals: статус как есть, плюс Retry-After и retry_after_ms (только если значение разбирается).
+    if (ir.status === 429) {
+      const retryAfterMs = forwardRetryAfter(res, ir.headers.get('retry-after'));
+      let upstreamBody = null;
+      try { upstreamBody = JSON.parse(txt); } catch {}
+      const base = upstreamBody && typeof upstreamBody === 'object' && !Array.isArray(upstreamBody)
+        ? upstreamBody
+        : { ok: false, error: 'rate_limited' };
+      return res.status(429).json({ ...base, ...(retryAfterMs !== null ? { retry_after_ms: retryAfterMs } : {}) });
+    }
 
     // если JSON — вернём объект/массив, иначе — сырой текст
     try {

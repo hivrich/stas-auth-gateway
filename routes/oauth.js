@@ -2,6 +2,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const router  = express.Router();
 const { forgetDirectIntervalsToken, resolveDirectIntervalsAuth } = require('../lib/request-auth');
+const { fetchIntervals } = require('../lib/icu-attempt-ledger');
 const { handleAgentCallback } = require('./agent');
 const {
   isAllowedChatGptRedirectUri,
@@ -1082,14 +1083,14 @@ router.post('/oauth/revoke', async (req, res) => {
   }
 
   try {
-    const upstream = await fetch('https://intervals.icu/api/v1/disconnect-app', {
+    const upstream = await fetchIntervals('https://intervals.icu/api/v1/disconnect-app', {
       method: 'DELETE',
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: 'application/json',
       },
       signal: AbortSignal.timeout(10_000),
-    });
+    }, { req, kind: 'other', athleteId: null });
 
     if (upstream.ok || upstream.status === 401) {
       forgetDirectIntervalsToken(token);
@@ -1290,7 +1291,7 @@ router.post('/oauth/token', tokenIngress, async (req, res) => {
 
       markToken(req, 'upstream_unavailable');
 
-      const upstream = await fetch(INTERVALS_TOKEN_URL, {
+      const upstream = await fetchIntervals(INTERVALS_TOKEN_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -1298,7 +1299,7 @@ router.post('/oauth/token', tokenIngress, async (req, res) => {
         },
         body: form,
         signal: AbortSignal.timeout(10_000),
-      });
+      }, { req, kind: 'other', athleteId: null, initiator: source });
 
       const text = await upstream.text();
       let payload = null;

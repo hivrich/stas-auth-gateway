@@ -21,6 +21,7 @@ let store = [];
 let nextId = 1000;
 let calls = [];
 let bulkMode = 'normal'; // 'normal' | 'nonarray' | 'short' (на строку меньше) | 'noid' (первая строка без id)
+let bulkFail = null; // { status, retryAfter }: bulk upsert отвечает ошибкой Intervals
 let bulkAsOtherEntry = false; // имитация другого способа входа: bulk upsert не видит чужой external_id и создаёт новое событие
 
 function jsonResponse(body, status = 200) {
@@ -72,6 +73,11 @@ global.fetch = async (url, options = {}) => {
   }
   if (parsed.pathname === `${base}/bulk` && method === 'POST') {
     calls.push({ method, path: parsed.pathname, upsert: parsed.searchParams.get('upsert') });
+    if (bulkFail) {
+      const failed = jsonResponse({ error: 'icu says no' }, bulkFail.status);
+      failed.headers.get = (n) => (String(n).toLowerCase() === 'retry-after' ? bulkFail.retryAfter ?? null : null);
+      return failed;
+    }
     assert.equal(parsed.searchParams.get('upsert'), 'true');
     const body = JSON.parse(options.body);
     assert.ok(Array.isArray(body));
@@ -103,7 +109,7 @@ async function post(baseUrl, query, events) {
     },
     body: JSON.stringify({ events }),
   });
-  return { status: response.status, body: await response.json() };
+  return { status: response.status, retryAfter: response.headers.get('retry-after'), body: await response.json() };
 }
 
 function ev(daysFromToday, extra = {}) {
@@ -123,6 +129,7 @@ function reset(initial = []) {
   calls = [];
   bulkAsOtherEntry = false;
   bulkMode = 'normal';
+  bulkFail = null;
 }
 
 async function main() {
@@ -299,6 +306,20 @@ async function main() {
     assert.equal(r.body.skipped, 0);
     assert.deepEqual(calls.map((c) => `${c.method} ${c.path}`), ['POST /api/v1/athlete/0/events']);
     assert.equal(store.length, 2);
+
+    // Ошибки Intervals на записи: 429 с Retry-After и отказ 422 идут наверх своим статусом, не 502.
+    reset();
+    bulkFail = { status: 429, retryAfter: '12' };
+    r = await post(baseUrl, '?dry_run=false', [ev(3)]);
+    assert.equal(r.status, 429);
+    assert.equal(r.retryAfter, '12');
+    assert.equal(r.body.retry_after_ms, 12000);
+    bulkFail = { status: 422, retryAfter: null };
+    r = await post(baseUrl, '?dry_run=false', [ev(3)]);
+    assert.equal(r.status, 422);
+    assert.equal(r.retryAfter, null);
+    assert.equal(r.body.retry_after_ms, undefined);
+    assert.equal(store.length, 0, 'failed upsert writes nothing');
 
     console.log('ok - events with an existing external_id are updated in place (id kept), inside and outside the default window');
   } finally {

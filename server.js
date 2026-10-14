@@ -46,8 +46,18 @@ function createApp() {
   const cookieParser = require("cookie-parser");
   app.use(cookieParser());
 
-  app.use(bodyParser.json({ limit: '256kb' }));
-  app.use(express.urlencoded({ extended: false }));
+  // Отметка старта читает тело сама (лимит 16kb в маршруте): общие парсеры её пропускают.
+  // Express маршрутизирует без учёта регистра (/RACE, /race/), поэтому и здесь i-флаг и необязательный слэш.
+  const jsonBody = bodyParser.json({ limit: '256kb' });
+  const urlencodedBody = express.urlencoded({ extended: false });
+  const RACE_PATH_RE = /^\/gw\/icu\/activities\/[^/]+\/race\/?$/i;
+  const isRaceWrite = (req) => req.method === 'PUT' && RACE_PATH_RE.test(req.path);
+  app.use(function jsonParser(req, res, next) {
+    return isRaceWrite(req) ? next() : jsonBody(req, res, next);
+  });
+  app.use(function urlencodedParser(req, res, next) {
+    return isRaceWrite(req) ? next() : urlencodedBody(req, res, next);
+  });
 
   app.get('/gw/healthz', (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
   app.get('/gw/version', (_req, res) => res.json({ name: 'stas-auth-gateway', version: '1.0.0', ts: new Date().toISOString() }));

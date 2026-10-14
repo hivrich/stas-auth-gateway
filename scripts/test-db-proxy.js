@@ -359,6 +359,33 @@ async function main() {
 
     upstreamHits.length = 0;
 
+    // Internal STAS endpoints are not reachable through the generic proxy.
+    const deniedPaths = [
+      '/plan_changes', '/Plan_Changes', '//plan_changes/', '/plan%5Fchanges', '/plan-changes',
+      '/intervals-attempts', '/intervals_attempts', '/plan_changes/extra', '/%2Fplan_changes',
+    ];
+    for (const method of ['GET', 'POST']) {
+      for (const path of deniedPaths) {
+        const options = method === 'POST' ? { path, method, body: { events: [] } } : { path, method };
+        const denied = await runRequest({}, 'user-42', options);
+        assert.strictEqual(denied.statusCode, 404, `${method} ${path} -> 404`);
+        assert.deepStrictEqual(denied.jsonBody, { status: 404, error: 'not_found' }, `${method} ${path} body`);
+      }
+    }
+    assert.strictEqual(upstreamHits.length, 0, 'denied paths never reach STAS');
+    for (const path of ['/%E0%A4%A', '/trainings/../plan_changes', '/trainings/%2e%2e/plan_changes', '/./plan_changes', '/%2e/plan_changes', '/%2E/intervals-attempts', '/./trainings']) {
+      const bad = await runRequest({}, 'user-42', { path });
+      assert.strictEqual(bad.statusCode, 400, `${path} -> 400`);
+    }
+    assert.strictEqual(upstreamHits.length, 0, 'bad paths never reach STAS');
+    assert.deepStrictEqual([...dbProxy.__testing.INTERNAL_FIRST_SEGMENTS], ['plan_changes', 'intervals-attempts']);
+    // A normal path is still proxied as before.
+    response = await runRequest({ days: '7' }, 'user-42', { path: '/trainings' });
+    assert.strictEqual(response.statusCode, 200);
+    assert.strictEqual(upstreamHits.length, 1);
+    assert.strictEqual(new URL(upstreamHits[0].url).pathname, '/api/db/trainings');
+    upstreamHits.length = 0;
+
     trainingsFetchMode = 'array';
     response = await runTrainingsRequest({ days: '7', full: 'true', user_id: 'query-only', uid: 'query-uid' }, 'user-42');
     assert.strictEqual(response.statusCode, 200);
