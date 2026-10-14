@@ -406,15 +406,18 @@ async function main() {
       id: 'i811', external_id: 'stas-done:plan:5001', type: 'Run', start_date_local: '2026-10-20T07:30:00',
       moving_time: 3000, icu_athlete_id: 'i15487', paired_event_id: 5001,
     };
-    dayListByDay = { '2026-10-20': [activitiesById.i811], '2026-10-24': [] };
+    activitiesById.i811.start_date_local = '2026-10-22T07:30:00';
+    // Список за широкое окно плана (день плана -1 ... день записи +14): активность за 22.10 видна при повторе с датой 25.10.
+    dayListByDay = { '2026-10-19': [activitiesById.i811] };
     r = await request(baseUrl, { ...baseBody(), start_date_local: '2026-10-25T07:30:00', external_id: 'stas-done:plan:5001', plan_event_id: '5001' });
     assert.equal(r.status, 200);
     assert.equal(r.body.reason, 'plan_already_done');
     assert.equal(r.body.activity.id, 'i811');
     assert.equal(posts().length, 0);
-    assert.equal(lists().length, 2);
+    assert.equal(lists().length, 1, 'one wide list for a plan');
+    assert.equal(lists()[0].search, '?oldest=2026-10-19&newest=2026-11-08');
     dayListByDay = null;
-    console.log('ok - plan paired activity on the plan day is found when the requested day differs');
+    console.log('ok - plan paired activity is found by one wide list when the requested day differs');
 
     // 7d. Похожая активность через полночь (23:59 и 00:01): один список за три дня её находит, второй POST не уходит.
     reset();
