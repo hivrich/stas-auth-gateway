@@ -300,14 +300,14 @@ async function main() {
     assert.equal(stasCalls[0].body.actor, 'ai_chat');
     console.log('ok - actor from site key and MCP client host');
 
-    // Более 10 событий: куски по 10 с разными request_id
+    // Более 8 событий: куски по 8 с разными request_id
     reset();
     const many = Array.from({ length: 101 }, (_, i) => plan(day(10), { external_id: `plan:many-${i}`, name: `w${i}` }));
     r = await call(baseUrl, 'POST', '/gw/icu/events?dry_run=false', { body: { events: many } });
     assert.equal(r.status, 200);
-    assert.deepEqual(stasCalls.map((c) => c.body.events.length).sort((a, b) => a - b), [1, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10]);
-    assert.equal(new Set(stasCalls.map((c) => c.body.request_id)).size, 11);
-    console.log('ok - chunking at 10 events');
+    assert.deepEqual(stasCalls.map((c) => c.body.events.length).sort((a, b) => a - b), [5, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8]);
+    assert.equal(new Set(stasCalls.map((c) => c.body.request_id)).size, 13);
+    console.log('ok - chunking at 8 events');
 
     // DELETE real по external_id: deleted со строками, найденными перед удалением
     reset([plan(day(4)), plan(day(5))]);
