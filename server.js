@@ -46,7 +46,12 @@ function createApp() {
   const cookieParser = require("cookie-parser");
   app.use(cookieParser());
 
-  app.use(bodyParser.json({ limit: '256kb' }));
+  // Отметка старта читает тело сама (лимит 16kb в маршруте): общий парсер на 256kb её пропускает.
+  const jsonBody = bodyParser.json({ limit: '256kb' });
+  const RACE_PATH_RE = /^\/gw\/icu\/activities\/[^/]+\/race\/?$/;
+  app.use(function jsonParser(req, res, next) {
+    return req.method === 'PUT' && RACE_PATH_RE.test(req.path) ? next() : jsonBody(req, res, next);
+  });
   app.use(express.urlencoded({ extended: false }));
 
   app.get('/gw/healthz', (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));

@@ -104,6 +104,7 @@ async function request(baseUrl, path, options = {}) {
   });
   return {
     status: response.status,
+    retryAfter: response.headers.get('retry-after'),
     body: await response.json(),
   };
 }
@@ -233,6 +234,29 @@ async function main() {
       { id: '116274133', status: 500 },
     ]);
     console.log('ok - upstream error keeps previous failed shape');
+
+    // Отказ запроса (422): статус каждого id остаётся в failed, ответ шлюза прежний.
+    bulkDeleteResponder = () => jsonResponse({ error: 'bad' }, 422);
+    response = await request(baseUrl, planDelete, { method: 'DELETE' });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.ok, false);
+    assert.ok(response.body.failed.every(item => item.status === 422));
+    console.log('ok - 422 from Intervals stays visible as failed status');
+
+    // Лимит Intervals: честный 429 с Retry-After, тело с failed сохранено.
+    bulkDeleteResponder = () => {
+      const limited = jsonResponse({ error: 'slow down' }, 429);
+      limited.headers.get = (name) => (String(name).toLowerCase() === 'retry-after' ? '9' : null);
+      return limited;
+    };
+    response = await request(baseUrl, planDelete, { method: 'DELETE' });
+    assert.equal(response.status, 429);
+    assert.equal(response.retryAfter, '9');
+    assert.equal(response.body.ok, false);
+    assert.equal(response.body.error, 'rate_limited');
+    assert.equal(response.body.retry_after_ms, 9000);
+    assert.deepEqual(response.body.failed.map(item => item.status), [429, 429, 429]);
+    console.log('ok - Intervals 429 -> HTTP 429 with Retry-After, failed list kept');
   } finally {
     server.close();
     global.fetch = originalFetch;
