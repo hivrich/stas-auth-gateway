@@ -330,6 +330,84 @@ async function main() {
     console.log('ok - GET events 429 carries Retry-After and retry_after_ms; success unchanged');
 
     console.log('ok - local hops forward source, request id, attempt number and the STAS key only for verified server calls');
+
+    // Защита событий «Болезнь / травма / поездка»: по окну и по external_id не удаляются, только по id.
+    broadCalendar.push(
+      { id: 200001, external_id: 'note:2026-06-20:range-sick-a1', category: 'SICK', name: 'Sick' },
+      { id: 200002, external_id: 'note:2026-06-20:day-note', category: 'NOTE', name: 'Plain note' },
+      { id: 200003, external_id: 'note:2026-06-21:injury-knee', category: 'INJURED', name: 'Injured' },
+      { id: 200004, external_id: 'note:2026-06-22:range-trip-b2', category: 'NOTE', name: 'Range key only' },
+      { id: 200005, external_id: 'note:2026-06-23:trip', category: 'HOLIDAY', name: 'Trip' },
+    );
+    const protectedIds = ['200001', '200003', '200004', '200005'];
+    const rangeReason = 'calendar_range_event_delete_by_id_only';
+    const noteWindow = 'external_id_prefix=note%3A&oldest=2026-06-20&newest=2026-06-23';
+    const upstreamBulkCalls = () => upstreamHits.filter(hit => new URL(hit.url).pathname === '/api/v1/athlete/0/events/bulk-delete');
+
+    response = await request(baseUrl, `/gw/icu/events/delete-preview?${noteWindow}`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body.to_delete.ids, ['200002']);
+    assert.deepEqual(response.body.protected, { count: 4, ids: protectedIds, reason: rangeReason });
+
+    response = await request(baseUrl, `/gw/icu/events?${noteWindow}&dry_run=true`, { method: 'DELETE' });
+    assert.deepEqual(response.body.to_delete.ids, ['200002']);
+    assert.deepEqual(response.body.protected.ids, protectedIds);
+
+    bulkDeleteResponder = (body) => {
+      assert.deepEqual(body, [{ id: 200002 }]);
+      return jsonResponse({ deleted_ids: [200002] });
+    };
+    response = await request(baseUrl, `/gw/icu/events?${noteWindow}&dry_run=false`, { method: 'DELETE' });
+    assert.equal(response.body.ok, true);
+    assert.deepEqual(response.body.deleted_ids, ['200002']);
+    assert.deepEqual(response.body.failed, []);
+    assert.deepEqual(response.body.protected, { count: 4, ids: protectedIds, reason: rangeReason });
+    console.log('ok - prefix window delete skips SICK/INJURED/HOLIDAY and range- events');
+
+    // Окно, где есть только защищённые события: удалять нечего, Intervals не вызываем.
+    const bulkCallsBefore = upstreamBulkCalls().length;
+    response = await request(
+      baseUrl,
+      '/gw/icu/events?external_id_prefix=note%3A2026-06-21%3A&oldest=2026-06-21&newest=2026-06-21&dry_run=false',
+      { method: 'DELETE' },
+    );
+    assert.equal(response.body.ok, true);
+    assert.equal(response.body.deleted_count, 0);
+    assert.deepEqual(response.body.deleted_ids, []);
+    assert.deepEqual(response.body.failed, []);
+    assert.deepEqual(response.body.protected, { count: 1, ids: ['200003'], reason: rangeReason });
+    assert.equal(upstreamBulkCalls().length, bulkCallsBefore, 'protected-only delete must not call bulk-delete');
+
+    // Точный external_id события с range-ключом / SICK не удаляет его.
+    response = await request(
+      baseUrl,
+      '/gw/icu/events?external_id=note%3A2026-06-20%3Arange-sick-a1&dry_run=false',
+      { method: 'DELETE' },
+    );
+    assert.equal(response.body.ok, true);
+    assert.equal(response.body.deleted_count, 0);
+    assert.deepEqual(response.body.protected, { count: 1, ids: ['200001'], reason: rangeReason });
+    assert.equal(upstreamBulkCalls().length, bulkCallsBefore, 'exact external_id must not delete range events');
+
+    response = await request(
+      baseUrl,
+      '/gw/icu/events?external_ids=note%3A2026-06-20%3Arange-sick-a1,note%3A2026-06-20%3Aday-note&dry_run=true',
+      { method: 'DELETE' },
+    );
+    assert.deepEqual(response.body.to_delete.ids, ['200002']);
+    assert.deepEqual(response.body.protected.ids, ['200001']);
+    console.log('ok - exact external_id delete skips range events');
+
+    // Явный id события болезни удаляется как раньше, без поля protected.
+    bulkDeleteResponder = (body) => {
+      assert.deepEqual(body, [{ id: 200001 }]);
+      return jsonResponse({ deleted_ids: [200001] });
+    };
+    response = await request(baseUrl, '/gw/icu/events?id=200001&dry_run=false', { method: 'DELETE' });
+    assert.equal(response.body.ok, true);
+    assert.deepEqual(response.body.deleted_ids, ['200001']);
+    assert.equal(response.body.protected, undefined);
+    console.log('ok - explicit id still deletes a SICK event');
   } finally {
     server.close();
     global.fetch = originalFetch;
