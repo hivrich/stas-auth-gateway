@@ -400,24 +400,29 @@ async function main() {
     assert.equal(puts().length, 0);
     console.log('ok - plan done is detected by an activity paired to it in the day list, no POST');
 
-    // 7c. Человек сменил время и день записи: активность привязана к плану на другой день -> второй список по дню плана, без POST.
+    // 7c. Окно поиска ограничено датой записи ±1 день и не растёт по запросу: один список, плановая активность вне окна не ищется.
     reset();
-    activitiesById.i811 = {
-      id: 'i811', external_id: 'stas-done:plan:5001', type: 'Run', start_date_local: '2026-10-20T07:30:00',
-      moving_time: 3000, icu_athlete_id: 'i15487', paired_event_id: 5001,
-    };
-    activitiesById.i811.start_date_local = '2026-10-22T07:30:00';
-    // Список за широкое окно плана (день плана -1 ... день записи +14): активность за 22.10 видна при повторе с датой 25.10.
-    dayListByDay = { '2026-10-19': [activitiesById.i811] };
-    r = await request(baseUrl, { ...baseBody(), start_date_local: '2026-10-25T07:30:00', external_id: 'stas-done:plan:5001', plan_event_id: '5001' });
+    r = await request(baseUrl, { ...baseBody(), start_date_local: '2026-10-25T07:30:00', plan_event_id: '5001' });
     assert.equal(r.status, 200);
-    assert.equal(r.body.reason, 'plan_already_done');
-    assert.equal(r.body.activity.id, 'i811');
+    assert.equal(lists().length, 1, 'one list, no extra request for the plan day');
+    assert.equal(lists()[0].search, '?oldest=2026-10-24&newest=2026-10-26');
+    console.log('ok - the duplicate search window is bounded to the record date +-1 day');
+
+    // 7c2. План: ключ строит сервер (stas-done:plan:<id>), клиентский external_id для плана игнорируется.
+    reset();
+    r = await request(baseUrl, { ...baseBody(), external_id: 'stas-done:form:client1', plan_event_id: '5001' });
+    assert.equal(r.status, 200);
+    assert.equal(JSON.parse(posts()[0].body).external_id, 'stas-done:plan:5001');
+    console.log('ok - plan external_id is built by the server');
+
+    // 7c3. У события нет athlete_id: владельца не установить -> 404 plan_not_found, без POST.
+    reset();
+    events['5004'] = { id: 5004, category: 'WORKOUT', start_date_local: '2026-10-20T00:00:00' };
+    r = await request(baseUrl, { ...baseBody(), plan_event_id: '5004' });
+    assert.equal(r.status, 404);
+    assert.equal(r.body.error, 'plan_not_found');
     assert.equal(posts().length, 0);
-    assert.equal(lists().length, 1, 'one wide list for a plan');
-    assert.equal(lists()[0].search, '?oldest=2026-10-19&newest=2026-11-08');
-    dayListByDay = null;
-    console.log('ok - plan paired activity is found by one wide list when the requested day differs');
+    console.log('ok - plan without an owner field is refused');
 
     // 7d. Похожая активность через полночь (23:59 и 00:01): один список за три дня её находит, второй POST не уходит.
     reset();
@@ -484,11 +489,26 @@ async function main() {
     createPairs = false;
     putStatus = 500;
     r = await request(baseUrl, { ...baseBody(), plan_event_id: '5001' });
-    assert.equal(r.status, 200);
-    assert.equal(r.body.created, true);
-    assert.equal(r.body.paired, false);
+    // Сбой PUT не проглатывается: честный 502 (активность создана, повтор допишет привязку).
+    assert.equal(r.status, 502);
+    assert.equal(r.body.ok, false);
     assert.equal(posts().length, 1);
     assert.equal(puts().length, 1, 'one PUT only');
+    // 429 на PUT: 429 с Retry-After.
+    reset();
+    createPairs = false;
+    putStatus = 429;
+    retryAfterHeader = '7';
+    r = await request(baseUrl, { ...baseBody(), plan_event_id: '5001' });
+    assert.equal(r.status, 429);
+    assert.equal(r.body.retry_after_ms, 7000);
+    assert.equal(posts().length, 1);
+    retryAfterHeader = null;
+    reset();
+    createPairs = false;
+    putStatus = 500;
+    r = await request(baseUrl, { ...baseBody(), plan_event_id: '5001' });
+    assert.equal(r.status, 502);
     // Повтор с тем же ключом: активность найдена по external_id, привязываем PUT-ом, второго POST нет.
     putStatus = null;
     r = await request(baseUrl, { ...baseBody(), plan_event_id: '5001' });
@@ -508,7 +528,7 @@ async function main() {
     assert.equal(r.body.paired, false);
     assert.equal(posts().length, 1);
     assert.equal(puts().length, 1);
-    console.log('ok - missing pairing -> one PUT; PUT failure -> paired:false; repeat pairs without a second POST');
+    console.log('ok - missing pairing -> one PUT; PUT failure is an honest 502/429; repeat pairs without a second POST');
 
     // Ответ POST массивом / без id.
     reset();
