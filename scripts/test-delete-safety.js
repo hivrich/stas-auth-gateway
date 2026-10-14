@@ -18,6 +18,11 @@ let localOrigin = '';
 const upstreamHits = [];
 let eventsListRetryAfter = null;
 let eventsListStatus = null; // статус отказа Intervals на чтении событий (листинг)
+// Ответ мок-Intervals на GET /athlete/0/events/{id}: по умолчанию ищет событие в broadCalendar, иначе 404.
+let eventReadResponder = (id) => {
+  const found = broadCalendar.find(event => String(event.id) === String(id));
+  return found ? jsonResponse(found) : jsonResponse({ error: 'not found' }, 404);
+};
 // Ответ мок-Intervals на bulk-delete; тесты частичного удаления подменяют его.
 let bulkDeleteResponder = (body) => {
   assert.deepEqual(body, [{ id: 116577024 }]);
@@ -78,6 +83,13 @@ global.fetch = async (url, options = {}) => {
       return refused;
     }
     return jsonResponse(broadCalendar);
+  }
+
+  const eventReadMatch = parsed.origin === 'https://intervals.icu' && options.method !== 'PUT'
+    ? parsed.pathname.match(/^\/api\/v1\/athlete\/0\/events\/(\d+)$/)
+    : null;
+  if (eventReadMatch) {
+    return eventReadResponder(eventReadMatch[1]);
   }
 
   if (parsed.origin === 'https://intervals.icu' && parsed.pathname === '/api/v1/athlete/0/events/bulk-delete') {
@@ -398,16 +410,162 @@ async function main() {
     assert.deepEqual(response.body.protected.ids, ['200001']);
     console.log('ok - exact external_id delete skips range events');
 
-    // Явный id события болезни удаляется как раньше, без поля protected.
+    // Явный id: события «Болезнь/травма/поездка» удаляет только сайт STAS (x-stas-source: site + X-API-Key).
+    broadCalendar.push({ id: 200010, external_id: 'test-workout:200010', category: 'WORKOUT', name: 'Plain workout' });
+    const siteHeaders = { 'x-stas-source': 'site', 'X-API-Key': process.env.STAS_KEY };
+    const eventReads = () => upstreamHits.filter(hit => {
+      const { pathname } = new URL(hit.url);
+      return hit.method === 'GET' && /^\/api\/v1\/athlete\/0\/events\/\d+$/.test(pathname);
+    });
+    const deleteById = (id, headers = {}, extra = '') => request(
+      baseUrl,
+      `/gw/icu/events?id=${id}&dry_run=false${extra}`,
+      { method: 'DELETE', headers },
+    );
+    const bulkMustNotRun = () => { throw new Error('bulk-delete must not be called'); };
+
+    // (а) SICK по id от ИИ-чата: не удаляется, protected, bulk-delete не вызывался.
+    upstreamHits.length = 0;
+    bulkDeleteResponder = bulkMustNotRun;
+    response = await deleteById(200001);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.ok, true);
+    assert.equal(response.body.deleted_count, 0);
+    assert.deepEqual(response.body.deleted_ids, []);
+    assert.deepEqual(response.body.failed, []);
+    assert.deepEqual(response.body.protected, { count: 1, ids: ['200001'], reason: rangeReason });
+    assert.equal(upstreamBulkCalls().length, 0, 'bulk-delete must not run for a protected id');
+    assert.equal(eventReads().length, 1, 'the event was read once');
+    console.log('ok - delete by id from GPT keeps a SICK event');
+
+    // (б) Тот же id от сайта: удаляется, без protected и без чтения события.
+    upstreamHits.length = 0;
     bulkDeleteResponder = (body) => {
       assert.deepEqual(body, [{ id: 200001 }]);
       return jsonResponse({ deleted_ids: [200001] });
     };
-    response = await request(baseUrl, '/gw/icu/events?id=200001&dry_run=false', { method: 'DELETE' });
+    response = await deleteById(200001, siteHeaders);
     assert.equal(response.body.ok, true);
     assert.deepEqual(response.body.deleted_ids, ['200001']);
     assert.equal(response.body.protected, undefined);
-    console.log('ok - explicit id still deletes a SICK event');
+    assert.equal(upstreamBulkCalls().length, 1);
+    assert.equal(eventReads().length, 0, 'site delete reads no event');
+    // Заголовок site без ключа - не сайт: событие защищено.
+    upstreamHits.length = 0;
+    bulkDeleteResponder = bulkMustNotRun;
+    response = await deleteById(200001, { 'x-stas-source': 'site' });
+    assert.deepEqual(response.body.protected, { count: 1, ids: ['200001'], reason: rangeReason });
+    assert.equal(upstreamBulkCalls().length, 0);
+    console.log('ok - delete by id from the site (header + key) still deletes a SICK event without extra reads');
+
+    // (в) Обычная тренировка по id от ИИ-чата: событие прочитано, удалено.
+    upstreamHits.length = 0;
+    bulkDeleteResponder = (body) => {
+      assert.deepEqual(body, [{ id: 200010 }]);
+      return jsonResponse({ deleted_ids: [200010] });
+    };
+    response = await deleteById(200010);
+    assert.equal(response.body.ok, true);
+    assert.deepEqual(response.body.deleted_ids, ['200010']);
+    assert.equal(response.body.protected, undefined);
+    assert.equal(eventReads().length, 1);
+    assert.equal(upstreamBulkCalls().length, 1);
+    console.log('ok - delete by id from GPT deletes an ordinary workout after one read');
+
+    // (г) range-ключ с категорией NOTE по id от ИИ-чата: защищено.
+    upstreamHits.length = 0;
+    bulkDeleteResponder = bulkMustNotRun;
+    response = await deleteById(200004);
+    assert.equal(response.body.ok, true);
+    assert.equal(response.body.deleted_count, 0);
+    assert.deepEqual(response.body.protected, { count: 1, ids: ['200004'], reason: rangeReason });
+    assert.equal(upstreamBulkCalls().length, 0);
+    console.log('ok - delete by id from GPT keeps a range- key event');
+
+    // Несколько id: защищённый и обычный - обычный удаляется, защищённый в protected.
+    upstreamHits.length = 0;
+    bulkDeleteResponder = (body) => {
+      assert.deepEqual(body, [{ id: 200010 }]);
+      return jsonResponse({ deleted_ids: [200010] });
+    };
+    response = await request(baseUrl, '/gw/icu/events?id=200003,200010&dry_run=false', { method: 'DELETE' });
+    assert.equal(response.body.ok, true);
+    assert.deepEqual(response.body.deleted_ids, ['200010']);
+    assert.deepEqual(response.body.protected, { count: 1, ids: ['200003'], reason: rangeReason });
+    assert.equal(eventReads().length, 2);
+
+    // (д) Чтение события вернуло 500: id не удаляется, failed с protection_check_failed.
+    upstreamHits.length = 0;
+    bulkDeleteResponder = bulkMustNotRun;
+    eventReadResponder = () => jsonResponse({ error: 'boom' }, 500);
+    response = await deleteById(200010);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.ok, false);
+    assert.equal(response.body.error, 'delete_incomplete');
+    assert.equal(response.body.deleted_count, 0);
+    assert.deepEqual(response.body.failed, [{ id: '200010', status: 500, reason: 'protection_check_failed' }]);
+    assert.equal(response.body.protected, undefined);
+    assert.equal(upstreamBulkCalls().length, 0, 'unchecked id must not reach bulk-delete');
+    // Сетевая ошибка чтения - тоже не удаляем, статус 502.
+    eventReadResponder = () => { throw new Error('socket hang up'); };
+    response = await deleteById(200010);
+    assert.deepEqual(response.body.failed, [{ id: '200010', status: 502, reason: 'protection_check_failed' }]);
+    assert.equal(upstreamBulkCalls().length, 0);
+    // Нечитаемый ответ (200 без JSON-объекта) - тоже не удаляем.
+    eventReadResponder = () => jsonResponse(null);
+    response = await deleteById(200010);
+    assert.deepEqual(response.body.failed, [{ id: '200010', status: 502, reason: 'protection_check_failed' }]);
+    assert.equal(upstreamBulkCalls().length, 0);
+    console.log('ok - failed event read (500, network, unreadable) keeps the id and reports protection_check_failed');
+
+    // Частично: одно событие не прочитано, другое обычное - обычное удаляется, ответ delete_incomplete.
+    upstreamHits.length = 0;
+    eventReadResponder = (id) => (String(id) === '200010'
+      ? jsonResponse({ error: 'boom' }, 503)
+      : jsonResponse({ id: Number(id), category: 'WORKOUT' }));
+    bulkDeleteResponder = (body) => {
+      assert.deepEqual(body, [{ id: 200011 }]);
+      return jsonResponse({ deleted_ids: [200011] });
+    };
+    response = await request(baseUrl, '/gw/icu/events?id=200010,200011&dry_run=false', { method: 'DELETE' });
+    assert.equal(response.body.ok, false);
+    assert.equal(response.body.error, 'delete_incomplete');
+    assert.deepEqual(response.body.deleted_ids, ['200011']);
+    assert.deepEqual(response.body.failed, [{ id: '200010', status: 503, reason: 'protection_check_failed' }]);
+
+    // (е) 404 на чтении: id остаётся в списке на удаление.
+    upstreamHits.length = 0;
+    eventReadResponder = () => jsonResponse({ error: 'not found' }, 404);
+    bulkDeleteResponder = (body) => {
+      assert.deepEqual(body, [{ id: 299999 }]);
+      return jsonResponse({ deleted_ids: [299999] });
+    };
+    response = await deleteById(299999);
+    assert.equal(response.body.ok, true);
+    assert.deepEqual(response.body.deleted_ids, ['299999']);
+    assert.deepEqual(response.body.failed, []);
+    assert.equal(upstreamBulkCalls().length, 1);
+    console.log('ok - 404 on the event read still lets Intervals decide');
+
+    // (ж) dry_run по id от ИИ-чата показывает protected; от сайта - как раньше, без чтения.
+    eventReadResponder = (id) => {
+      const found = broadCalendar.find(event => String(event.id) === String(id));
+      return found ? jsonResponse(found) : jsonResponse({ error: 'not found' }, 404);
+    };
+    bulkDeleteResponder = bulkMustNotRun;
+    upstreamHits.length = 0;
+    response = await request(baseUrl, '/gw/icu/events?id=200001,200010&dry_run=true', { method: 'DELETE' });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.dry_run, true);
+    assert.deepEqual(response.body.to_delete, { count: 1, ids: ['200010'] });
+    assert.deepEqual(response.body.protected, { count: 1, ids: ['200001'], reason: rangeReason });
+    assert.equal(upstreamBulkCalls().length, 0);
+    upstreamHits.length = 0;
+    response = await request(baseUrl, '/gw/icu/events?id=200001&dry_run=true', { method: 'DELETE', headers: siteHeaders });
+    assert.deepEqual(response.body.to_delete, { count: 1, ids: ['200001'] });
+    assert.equal(response.body.protected, undefined);
+    assert.equal(eventReads().length, 0);
+    console.log('ok - dry_run by id separates protected events for GPT and is unchanged for the site');
   } finally {
     server.close();
     global.fetch = originalFetch;
