@@ -216,6 +216,22 @@ that might ignore signed-client authentication. See the rollback restriction
 in [PRIVATE_KEY_JWT.md](PRIVATE_KEY_JWT.md). Ordinary app deploys do not replace
 gateway source or run this gateway release helper.
 
+## Release order with the site
+
+Whoever calls a new address deploys after the one that gained it.
+
+- The gateway starts calling a new site address (for example a new `/api/db/*` route): deploy the site first, then the gateway.
+- The site starts calling a new gateway route: deploy the gateway first, then the site.
+
+Why: in 2.7 the gateway went out 33 minutes before the site, called `/api/db/plan_changes`, got 404, and three ChatGPT plan edits (10 workouts) were not journaled.
+Keep the window between the two deploys as short as possible.
+Rollback is the reverse order: the site first, then the gateway.
+
+Logs: `scripts/deploy-prod-gateway.sh` saves the logs of `app`, `worker` and `bridge-api` to `${STAS_DEPLOY_BACKUP_DIR:-/home/deploy/stas-deploy-backups}/logs-<UTC time>-gateway` right before the gateway is replaced, and keeps the 10 newest `logs-*` directories.
+A failed dump only prints `warning_log_dump_failed`; the deploy continues.
+The first release with this script cannot rely on it yet: dump the logs by hand before it
+(`docker compose logs --no-color --timestamps app worker bridge-api`).
+
 ## Required Checks
 
 For a connection that completes the callback but fails before token issuance,

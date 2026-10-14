@@ -33,6 +33,35 @@ echo '[gateway-deploy] checking_candidate_database_readiness'
 "${candidate_compose[@]}" run --rm --no-deps --entrypoint node bridge-api /app/scripts/check-oauth-replay-readiness.js
 [[ "$("${compose[@]}" config --hash bridge-api)" == "$config_hash" ]] || { echo '[gateway-deploy] runtime_config_changed' >&2; exit 1; }
 
+# Логи app, worker и bridge-api до пересоздания шлюза: после --force-recreate старые записи недоступны.
+# Любой сбой только предупреждает, деплой идёт дальше. Хранятся 10 самых новых каталогов logs-*.
+dump_pre_restart_logs() {
+  local backup_root="${STAS_DEPLOY_BACKUP_DIR:-/home/deploy/stas-deploy-backups}"
+  local stamp dump_dir service
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)" || return 1
+  dump_dir="$backup_root/logs-$stamp-gateway"
+  mkdir -p -- "$backup_root" || return 1
+  install -d -m 700 "$dump_dir" || return 1
+  for service in app worker bridge-api; do
+    "${compose[@]}" logs --no-color --timestamps "$service" > "$dump_dir/$service.log" 2>&1 || return 1
+  done
+  return 0
+}
+prune_old_log_dumps() {
+  local backup_root="${STAS_DEPLOY_BACKUP_DIR:-/home/deploy/stas-deploy-backups}"
+  local name
+  # Только каталоги logs-*: имена с UTC-меткой сортируются по времени, старше десятого удаляем.
+  find "$backup_root" -mindepth 1 -maxdepth 1 -type d -name 'logs-*' -printf '%f\n' \
+    | sort -r | tail -n +11 \
+    | while IFS= read -r name; do rm -rf -- "${backup_root:?}/$name" || true; done
+}
+if ! dump_pre_restart_logs; then
+  echo '[gateway-deploy] warning_log_dump_failed' >&2
+fi
+if ! prune_old_log_dumps; then
+  echo '[gateway-deploy] warning_log_dump_failed' >&2
+fi
+
 echo '[gateway-deploy] replacing_gateway_with_verified_candidate'
 "${candidate_compose[@]}" up -d --no-deps --no-build --force-recreate bridge-api
 container_id="$("${candidate_compose[@]}" ps -q bridge-api)"

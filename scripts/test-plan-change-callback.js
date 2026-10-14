@@ -30,6 +30,11 @@ let stasMode = 'ok'; // 'ok' | 'throw' | 'hang' | 'status500'
 let icuFail = null; // статус ошибки Intervals на запись
 let deleteResponse = null; // переопределение ответа bulk-delete
 let putOmitsUpdated = false; // ответ PUT события без updated
+let icuPostFailAt = null; // номер POST /events (по порядку), на котором Intervals отвечает 500
+let icuPostCount = 0;
+let stasDelayMs = 0; // задержка ответа STAS (для проверки очерёдности пачек)
+let stasInFlight = 0;
+let stasMaxInFlight = 0;
 
 function jsonResponse(body, status = 200) {
   return {
@@ -50,6 +55,12 @@ global.fetch = async (url, options = {}) => {
   if (parsed.origin === 'http://stas.local.test') {
     if (parsed.pathname === '/api/db/plan_changes') {
       stasCalls.push({ headers: options.headers || {}, body: JSON.parse(options.body), method });
+      if (stasDelayMs > 0) {
+        stasInFlight += 1;
+        stasMaxInFlight = Math.max(stasMaxInFlight, stasInFlight);
+        await new Promise((resolve) => setTimeout(resolve, stasDelayMs));
+        stasInFlight -= 1;
+      }
       if (stasMode === 'throw') throw new Error('stas down');
       if (stasMode === 'hang') {
         return new Promise((resolve, reject) => {
@@ -89,7 +100,9 @@ global.fetch = async (url, options = {}) => {
     return jsonResponse(out);
   }
   if (parsed.pathname === base && method === 'POST') {
+    icuPostCount += 1;
     if (icuFail) return jsonResponse({ error: 'icu says no' }, icuFail);
+    if (icuPostFailAt && icuPostCount === icuPostFailAt) return jsonResponse({ error: 'icu says no' }, 500);
     const ev = { id: nextId++, athlete_id: 'i15487', updated: '2026-10-14T10:00:00.000+00:00', ...JSON.parse(options.body) };
     store.push(ev);
     return jsonResponse(ev, 201);
@@ -128,6 +141,11 @@ function reset(initial = []) {
   icuFail = null;
   deleteResponse = null;
   putOmitsUpdated = false;
+  icuPostFailAt = null;
+  icuPostCount = 0;
+  stasDelayMs = 0;
+  stasInFlight = 0;
+  stasMaxInFlight = 0;
   callback.__testing.resetStats();
 }
 
@@ -309,6 +327,43 @@ async function main() {
     assert.equal(new Set(stasCalls.map((c) => c.body.request_id)).size, 13);
     console.log('ok - chunking at 8 events');
 
+    // dedupe=false: 2-е из 3 событий упало (500): первое уже создано и попадает в журнал, ответ - та же ошибка
+    reset();
+    icuPostFailAt = 2;
+    r = await call(baseUrl, 'POST', '/gw/icu/events?dry_run=false&dedupe=false', {
+      body: { events: [plan(day(7), { session_type: 'tempo' }), plan(day(8)), plan(day(9))] },
+    });
+    assert.equal(r.status, 500);
+    assert.equal(r.body.error, 'icu says no');
+    assert.equal(r.body.partial, undefined, 'partial rows are not exposed in the response');
+    assert.equal(icuHits.filter((h) => h.method === 'POST').length, 2, 'third event is not sent after the failure');
+    assert.equal(store.length, 1);
+    assert.equal(stasCalls.length, 1);
+    assert.equal(stasCalls[0].body.events.length, 1);
+    assert.equal(stasCalls[0].body.events[0].action, 'created');
+    assert.equal(stasCalls[0].body.events[0].id, store[0].id);
+    assert.equal(stasCalls[0].body.events[0].external_id, plan(day(7)).external_id);
+    assert.equal(stasCalls[0].body.events[0].session_type, 'tempo');
+    // первое же событие упало: в журнал нечего отправлять
+    reset();
+    icuPostFailAt = 1;
+    r = await call(baseUrl, 'POST', '/gw/icu/events?dry_run=false&dedupe=false', { body: { events: [plan(day(7)), plan(day(8))] } });
+    assert.equal(r.status, 500);
+    assert.equal(stasCalls.length, 0);
+    console.log('ok - POST dedupe=false: events created before a failure reach the journal, the error response is unchanged');
+
+    // Пачки в STAS уходят по очереди: одновременно не больше одного запроса
+    reset();
+    stasDelayMs = 40;
+    const sequential = Array.from({ length: 20 }, (_, i) => plan(day(10), { external_id: `plan:seq-${i}`, name: `s${i}` }));
+    r = await call(baseUrl, 'POST', '/gw/icu/events?dry_run=false', { body: { events: sequential } });
+    assert.equal(r.status, 200);
+    assert.deepEqual(stasCalls.map((c) => c.body.events.length), [8, 8, 4], '20 events make 3 batches in order');
+    assert.deepEqual(stasCalls.map((c) => c.body.request_id), [REQUEST_ID, `${REQUEST_ID}#2`, `${REQUEST_ID}#3`]);
+    assert.equal(stasMaxInFlight, 1, 'the second batch starts only after the first one finished');
+    stasDelayMs = 0;
+    console.log('ok - callback batches are sent one after another');
+
     // DELETE real по external_id: deleted со строками, найденными перед удалением
     reset([plan(day(4)), plan(day(5))]);
     const [a, b] = store;
@@ -340,12 +395,14 @@ async function main() {
     icuFail = 500;
     await call(baseUrl, 'DELETE', `/gw/icu/events?dry_run=false&id=${only.id}`);
     assert.equal(stasCalls.length, 0);
-    // явный id: только id
+    // явный id не от сайта: событие читается перед удалением, в журнал идут его поля
     icuFail = null;
     await call(baseUrl, 'DELETE', `/gw/icu/events?dry_run=false&id=${only.id}`);
     assert.equal(stasCalls.length, 1);
     assert.equal(String(stasCalls[0].body.deleted[0].id), String(only.id));
-    assert.equal(stasCalls[0].body.deleted[0].external_id, null);
+    assert.equal(stasCalls[0].body.deleted[0].external_id, only.external_id);
+    assert.equal(stasCalls[0].body.deleted[0].name, 'Easy run');
+    assert.equal(stasCalls[0].body.deleted[0].category, 'WORKOUT');
     console.log('ok - DELETE: callback with listed rows restricted to deleted ids; none on dry run/empty/error');
 
     // Удаление по id не от сайта: Intervals вернул только счётчик, часть id не прошла проверку.
