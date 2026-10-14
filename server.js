@@ -72,6 +72,8 @@ function createApp() {
 
   app.use('/gw', openapi);
   app.use('/gw', agent);
+  // Ручная запись активности: только сайт; проверка источника и ключа раньше любой авторизации по токену (без запросов в Intervals).
+  app.post('/gw/icu/activities/manual', require('./lib/attach_activity_create').siteOnlyGate);
   app.use('/gw', bearerUid());
   app.use('/gw', mcpScopeGuard());
   app.use('/gw', agentReadOnlyGuard());

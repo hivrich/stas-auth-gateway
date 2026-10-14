@@ -183,6 +183,13 @@ async function main() {
       assert.deepEqual(r.body, { ok: false, error: 'site_only' });
     }
     assert.equal(icuHits().length, 0, '403 must not reach Intervals');
+    // Включая проверку токена (/athlete/0): ворота стоят раньше общей авторизации.
+    assert.equal(upstreamHits.filter(h => h.path.startsWith('/api/v1/')).length, 0, 'gate runs before the bearer lookup');
+    // Без Bearer тоже 403 (не 401): сначала источник и ключ.
+    const noBearer = await originalFetch(`${baseUrl}/gw/icu/activities/manual`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(baseBody()),
+    });
+    assert.equal(noBearer.status, 403);
     console.log('ok - no key / source gpt / mcp / wrong key -> 403 site_only, zero Intervals requests');
 
     // 2. Валидация: 400 без запросов в Intervals.
@@ -246,7 +253,7 @@ async function main() {
     assert.equal(icuHits().length, 2, 'list day + POST manual');
     assert.equal(icuHits()[0].method, 'GET');
     assert.equal(icuHits()[0].path, '/api/v1/athlete/0/activities');
-    assert.equal(icuHits()[0].search, '?oldest=2026-10-20&newest=2026-10-20');
+    assert.equal(icuHits()[0].search, '?oldest=2026-10-19&newest=2026-10-21');
     assert.equal(icuHits()[1].method, 'POST');
     assert.deepEqual(JSON.parse(posts()[0].body), {
       type: 'Run',
@@ -399,8 +406,8 @@ async function main() {
       id: 'i811', external_id: 'stas-done:plan:5001', type: 'Run', start_date_local: '2026-10-20T07:30:00',
       moving_time: 3000, icu_athlete_id: 'i15487', paired_event_id: 5001,
     };
-    dayListByDay = { '2026-10-20': [activitiesById.i811], '2026-10-21': [] };
-    r = await request(baseUrl, { ...baseBody(), start_date_local: '2026-10-21T07:30:00', external_id: 'stas-done:plan:5001', plan_event_id: '5001' });
+    dayListByDay = { '2026-10-20': [activitiesById.i811], '2026-10-24': [] };
+    r = await request(baseUrl, { ...baseBody(), start_date_local: '2026-10-25T07:30:00', external_id: 'stas-done:plan:5001', plan_event_id: '5001' });
     assert.equal(r.status, 200);
     assert.equal(r.body.reason, 'plan_already_done');
     assert.equal(r.body.activity.id, 'i811');
@@ -408,6 +415,44 @@ async function main() {
     assert.equal(lists().length, 2);
     dayListByDay = null;
     console.log('ok - plan paired activity on the plan day is found when the requested day differs');
+
+    // 7d. Похожая активность через полночь (23:59 и 00:01): один список за три дня её находит, второй POST не уходит.
+    reset();
+    activitiesById.i820 = {
+      id: 'i820', external_id: 'garmin:9', type: 'Run', start_date_local: '2026-10-19T23:59:00',
+      moving_time: 3000, icu_athlete_id: 'i15487',
+    };
+    dayList = [activitiesById.i820];
+    r = await request(baseUrl, { ...baseBody(), start_date_local: '2026-10-20T00:01:00' });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.created, false);
+    assert.equal(r.body.reason, 'similar');
+    assert.equal(posts().length, 0);
+    assert.equal(lists().length, 1);
+    console.log('ok - similar activity across midnight is found by the three-day list');
+
+    // 7e. Список не массивом (сбой, нечитаемый ответ): дубли не проверить, ничего не создаём, 502.
+    reset();
+    dayListByDay = { '2026-10-19': { error: 'weird' } };
+    r = await request(baseUrl, baseBody());
+    assert.equal(r.status, 502);
+    assert.equal(posts().length, 0);
+    dayListByDay = null;
+    console.log('ok - non-array list -> 502 without creating');
+
+    // 7f. Два разных ключа, одна и та же тренировка, одновременно: у атлета запросы идут по очереди, POST один.
+    reset();
+    postDelayMs = 60;
+    const [ra, rb] = await Promise.all([
+      request(baseUrl, { ...baseBody(), external_id: 'stas-done:form:aaaaaa' }),
+      request(baseUrl, { ...baseBody(), external_id: 'stas-done:form:bbbbbb' }),
+    ]);
+    assert.equal(ra.status, 200);
+    assert.equal(rb.status, 200);
+    assert.equal(posts().length, 1, 'one POST for two simultaneous keys of the same workout');
+    assert.equal([ra, rb].filter(x => x.body.created).length, 1);
+    postDelayMs = 0;
+    console.log('ok - simultaneous requests with different keys are serialized per athlete (one POST)');
 
     // 8. Чужой и несуществующий план -> 404 plan_not_found, без POST.
     reset();
