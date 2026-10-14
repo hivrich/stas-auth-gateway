@@ -717,6 +717,22 @@ async function main() {
     assert.equal(response.body.error, 'upstream_unavailable');
     console.log('ok - network / timeout on bulk-delete -> 502 upstream_unavailable with failed[] at 502');
 
+    // 200, но тело ответа оборвалось: удалённое неизвестно, ничего не подтверждаем (502, не ok:true)
+    bulkDeleteResponder = () => ({
+      ok: true,
+      status: 200,
+      headers: { get() { return null; } },
+      clone() { return { json: async () => { throw new Error('terminated'); } }; },
+      text: async () => { throw new Error('terminated'); },
+    });
+    response = await request(baseUrl, prefixDelete, { method: 'DELETE' });
+    assert.equal(response.status, 502);
+    assert.equal(response.body.ok, false);
+    assert.equal(response.body.error, 'upstream_unavailable');
+    assert.equal(response.body.deleted_count, 0);
+    assert.deepEqual(response.body.deleted_ids, []);
+    console.log('ok - 2xx bulk-delete with a broken body is not confirmed (502)');
+
     // 429 и 422 как раньше
     bulkDeleteResponder = () => jsonResponse({ error: 'slow' }, 429);
     response = await request(baseUrl, prefixDelete, { method: 'DELETE' });

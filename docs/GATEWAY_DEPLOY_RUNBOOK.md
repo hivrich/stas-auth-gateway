@@ -225,7 +225,7 @@ Whoever calls a new address deploys after the one that gained it.
 
 Why: in 2.7 the gateway went out 33 minutes before the site, called `/api/db/plan_changes`, got 404, and three ChatGPT plan edits (10 workouts) were not journaled.
 Keep the window between the two deploys as short as possible.
-Rollback is the reverse order: the site first, then the gateway.
+Rollback is the reverse of the deploy order: the side that calls the new address is rolled back first, then the side that gained it (gateway calls a new site address: gateway first, then site; site calls a new gateway route: site first, then gateway).
 
 Logs: `scripts/deploy-prod-gateway.sh` saves the logs of `app`, `worker` and `bridge-api` to `${STAS_DEPLOY_BACKUP_DIR:-/home/deploy/stas-deploy-backups}/logs-<UTC time>-gateway` right before the gateway is replaced, and keeps the 10 newest `logs-*` directories.
 A failed dump only prints `warning_log_dump_failed`; the deploy continues.
