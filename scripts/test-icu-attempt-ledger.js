@@ -10,7 +10,7 @@ delete process.env.DB_BRIDGE_API_KEY;
 process.env.STAS_BASE = 'http://stas.local.test';
 
 const getStasKey = require('../lib/get_stas_key');
-const { fetchIntervals, parseRetryAfterMs } = require('../lib/icu-attempt-ledger');
+const { fetchIntervals, parseRetryAfter, parseRetryAfterMs } = require('../lib/icu-attempt-ledger');
 const { icuListEventsWithAuth } = require('../lib/icu_write');
 const { buildStasSourceHeaders, getRequestSource, normalizeSource } = require('../lib/request-source');
 
@@ -68,6 +68,18 @@ async function main() {
   assert.equal(parseRetryAfterMs(new Date(Date.now() - 10000).toUTCString()), 0);
   assert.equal(parseRetryAfterMs('soon'), null);
   assert.equal(parseRetryAfterMs(null), null);
+  // Невалидные значения не разбираются: отрицательные, дробные, экспонента, нестандартные даты.
+  for (const bad of ['-1', '1.5', '1e3', '+5', '0x10', '2026-10-20', 'Tue Oct 20 2026 10:00:00', 'Tue, 20 Oct 2026 10:00:00 +0200', '5 seconds']) {
+    assert.equal(parseRetryAfterMs(bad), null, `"${bad}" is not a valid Retry-After`);
+    assert.equal(parseRetryAfter(bad), null);
+  }
+  // Огромные секунды ограничены сутками, пересылается ограниченное значение.
+  assert.equal(parseRetryAfterMs('99999999999999999999'), 86400000);
+  assert.deepEqual(parseRetryAfter('99999999999999999999'), { header: '86400', ms: 86400000 });
+  assert.equal(parseRetryAfterMs(new Date(Date.now() + 10 * 86400000).toUTCString()), 86400000);
+  const validDate = new Date(Date.now() + 20000).toUTCString();
+  assert.deepEqual(Object.keys(parseRetryAfter(validDate)), ['header', 'ms']);
+  assert.equal(parseRetryAfter(validDate).header, validDate);
   console.log('ok - Retry-After parses seconds and HTTP dates');
 
   // Bearer + Basic (повтор после 401) для сохранённых ключей: две записи, athlete_id без "i".

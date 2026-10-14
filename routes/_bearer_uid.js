@@ -1,5 +1,6 @@
 const { applyResolvedAuth, resolveRequestAuth } = require('../lib/request-auth');
 const { getStasRequestId } = require('../lib/request-id');
+const { forwardRetryAfter } = require('../lib/icu-attempt-ledger');
 
 function trimReason(value) {
   const raw = String(value || '').trim();
@@ -55,6 +56,14 @@ module.exports = function () {
         }));
       } catch {}
       const status = Number(error?.status) || 401;
+      if (status === 429) {
+        const retryAfterMs = forwardRetryAfter(res, error.retryAfter);
+        return res.status(429).json({
+          status: 429,
+          error: 'rate_limited',
+          ...(retryAfterMs !== null ? { retry_after_ms: retryAfterMs } : {}),
+        });
+      }
       if (status >= 500) return res.status(status).json({ status, error: 'auth_resolution_failed' });
       return bad();
     }

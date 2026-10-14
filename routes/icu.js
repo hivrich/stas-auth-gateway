@@ -2,7 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const { getStasRequestId } = require('../lib/request-id');
 const { getIcuRequestAuth } = require('../lib/icu-request-auth');
-const { fetchIntervals } = require('../lib/icu-attempt-ledger');
+const { fetchIntervals, forwardRetryAfter } = require('../lib/icu-attempt-ledger');
 
 function buildAuthHeaders(auth, mode) {
   const headers = { Accept: 'application/json' };
@@ -60,13 +60,19 @@ router.get('/events', async (req, res) => {
       });
     }
 
-    // 429 Intervals уже уходит как есть (статус); добавляем Retry-After, чтобы вызывающий мог подождать.
-    if (ir.status === 429) {
-      const retryAfter = ir.headers.get('retry-after');
-      if (retryAfter) res.set('Retry-After', retryAfter);
-    }
     const txt = await ir.text();
     const ct  = ir.headers.get('content-type') || 'application/json; charset=utf-8';
+
+    // 429 Intervals: статус как есть, плюс Retry-After и retry_after_ms (только если значение разбирается).
+    if (ir.status === 429) {
+      const retryAfterMs = forwardRetryAfter(res, ir.headers.get('retry-after'));
+      let upstreamBody = null;
+      try { upstreamBody = JSON.parse(txt); } catch {}
+      const base = upstreamBody && typeof upstreamBody === 'object' && !Array.isArray(upstreamBody)
+        ? upstreamBody
+        : { ok: false, error: 'rate_limited' };
+      return res.status(429).json({ ...base, ...(retryAfterMs !== null ? { retry_after_ms: retryAfterMs } : {}) });
+    }
 
     // если JSON — вернём объект/массив, иначе — сырой текст
     try {
