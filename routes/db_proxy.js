@@ -72,7 +72,8 @@ function classifyDbPath(rawPath) {
   let decoded;
   try { decoded = decodeURIComponent(String(rawPath || '')); } catch { return { error: 'bad_path' }; }
   const segments = decoded.toLowerCase().replace(/\\/g, '/').split('/').filter(Boolean);
-  if (segments.some((s) => s === '..')) return { error: 'bad_path' };
+  // '.' and '..' would be dropped or resolved by new URL() after this check: refuse them outright.
+  if (segments.some((s) => s === '.' || s === '..')) return { error: 'bad_path' };
   if (segments.length && DENIED_SEGMENTS.has(comparable(segments[0]))) return { denied: true };
   return { rest: segments.join('/') };
 }
@@ -85,6 +86,9 @@ router.use(async (req, res) => {
 
   const rest = req.path.replace(/^\/+/, '');          // e.g. "trainings"
   const url  = new URL(`/api/db/${rest}`, STAS_BASE);
+  // Second check on the URL actually sent to STAS, after WHATWG normalisation.
+  const finalVerdict = classifyDbPath(url.pathname.replace(/^\/api\/db\/?/, ''));
+  if (finalVerdict.error || finalVerdict.denied) return res.status(404).json({ status: 404, error: 'not_found' });
 
   // Always use authenticated identity; query user_id/uid must not override it.
   const uid = getRequestUserId(req);

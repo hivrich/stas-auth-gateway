@@ -373,7 +373,7 @@ async function main() {
       }
     }
     assert.strictEqual(upstreamHits.length, 0, 'denied paths never reach STAS');
-    for (const path of ['/%E0%A4%A', '/trainings/../plan_changes', '/trainings/%2e%2e/plan_changes']) {
+    for (const path of ['/%E0%A4%A', '/trainings/../plan_changes', '/trainings/%2e%2e/plan_changes', '/./plan_changes', '/%2e/plan_changes', '/%2E/intervals-attempts', '/./trainings']) {
       const bad = await runRequest({}, 'user-42', { path });
       assert.strictEqual(bad.statusCode, 400, `${path} -> 400`);
     }
