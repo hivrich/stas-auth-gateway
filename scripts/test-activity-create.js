@@ -18,6 +18,8 @@ const upstreamHits = [];
 
 // Состояние мок-Intervals.
 let dayList = [];
+// Если задан, список активностей зависит от запрошенного дня (oldest).
+let dayListByDay = null;
 let events = {};
 let activitiesById = {};
 let nextId = 900;
@@ -67,6 +69,7 @@ global.fetch = async (url, options = {}) => {
 
   if (parsed.pathname === '/api/v1/athlete/0/activities' && method === 'GET') {
     if (listStatus) return jsonResponse({ error: 'x' }, listStatus);
+    if (dayListByDay) return jsonResponse(dayListByDay[parsed.searchParams.get('oldest')] || []);
     return jsonResponse(dayList);
   }
 
@@ -128,6 +131,7 @@ const lists = () => icuHits().filter(h => h.path === '/api/v1/athlete/0/activiti
 function reset() {
   upstreamHits.length = 0;
   dayList = [];
+  dayListByDay = null;
   activitiesById = {};
   nextId = 900;
   events = {
@@ -371,6 +375,39 @@ async function main() {
       'GET /api/v1/activity/i777',
     ]);
     console.log('ok - plan already paired -> existing, only event GET + activity GET');
+
+    // 7b. У события нет paired_activity_id (так отвечает Intervals): выполненность по активности с paired_event_id в списке дня.
+    reset();
+    activitiesById.i810 = {
+      id: 'i810', external_id: 'stas-done:plan:5001', type: 'Run', start_date_local: '2026-10-20T07:30:00',
+      moving_time: 3000, icu_athlete_id: 'i15487', paired_event_id: 5001,
+    };
+    dayList = [activitiesById.i810];
+    r = await request(baseUrl, { ...baseBody(), external_id: 'stas-done:plan:5001', plan_event_id: '5001' });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.created, false);
+    assert.equal(r.body.reason, 'plan_already_done');
+    assert.equal(r.body.paired, true);
+    assert.equal(r.body.activity.id, 'i810');
+    assert.equal(posts().length, 0);
+    assert.equal(puts().length, 0);
+    console.log('ok - plan done is detected by an activity paired to it in the day list, no POST');
+
+    // 7c. Человек сменил время и день записи: активность привязана к плану на другой день -> второй список по дню плана, без POST.
+    reset();
+    activitiesById.i811 = {
+      id: 'i811', external_id: 'stas-done:plan:5001', type: 'Run', start_date_local: '2026-10-20T07:30:00',
+      moving_time: 3000, icu_athlete_id: 'i15487', paired_event_id: 5001,
+    };
+    dayListByDay = { '2026-10-20': [activitiesById.i811], '2026-10-21': [] };
+    r = await request(baseUrl, { ...baseBody(), start_date_local: '2026-10-21T07:30:00', external_id: 'stas-done:plan:5001', plan_event_id: '5001' });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.reason, 'plan_already_done');
+    assert.equal(r.body.activity.id, 'i811');
+    assert.equal(posts().length, 0);
+    assert.equal(lists().length, 2);
+    dayListByDay = null;
+    console.log('ok - plan paired activity on the plan day is found when the requested day differs');
 
     // 8. Чужой и несуществующий план -> 404 plan_not_found, без POST.
     reset();
