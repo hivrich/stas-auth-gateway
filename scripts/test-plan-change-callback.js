@@ -231,15 +231,16 @@ async function main() {
     assert.equal(e1.description, 'v2');
     assert.equal(e1.updated, '2026-10-14T10:00:00.000+00:00');
     assert.equal(e1.athlete_id, 'i15487');
-    assert.equal(e2.action, 'created');
+    // external_id не найден в окне чтения: действие не отправляем, STAS решает по своей отметке версии
+    assert.equal('action' in e2, false);
     assert.equal(e2.session_type, 'long');
     assert.equal(e2.external_id, `plan:${day(5)}-easy-run`);
-    assert.equal(e3.action, 'created');
+    assert.equal('action' in e3, false);
     assert.equal('session_type' in e3, false);
     for (const key of ['id', 'athlete_id', 'external_id', 'category', 'start_date_local', 'name', 'type', 'description', 'updated']) {
       assert.ok(key in e2, `callback event has ${key}`);
     }
-    console.log('ok - POST upsert: no session_type to Intervals, callback created/changed + session_type + change_reason');
+    console.log('ok - POST upsert: no session_type to Intervals, callback changed / no action for unseen ids + session_type + change_reason');
 
     // dedupe=false: created, без session_type в Intervals
     reset();
