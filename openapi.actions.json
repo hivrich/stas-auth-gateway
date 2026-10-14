@@ -636,7 +636,7 @@
         "operationId": "createPlannedWorkoutsGw",
         "x-openai-isConsequential": false,
         "summary": "Write confirmed planned events",
-        "description": "An explicit request to save the exact understood events is sufficient confirmation. Call once with dry_run=false. Gateway normalizes, writes, and returns the result: events whose external_id already exists in Intervals.icu are updated in place, new ones are created. Do not read the calendar, preview, or read back in the save turn.",
+        "description": "An explicit request to save the exact understood events is sufficient confirmation. Call once with dry_run=false. Gateway writes and returns the result: an existing external_id is updated in place, new events are created. Do not read the calendar, preview, or read back in the save turn.",
         "requestBody": {
           "required": true,
           "content": {

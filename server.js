@@ -112,6 +112,8 @@ function createApp() {
   } catch(e) { console.error("[icu][POST] attach failed:", e && e.message); }
   try { const attachDelete = require("./lib/attach_delete"); if (typeof attachDelete === "function") attachDelete(app); }
   catch(e){ console.error("[icu][DELETE] attach failed:", e && e.message); }
+  try { const attachEventUpdate = require("./lib/attach_event_update"); if (typeof attachEventUpdate === "function") attachEventUpdate(app); }
+  catch(e){ console.error("[icu][PUT] attach failed:", e && e.message); }
   app.use('/gw/icu', icu);
 
   app.use((req, res) => {
