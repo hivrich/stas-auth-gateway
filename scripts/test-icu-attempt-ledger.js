@@ -92,11 +92,13 @@ async function main() {
   assert.deepEqual(parseRetryAfter('172800'), { header: '172800', ms: 172800000 });
   assert.equal(parseRetryAfter('99999999999999999999'), null);
   assert.equal(parseRetryAfter('1234567890'), null, 'more than 9 digits is invalid');
-  assert.deepEqual(parseRetryAfter('999999999'), { header: '999999999', ms: 999999999000 });
+  assert.deepEqual(parseRetryAfter('2000000'), { header: '2000000', ms: 2000000000 });
+  assert.equal(parseRetryAfter('2000001'), null, 'above the 2e9 ms ceiling');
   const now = Date.parse('2026-10-20T10:00:00Z');
   assert.deepEqual(parseRetryAfter('Fri, 30 Oct 2026 10:00:00 GMT', now), { header: '864000', ms: 864000000 });
   assert.deepEqual(parseRetryAfter('Tue, 20 Oct 2026 10:00:00 GMT', now), { header: '0', ms: 0 });
   assert.deepEqual(parseRetryAfter('Mon, 19 Oct 2026 10:00:00 GMT', now), { header: '0', ms: 0 });
+  assert.equal(parseRetryAfter('Fri, 01 Jan 2100 00:00:00 GMT', now), null, 'date beyond the ceiling');
   const tenDays = parseRetryAfter(new Date(Date.now() + 10 * 86400000).toUTCString());
   assert.ok(Math.abs(tenDays.ms - 864000000) < 2000 && tenDays.header === String(Math.ceil(tenDays.ms / 1000)));
   const validDate = new Date(Date.now() + 20000).toUTCString();
