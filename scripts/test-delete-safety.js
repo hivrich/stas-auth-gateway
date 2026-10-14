@@ -64,10 +64,16 @@ global.fetch = async (url, options = {}) => {
     method: options.method || 'GET',
     headers: options.headers || {},
     body: options.body,
+    signal: options.signal,
   });
 
   if (parsed.origin === 'https://intervals.icu' && parsed.pathname === '/api/v1/athlete/0') {
     return jsonResponse({ id: '15487', name: 'Patrik Lindegardh' });
+  }
+
+  // Отчёт шлюза в журнал STAS (plan_changes): принимаем, тело смотрим в upstreamHits.
+  if (parsed.origin === 'http://stas.local.test' && parsed.pathname === '/api/db/plan_changes') {
+    return jsonResponse({ ok: true });
   }
 
   if (parsed.origin === 'http://stas.local.test' && parsed.pathname === '/api/db/ensure-intervals-user') {
@@ -253,6 +259,7 @@ async function main() {
     // Ошибка запроса: ok:false, все id в failed со статусом ответа, без reason.
     bulkDeleteResponder = () => jsonResponse({ error: 'boom' }, 500);
     response = await request(baseUrl, planDelete, { method: 'DELETE' });
+    assert.equal(response.status, 502, 'Intervals 5xx on bulk-delete is an honest 502');
     assert.equal(response.body.ok, false);
     assert.equal(response.body.error, undefined);
     assert.deepEqual(response.body.failed, [
@@ -505,7 +512,7 @@ async function main() {
     bulkDeleteResponder = bulkMustNotRun;
     eventReadResponder = () => jsonResponse({ error: 'boom' }, 500);
     response = await deleteById(200010);
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 502, 'nothing deleted and only 5xx read failures: 502');
     assert.equal(response.body.ok, false);
     assert.equal(response.body.error, 'delete_incomplete');
     assert.equal(response.body.deleted_count, 0);
@@ -515,11 +522,13 @@ async function main() {
     // Сетевая ошибка чтения - тоже не удаляем, статус 502.
     eventReadResponder = () => { throw new Error('socket hang up'); };
     response = await deleteById(200010);
+    assert.equal(response.status, 502);
     assert.deepEqual(response.body.failed, [{ id: '200010', status: 502, reason: 'protection_check_failed' }]);
     assert.equal(upstreamBulkCalls().length, 0);
     // Нечитаемый ответ (200 без JSON-объекта) - тоже не удаляем.
     eventReadResponder = () => jsonResponse(null);
     response = await deleteById(200010);
+    assert.equal(response.status, 502);
     assert.deepEqual(response.body.failed, [{ id: '200010', status: 502, reason: 'protection_check_failed' }]);
     assert.equal(upstreamBulkCalls().length, 0);
     console.log('ok - failed event read (500, network, unreadable) keeps the id and reports protection_check_failed');
@@ -666,6 +675,168 @@ async function main() {
     assert.equal(response.status, 429);
     assert.equal(response.retryAfter, '7');
     console.log('ok - 429 on the event read returns HTTP 429 with Retry-After and deletes nothing');
+
+    // ---- Честные статусы DELETE /gw/icu/events (bulk-delete, листинг, чтение события) ----
+    const honestBodyKeys = (body) => {
+      assert.equal(body.ok, false);
+      assert.ok(Array.isArray(body.failed), 'failed[] is kept for old clients');
+    };
+    const prefixDelete = planDelete;
+    const prefixSelector = { prefix: 'plan:', window: { oldest: '2026-06-18', newest: '2026-06-19' } };
+    const planIds = ['116274129', '116274131', '116274133'];
+
+    // bulk-delete: 401/403/404 как есть, 5xx -> 502; тело прежнее (ok:false, failed со статусом Intervals)
+    for (const [upstream, expected] of [[401, 401], [403, 403], [404, 404], [500, 502], [503, 502]]) {
+      bulkDeleteResponder = () => jsonResponse({ error: 'nope' }, upstream);
+      response = await request(baseUrl, prefixDelete, { method: 'DELETE' });
+      assert.equal(response.status, expected, `bulk-delete ${upstream} -> ${expected}`);
+      honestBodyKeys(response.body);
+      assert.equal(response.body.dry_run, false);
+      assert.equal(response.body.deleted_count, 0);
+      assert.deepEqual(response.body.deleted_ids, []);
+      assert.deepEqual(response.body.failed.map(item => item.status), [upstream, upstream, upstream]);
+      assert.deepEqual(response.body.failed.map(item => item.id), planIds);
+      assert.deepEqual(response.body.selector, prefixSelector);
+    }
+    console.log('ok - bulk-delete 401/403/404 keep the status, 5xx becomes 502, body keeps ok:false and failed[]');
+
+    // Сеть / таймаут на bulk-delete: 502 upstream_unavailable, тело той же формы
+    bulkDeleteResponder = () => { throw new Error('socket hang up'); };
+    response = await request(baseUrl, prefixDelete, { method: 'DELETE' });
+    assert.equal(response.status, 502);
+    honestBodyKeys(response.body);
+    assert.equal(response.body.error, 'upstream_unavailable');
+    assert.equal(response.body.dry_run, false);
+    assert.equal(response.body.deleted_count, 0);
+    assert.deepEqual(response.body.deleted_ids, []);
+    assert.deepEqual(response.body.selector, prefixSelector);
+    assert.deepEqual(response.body.failed, planIds.map(id => ({ id, status: 502 })));
+    bulkDeleteResponder = () => { const e = new Error('aborted'); e.name = 'TimeoutError'; throw e; };
+    response = await request(baseUrl, prefixDelete, { method: 'DELETE' });
+    assert.equal(response.status, 502);
+    assert.equal(response.body.error, 'upstream_unavailable');
+    console.log('ok - network / timeout on bulk-delete -> 502 upstream_unavailable with failed[] at 502');
+
+    // 200, но тело ответа оборвалось: удалённое неизвестно, ничего не подтверждаем (502, не ok:true)
+    bulkDeleteResponder = () => ({
+      ok: true,
+      status: 200,
+      headers: { get() { return null; } },
+      clone() { return { json: async () => { throw new Error('terminated'); } }; },
+      text: async () => { throw new Error('terminated'); },
+    });
+    response = await request(baseUrl, prefixDelete, { method: 'DELETE' });
+    assert.equal(response.status, 502);
+    assert.equal(response.body.ok, false);
+    assert.equal(response.body.error, 'upstream_unavailable');
+    assert.equal(response.body.deleted_count, 0);
+    assert.deepEqual(response.body.deleted_ids, []);
+    console.log('ok - 2xx bulk-delete with a broken body is not confirmed (502)');
+
+    // 429 и 422 как раньше
+    bulkDeleteResponder = () => jsonResponse({ error: 'slow' }, 429);
+    response = await request(baseUrl, prefixDelete, { method: 'DELETE' });
+    assert.equal(response.status, 429);
+    assert.equal(response.body.error, 'rate_limited');
+    honestBodyKeys(response.body);
+    bulkDeleteResponder = () => jsonResponse({ error: 'bad' }, 422);
+    response = await request(baseUrl, prefixDelete, { method: 'DELETE' });
+    assert.equal(response.status, 422);
+    honestBodyKeys(response.body);
+    console.log('ok - 429 and 422 on bulk-delete are unchanged');
+
+    // Листинг (внутренний хоп): GET /gw/icu/events сам отвечает 401 на 401/403 Intervals; 404 как есть, 5xx -> 502.
+    // Для external_id и префикса.
+    const exactListDelete = '/gw/icu/events?external_id=plan%3A2026-06-18%3Aeasy-run&oldest=2026-06-18&newest=2026-06-19&dry_run=false';
+    bulkDeleteResponder = bulkMustNotRun;
+    upstreamHits.length = 0;
+    for (const [upstream, expected] of [[401, 401], [403, 401], [404, 404], [500, 502], [503, 502]]) {
+      eventsListStatus = upstream;
+      for (const path of [exactListDelete, prefixDelete]) {
+        response = await request(baseUrl, path, { method: 'DELETE' });
+        assert.equal(response.status, expected, `listing ${upstream} -> ${expected} (${path.slice(0, 40)})`);
+        honestBodyKeys(response.body);
+        assert.equal(response.body.error, 'events_fetch_failed');
+      }
+    }
+    eventsListStatus = null;
+    assert.equal(upstreamBulkCalls().length, 0, 'bulk-delete must not run when listing failed');
+    console.log('ok - listing hop 401/403/404 keep the status, 5xx becomes 502 (external_id and prefix)');
+
+    // Успешное удаление: 200 и те же ключи тела, что раньше
+    bulkDeleteResponder = () => jsonResponse({ deleted_ids: [116274129, 116274131, 116274133] });
+    response = await request(baseUrl, prefixDelete, { method: 'DELETE' });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.ok, true);
+    assert.deepEqual(Object.keys(response.body).sort(), ['deleted_count', 'deleted_ids', 'dry_run', 'failed', 'mode_hint', 'ok', 'selector']);
+    console.log('ok - successful delete still answers 200 with the same body keys');
+
+    // Чтение события (id не от сайта): 401/403 -> тот же статус, 5xx/сеть -> 502, смесь с invalid_id -> 200
+    bulkDeleteResponder = bulkMustNotRun;
+    eventReadResponder = () => jsonResponse({ error: 'denied' }, 403);
+    response = await deleteById(200010);
+    assert.equal(response.status, 403);
+    assert.deepEqual(response.body.failed, [{ id: '200010', status: 403, reason: 'protection_check_failed' }]);
+    eventReadResponder = () => jsonResponse({ error: 'denied' }, 401);
+    response = await deleteById(200010);
+    assert.equal(response.status, 401);
+    response = await request(baseUrl, '/gw/icu/events?id=200010,abc&dry_run=false', { method: 'DELETE' });
+    assert.equal(response.status, 401, 'mixed invalid_id and 401 failures: auth status wins');
+    eventReadResponder = () => jsonResponse({ error: 'boom' }, 500);
+    response = await request(baseUrl, '/gw/icu/events?id=200010,abc&dry_run=false', { method: 'DELETE' });
+    assert.equal(response.status, 200, 'not only 5xx entries: previous 200');
+    console.log('ok - failed event reads: 401/403 keep the status, only 5xx -> 502, otherwise 200');
+
+    // Чтение события: таймаут 10 с (signal) и обрыв по AbortError = failed 502
+    upstreamHits.length = 0;
+    eventReadResponder = () => { const e = new Error('The operation was aborted'); e.name = 'AbortError'; throw e; };
+    response = await deleteById(200010);
+    assert.equal(response.status, 502);
+    assert.deepEqual(response.body.failed, [{ id: '200010', status: 502, reason: 'protection_check_failed' }]);
+    assert.ok(eventReads()[0].signal instanceof AbortSignal, 'event read carries a timeout signal');
+    console.log('ok - event read has a timeout signal and an abort becomes protection_check_failed 502');
+
+    // Потолок 100 явных id не от сайта: 101 -> 400 до чтений, 100 -> работает, сайт без лимита
+    const manyIds = (n) => Array.from({ length: n }, (_, i) => 300001 + i);
+    upstreamHits.length = 0;
+    bulkDeleteResponder = bulkMustNotRun;
+    response = await request(baseUrl, `/gw/icu/events?id=${manyIds(101).join(',')}&dry_run=false`, { method: 'DELETE' });
+    assert.equal(response.status, 400);
+    assert.deepEqual(response.body, { ok: false, error: 'too_many_ids', max: 100 });
+    assert.equal(eventReads().length, 0, 'no event read before the cap answer');
+    assert.equal(upstreamBulkCalls().length, 0);
+    eventReadResponder = (id) => jsonResponse({ id: Number(id), category: 'WORKOUT' });
+    bulkDeleteResponder = (body) => jsonResponse({ deleted_ids: body.map(item => item.id) });
+    upstreamHits.length = 0;
+    response = await request(baseUrl, `/gw/icu/events?id=${manyIds(100).join(',')}&dry_run=false`, { method: 'DELETE' });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.ok, true);
+    assert.equal(response.body.deleted_count, 100);
+    assert.equal(eventReads().length, 100);
+    upstreamHits.length = 0;
+    response = await request(baseUrl, `/gw/icu/events?id=${manyIds(101).join(',')}&dry_run=false`, { method: 'DELETE', headers: siteHeaders });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.deleted_count, 101);
+    assert.equal(eventReads().length, 0);
+    console.log('ok - non-site callers are capped at 100 explicit ids, the site is not');
+
+    // Журнал: после удаления по id не от сайта в отчёте STAS есть дата, название и категория
+    upstreamHits.length = 0;
+    eventReadResponder = (id) => jsonResponse({
+      id: Number(id), name: 'Tempo run', category: 'WORKOUT', start_date_local: '2026-10-20T09:00:00', external_id: 'plan:2026-10-20:tempo',
+    });
+    bulkDeleteResponder = (body) => jsonResponse({ deleted_ids: body.map(item => item.id) });
+    response = await deleteById(200010);
+    assert.equal(response.body.ok, true);
+    const journal = upstreamHits.filter(hit => new URL(hit.url).pathname === '/api/db/plan_changes');
+    assert.equal(journal.length, 1, 'one plan_changes report');
+    const reported = JSON.parse(journal[0].body).deleted;
+    assert.equal(reported.length, 1);
+    assert.equal(String(reported[0].id), '200010');
+    assert.equal(reported[0].name, 'Tempo run');
+    assert.equal(reported[0].category, 'WORKOUT');
+    assert.equal(reported[0].start_date_local, '2026-10-20T09:00:00');
+    console.log('ok - delete by id from GPT reports the event row (name, category, date) to the journal');
   } finally {
     server.close();
     global.fetch = originalFetch;

@@ -14,12 +14,14 @@ process.env.STAS_BASE = 'http://stas.local.test';
 
 const bearerUid = require('../routes/_bearer_uid');
 const attachIcuPostExact = require('../lib/icu_post_exact');
+const attachIcuPostDryRun = require('../lib/icu_post_dryrun');
 
 const originalFetch = global.fetch;
 let localOrigin = '';
 let store = [];
 let nextId = 1000;
 let calls = [];
+let upstreamBodies = []; // тела записей, ушедших в Intervals (POST /events и bulk)
 let bulkMode = 'normal'; // 'normal' | 'nonarray' | 'short' (на строку меньше) | 'noid' (первая строка без id)
 let bulkFail = null; // { status, retryAfter }: bulk upsert отвечает ошибкой Intervals
 let bulkAsOtherEntry = false; // имитация другого способа входа: bulk upsert не видит чужой external_id и создаёт новое событие
@@ -67,6 +69,7 @@ global.fetch = async (url, options = {}) => {
   if (parsed.pathname === base && method === 'POST') {
     calls.push({ method, path: parsed.pathname });
     const body = JSON.parse(options.body);
+    upstreamBodies.push(body);
     const ev = { id: nextId++, ...body };
     store.push(ev);
     return jsonResponse(ev, 201);
@@ -81,6 +84,7 @@ global.fetch = async (url, options = {}) => {
     assert.equal(parsed.searchParams.get('upsert'), 'true');
     const body = JSON.parse(options.body);
     assert.ok(Array.isArray(body));
+    upstreamBodies.push(...body);
     const out = body.map((incoming) => {
       const found = bulkAsOtherEntry ? undefined : store.find((e) => e.external_id && e.external_id === incoming.external_id);
       if (found) {
@@ -127,6 +131,7 @@ function ev(daysFromToday, extra = {}) {
 function reset(initial = []) {
   store = initial.map((e) => ({ id: nextId++, ...e }));
   calls = [];
+  upstreamBodies = [];
   bulkAsOtherEntry = false;
   bulkMode = 'normal';
   bulkFail = null;
@@ -321,6 +326,48 @@ async function main() {
     assert.equal(r.body.retry_after_ms, undefined);
     assert.equal(store.length, 0, 'failed upsert writes nothing');
 
+
+    // id в теле события не доходит до Intervals (иначе правка произвольного события в обход защиты)
+    reset();
+    r = await post(baseUrl, '?dry_run=false', [ev(3, { id: 123 })]);
+    assert.equal(r.status, 200);
+    assert.equal(upstreamBodies.length, 1);
+    assert.equal('id' in upstreamBodies[0], false, 'upsert body has no id');
+    assert.notEqual(store[0].id, 123);
+    reset();
+    r = await post(baseUrl, '?dry_run=false&dedupe=false', [ev(3, { id: 123 })]);
+    assert.equal(r.status, 200);
+    assert.equal(upstreamBodies.length, 1);
+    assert.equal('id' in upstreamBodies[0], false, 'create body has no id');
+    // dry run и preview: в ответе тоже без id
+    r = await post(baseUrl, '?dry_run=true', [ev(3, { id: 123 })]);
+    assert.equal('id' in r.body.events[0], false);
+    const previewResponse = await originalFetch(`${baseUrl}/gw/icu/events/preview`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer intervals-access-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ events: [ev(3, { id: 123 })] }),
+    });
+    assert.equal(previewResponse.status, 200);
+    assert.equal('id' in (await previewResponse.json()).events[0], false, 'preview output has no id');
+    // отдельный модуль icu_post_dryrun: тот же запрет
+    const dryApp = express();
+    dryApp.use('/gw', bearerUid());
+    attachIcuPostDryRun(dryApp);
+    const dryServer = await new Promise((resolve) => { const s2 = dryApp.listen(0, '127.0.0.1', () => resolve(s2)); });
+    try {
+      localOrigin = `http://127.0.0.1:${dryServer.address().port}`;
+      const dryResponse = await originalFetch(`${localOrigin}/gw/icu/events?dry_run=true`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer intervals-access-token', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ events: [ev(3, { id: 123 })] }),
+      });
+      assert.equal(dryResponse.status, 200);
+      assert.equal('id' in (await dryResponse.json()).events[0], false, 'icu_post_dryrun output has no id');
+    } finally {
+      dryServer.close();
+      localOrigin = baseUrl;
+    }
+    console.log('ok - an id in the event body is dropped before Intervals and in previews');
     console.log('ok - events with an existing external_id are updated in place (id kept), inside and outside the default window');
   } finally {
     server.close();
