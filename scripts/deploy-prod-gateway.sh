@@ -34,7 +34,7 @@ echo '[gateway-deploy] checking_candidate_database_readiness'
 [[ "$("${compose[@]}" config --hash bridge-api)" == "$config_hash" ]] || { echo '[gateway-deploy] runtime_config_changed' >&2; exit 1; }
 
 # Логи app, worker и bridge-api до пересоздания шлюза: после --force-recreate старые записи недоступны.
-# Любой сбой только предупреждает, деплой идёт дальше. Хранятся 10 самых новых каталогов logs-*.
+# Любой сбой только предупреждает, деплой идёт дальше. Хранятся 10 самых новых каталогов logs-<UTC>-gateway.
 dump_pre_restart_logs() {
   local backup_root="${STAS_DEPLOY_BACKUP_DIR:-/home/deploy/stas-deploy-backups}"
   local stamp dump_dir service
@@ -50,8 +50,10 @@ dump_pre_restart_logs() {
 prune_old_log_dumps() {
   local backup_root="${STAS_DEPLOY_BACKUP_DIR:-/home/deploy/stas-deploy-backups}"
   local name
-  # Только каталоги logs-*: имена с UTC-меткой сортируются по времени, старше десятого удаляем.
-  find "$backup_root" -mindepth 1 -maxdepth 1 -type d -name 'logs-*' -printf '%f\n' \
+  # Только каталоги ровно вида logs-<UTC-метка>-gateway (дампы сайта и чужие logs-* не трогаем):
+  # имена с UTC-меткой сортируются по времени, старше десятого удаляем.
+  find "$backup_root" -mindepth 1 -maxdepth 1 -type d -name 'logs-*-gateway' -printf '%f\n' \
+    | grep -E '^logs-[0-9]{8}T[0-9]{6}Z-gateway$' \
     | sort -r | tail -n +11 \
     | while IFS= read -r name; do rm -rf -- "${backup_root:?}/$name" || true; done
 }
