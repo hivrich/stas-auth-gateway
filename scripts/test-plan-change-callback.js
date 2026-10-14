@@ -29,6 +29,7 @@ let stasCalls = []; // запросы к /api/db/plan_changes
 let stasMode = 'ok'; // 'ok' | 'throw' | 'hang' | 'status500'
 let icuFail = null; // статус ошибки Intervals на запись
 let deleteResponse = null; // переопределение ответа bulk-delete
+let putOmitsUpdated = false; // ответ PUT события без updated
 
 function jsonResponse(body, status = 200) {
   return {
@@ -107,6 +108,11 @@ global.fetch = async (url, options = {}) => {
     if (method === 'GET') return jsonResponse({ ...ev });
     if (method === 'PUT') {
       if (icuFail) return jsonResponse({ error: 'icu says no' }, icuFail);
+      if (putOmitsUpdated) {
+        Object.assign(ev, JSON.parse(options.body));
+        const { updated, ...withoutUpdated } = ev;
+        return jsonResponse(withoutUpdated);
+      }
       Object.assign(ev, JSON.parse(options.body), { updated: '2026-10-14T11:00:00.000+00:00' });
       return jsonResponse({ ...ev });
     }
@@ -121,6 +127,7 @@ function reset(initial = []) {
   stasMode = 'ok';
   icuFail = null;
   deleteResponse = null;
+  putOmitsUpdated = false;
   callback.__testing.resetStats();
 }
 
@@ -293,14 +300,14 @@ async function main() {
     assert.equal(stasCalls[0].body.actor, 'ai_chat');
     console.log('ok - actor from site key and MCP client host');
 
-    // Более 25 событий: куски по 25 с разными request_id
+    // Более 8 событий: куски по 8 с разными request_id
     reset();
     const many = Array.from({ length: 101 }, (_, i) => plan(day(10), { external_id: `plan:many-${i}`, name: `w${i}` }));
     r = await call(baseUrl, 'POST', '/gw/icu/events?dry_run=false', { body: { events: many } });
     assert.equal(r.status, 200);
-    assert.deepEqual(stasCalls.map((c) => c.body.events.length).sort((a, b) => a - b), [1, 25, 25, 25, 25]);
-    assert.equal(new Set(stasCalls.map((c) => c.body.request_id)).size, 5);
-    console.log('ok - chunking at 25 events');
+    assert.deepEqual(stasCalls.map((c) => c.body.events.length).sort((a, b) => a - b), [5, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8]);
+    assert.equal(new Set(stasCalls.map((c) => c.body.request_id)).size, 13);
+    console.log('ok - chunking at 8 events');
 
     // DELETE real по external_id: deleted со строками, найденными перед удалением
     reset([plan(day(4)), plan(day(5))]);
@@ -341,6 +348,40 @@ async function main() {
     assert.equal(stasCalls[0].body.deleted[0].external_id, null);
     console.log('ok - DELETE: callback with listed rows restricted to deleted ids; none on dry run/empty/error');
 
+    // Удаление по id не от сайта: Intervals вернул только счётчик, часть id не прошла проверку.
+    // (а) обычное событие + невалидный id: в журнал только подтверждённое событие.
+    for (const countOnly of [1, { deleted_count: 1 }]) {
+      reset([plan(day(4))]);
+      const evA = store[0];
+      deleteResponse = countOnly;
+      r = await call(baseUrl, 'DELETE', `/gw/icu/events?dry_run=false&id=${evA.id},abc`);
+      assert.equal(r.body.ok, false);
+      assert.equal(r.body.error, 'delete_incomplete');
+      assert.ok(r.body.failed.some((f) => f.id === 'abc' && f.reason === 'invalid_id'), 'invalid id in failed');
+      assert.equal(icuHits.filter((h) => h.path.endsWith('/bulk-delete')).length, 1);
+      assert.equal(stasCalls.length, 1);
+      assert.deepEqual(stasCalls[0].body.deleted.map((x) => String(x.id)), [String(evA.id)]);
+    }
+    // (б) id с ведущим нулём: в журнал каноническая форма, не '0<id>'.
+    reset([plan(day(4))]);
+    const evB = store[0];
+    deleteResponse = 1;
+    r = await call(baseUrl, 'DELETE', `/gw/icu/events?dry_run=false&id=0${evB.id}`);
+    assert.equal(r.body.ok, true);
+    assert.equal(stasCalls.length, 1);
+    assert.deepEqual(stasCalls[0].body.deleted.map((x) => String(x.id)), [String(evB.id)]);
+    // (в) защищённое SICK по id не от сайта: не удаляется, журнал не вызывается.
+    reset([{ category: 'SICK', name: 'Sick', start_date_local: `${day(4)}T00:00:00`, external_id: `note:${day(4)}:range-sick-1` }]);
+    const evC = store[0];
+    deleteResponse = 1;
+    r = await call(baseUrl, 'DELETE', `/gw/icu/events?dry_run=false&id=${evC.id}`);
+    assert.equal(r.body.deleted_count, 0);
+    assert.equal(r.body.protected.count, 1);
+    assert.deepEqual(r.body.protected.ids.map(String), [String(evC.id)]);
+    assert.equal(icuHits.filter((h) => h.path.endsWith('/bulk-delete')).length, 0);
+    assert.equal(stasCalls.length, 0);
+    console.log('ok - DELETE by id not from the site: journal gets only confirmed canonical ids, none for protected');
+
     // PUT real: changed с событием Intervals; dry run и ошибка - без вызова
     reset([plan(day(4))]);
     const put = store[0];
@@ -363,6 +404,32 @@ async function main() {
     assert.equal(r.status, 422);
     assert.equal(stasCalls.length, 0);
     console.log('ok - PUT: changed callback; none on dry run/error');
+
+    // PUT: updated берётся только из ответа записи, не из чтения до записи
+    reset([{ ...plan(day(4)), updated: '2026-10-01T00:00:00.000+00:00' }]);
+    putOmitsUpdated = true;
+    r = await call(baseUrl, 'PUT', `/gw/icu/events/${store[0].id}?dry_run=false`, { body: { name: 'NoUpdated' } });
+    assert.equal(r.status, 200);
+    assert.equal(stasCalls.length, 1);
+    assert.equal(stasCalls[0].body.events[0].name, 'NoUpdated');
+    assert.equal('updated' in stasCalls[0].body.events[0], false, 'stale pre-write updated is not sent');
+    putOmitsUpdated = false;
+    stasCalls = [];
+    r = await call(baseUrl, 'PUT', `/gw/icu/events/${store[0].id}?dry_run=false`, { body: { name: 'WithUpdated' } });
+    assert.equal(r.status, 200);
+    assert.equal(stasCalls[0].body.events[0].updated, '2026-10-14T11:00:00.000+00:00');
+    console.log('ok - PUT: updated only from the Intervals response');
+
+    // Длинные поля обрезаются по лимитам приёмника STAS
+    reset();
+    r = await call(baseUrl, 'POST', '/gw/icu/events?dry_run=false', {
+      body: { events: [plan(day(4), { description: 'd'.repeat(30000), name: 'n'.repeat(600) })] },
+    });
+    assert.equal(r.status, 200);
+    assert.equal(stasCalls.length, 1);
+    assert.equal(stasCalls[0].body.events[0].description.length, 20000);
+    assert.equal(stasCalls[0].body.events[0].name.length, 500);
+    console.log('ok - callback truncates description to 20000 and name to 500');
 
     // STAS недоступен: ответ клиенту прежний, ровно один повтор в фоне
     for (const mode of ['throw', 'status500', 'hang']) {
