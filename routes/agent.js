@@ -9,6 +9,7 @@ const {
   isAgentAuthConfigured,
 } = require('../lib/agent-auth');
 const { resolveDirectIntervalsAuth } = require('../lib/request-auth');
+const { fetchIntervals } = require('../lib/icu-attempt-ledger');
 
 const router = express.Router();
 const INTERVALS_AUTH_URL = 'https://intervals.icu/oauth/authorize';
@@ -187,7 +188,7 @@ async function handleAgentCallback(req, res, next) {
     form.set('code', code);
     form.set('redirect_uri', getAgentCallbackUrl(req));
 
-    const upstream = await fetch(INTERVALS_TOKEN_URL, {
+    const upstream = await fetchIntervals(INTERVALS_TOKEN_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -195,7 +196,7 @@ async function handleAgentCallback(req, res, next) {
       },
       body: form,
       signal: AbortSignal.timeout(10_000),
-    });
+    }, { req, kind: 'other', athleteId: null, initiator: 'gpt' });
     const payload = await upstream.json().catch(() => null);
     if (!upstream.ok || !payload?.access_token) {
       console.error('[agent_auth][callback][intervals_error]', upstream.status);

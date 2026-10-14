@@ -8,18 +8,26 @@ const express = require('express');
 process.env.STAS_KEY = process.env.STAS_KEY || 'test-stas-key';
 process.env.STAS_BASE = process.env.STAS_BASE || 'http://stas.local.test';
 
+const { createApp } = require('../server');
 const bearerUid = require('../routes/_bearer_uid');
 const attachEventUpdate = require('../lib/attach_event_update');
 const { classifyMcpScopeCategory } = require('../middleware/mcp_scope_guard').__testing;
 const requestAuthTesting = require('../lib/request-auth').__testing;
 
 const originalFetch = global.fetch;
-let localOrigin = '';
+const localOrigins = new Set();
+let ledgerMode = 'ok';
+let athleteStatus = null; // отказ Intervals на /athlete/0
+let athleteRetryAfter = null;
 const upstreamHits = [];
 // События атлета токена; всё остальное для него «не существует» (как в Intervals).
 const ownEvents = {
   '5001': { id: 5001, external_id: 'plan:2026-10-20:easy-run', start_date_local: '2026-10-20T00:00:00', category: 'WORKOUT', athlete_id: 'i15487' },
-  '5002': { id: 5002, external_id: null, start_date_local: '2026-10-21T00:00:00', category: 'WORKOUT' },
+  '5002': { id: 5002, external_id: null, start_date_local: '2026-10-21T00:00:00', category: 'WORKOUT', athlete_id: 'i15487' },
+  // Чужое событие, которое Intervals почему-то отдаёт (общий доступ, тренер): писать нельзя.
+  '5003': { id: 5003, external_id: null, start_date_local: '2026-10-22T00:00:00', category: 'WORKOUT', athlete_id: 'i99999' },
+  // Без владельца в ответе: считаем не своим.
+  '5004': { id: 5004, external_id: null, start_date_local: '2026-10-23T00:00:00', category: 'WORKOUT' },
 };
 const activities = {
   i100: { id: 'i100', icu_athlete_id: 'i15487', sub_type: 'NONE' },
@@ -28,12 +36,15 @@ const activities = {
 };
 let eventGetStatus = null;
 let eventPutStatus = null;
+let retryAfterHeader = null;
 
 function jsonResponse(body, status = 200) {
   return {
     ok: status >= 200 && status < 300,
     status,
-    headers: { get: () => 'application/json; charset=utf-8' },
+    headers: {
+      get: (name) => (String(name).toLowerCase() === 'retry-after' ? retryAfterHeader : 'application/json; charset=utf-8'),
+    },
     json: async () => body,
     text: async () => JSON.stringify(body),
     clone() { return this; },
@@ -42,7 +53,7 @@ function jsonResponse(body, status = 200) {
 
 global.fetch = async (url, options = {}) => {
   const parsed = new URL(url.toString());
-  if (parsed.origin === localOrigin) return originalFetch(url, options);
+  if (localOrigins.has(parsed.origin)) return originalFetch(url, options);
 
   const method = options.method || 'GET';
   upstreamHits.push({ url: parsed.toString(), path: parsed.pathname, method, headers: options.headers || {}, body: options.body });
@@ -50,9 +61,21 @@ global.fetch = async (url, options = {}) => {
   if (parsed.origin === 'http://stas.local.test' && parsed.pathname === '/api/db/ensure-intervals-user') {
     return jsonResponse({ ok: true });
   }
+  if (parsed.origin === 'http://stas.local.test' && parsed.pathname === '/api/db/intervals-attempts') {
+    if (ledgerMode === 'throw') throw new Error('stas down');
+    if (ledgerMode === 'hang') return new Promise(() => {});
+    return jsonResponse({ ok: true }, 202);
+  }
   if (parsed.origin !== 'https://intervals.icu') return jsonResponse({ error: 'unexpected_upstream' }, 500);
 
-  if (parsed.pathname === '/api/v1/athlete/0') return jsonResponse({ id: '15487', name: 'Patrik' });
+  if (parsed.pathname === '/api/v1/athlete/0') {
+    if (athleteStatus) {
+      const refused = jsonResponse({ error: 'x' }, athleteStatus);
+      refused.headers.get = (n) => (String(n).toLowerCase() === 'retry-after' ? athleteRetryAfter : null);
+      return refused;
+    }
+    return jsonResponse({ id: '15487', name: 'Patrik' });
+  }
 
   let m = parsed.pathname.match(/^\/api\/v1\/athlete\/0\/events\/(\d+)$/);
   if (m) {
@@ -102,7 +125,14 @@ function reset() {
   upstreamHits.length = 0;
   eventGetStatus = null;
   eventPutStatus = null;
+  retryAfterHeader = null;
 }
+
+// Записи журнала попыток, отправленные шлюзом в STAS (fire-and-forget: ждём доставки мока).
+const ledgerRecords = () => upstreamHits
+  .filter(h => h.path === '/api/db/intervals-attempts')
+  .map(h => ({ ...JSON.parse(h.body), _headers: h.headers }));
+const settle = () => new Promise(resolve => setTimeout(resolve, 60));
 
 async function main() {
   const app = makeApp();
@@ -111,7 +141,7 @@ async function main() {
   });
   const address = live.address();
   const baseUrl = `http://${address.address}:${address.port}`;
-  localOrigin = baseUrl;
+  localOrigins.add(baseUrl);
 
   try {
     // --- События ---
@@ -170,6 +200,17 @@ async function main() {
     console.log('ok - missing or foreign event -> 404 and no PUT');
 
     reset();
+    for (const eventId of ['5003', '5004']) {
+      r = await request(baseUrl, `/gw/icu/events/${eventId}?dry_run=false`, { json: { name: 'x' } });
+      assert.equal(r.status, 404, `event ${eventId} is not the token athlete's`);
+      assert.deepEqual(r.body, { ok: false, error: 'not_found' });
+      r = await request(baseUrl, `/gw/icu/events/${eventId}`, { json: { name: 'x' } });
+      assert.equal(r.status, 404, 'dry_run must not reveal a foreign event either');
+    }
+    assert.equal(puts().length, 0, 'foreign event (athlete_id mismatch or missing) must not be written');
+    console.log('ok - event with foreign or missing athlete_id -> 404, no PUT (also for dry_run)');
+
+    reset();
     r = await request(baseUrl, '/gw/icu/events/abc?dry_run=false', { json: { name: 'x' } });
     assert.equal(r.status, 400);
     r = await request(baseUrl, '/gw/icu/events/12ab?dry_run=false', { json: { name: 'x' } });
@@ -201,6 +242,66 @@ async function main() {
     r = await request(baseUrl, '/gw/icu/events/5001?dry_run=false', { json: { name: 'x' } });
     assert.equal(r.status, 404);
     console.log('ok - Intervals errors map to auth_required / upstream_error(status) / not_found');
+
+    reset();
+    eventPutStatus = 429;
+    retryAfterHeader = '7';
+    r = await originalFetch(`${baseUrl}/gw/icu/events/5001?dry_run=false`, {
+      method: 'PUT',
+      headers: { Authorization: 'Bearer intervals-access-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'x' }),
+    });
+    assert.equal(r.status, 429);
+    assert.equal(r.headers.get('retry-after'), '7', 'Retry-After (seconds) is forwarded');
+    assert.deepEqual(await r.json(), { ok: false, error: 'rate_limited', retry_after_ms: 7000 });
+    retryAfterHeader = new Date(Date.now() + 30000).toUTCString();
+    r = await originalFetch(`${baseUrl}/gw/icu/events/5001?dry_run=false`, {
+      method: 'PUT',
+      headers: { Authorization: 'Bearer intervals-access-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'x' }),
+    });
+    assert.equal(r.status, 429);
+    const dateBody = await r.json();
+    assert.equal(dateBody.error, 'rate_limited');
+    assert.ok(dateBody.retry_after_ms > 20000 && dateBody.retry_after_ms <= 30000, 'date -> ms');
+    assert.equal(r.headers.get('retry-after'), String(Math.ceil(dateBody.retry_after_ms / 1000)), 'HTTP date is forwarded as seconds matching retry_after_ms');
+    retryAfterHeader = '-1';
+    r = await originalFetch(`${baseUrl}/gw/icu/events/5001?dry_run=false`, {
+      method: 'PUT',
+      headers: { Authorization: 'Bearer intervals-access-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'x' }),
+    });
+    assert.equal(r.status, 429);
+    assert.equal(r.headers.get('retry-after'), null, 'invalid Retry-After is not forwarded');
+    assert.deepEqual(await r.json(), { ok: false, error: 'rate_limited' });
+    retryAfterHeader = null;
+    r = await request(baseUrl, '/gw/icu/events/5001?dry_run=false', { json: { name: 'x' } });
+    assert.equal(r.status, 429, '429 without a parseable Retry-After is still 429');
+    assert.deepEqual(r.body, { ok: false, error: 'rate_limited' });
+    // 429 на чтении события - тоже 429, не 502.
+    reset();
+    eventGetStatus = 429;
+    retryAfterHeader = '3';
+    r = await request(baseUrl, '/gw/icu/events/5001?dry_run=false', { json: { name: 'x' } });
+    assert.equal(r.status, 429);
+    assert.equal(r.body.retry_after_ms, 3000);
+    assert.equal(puts().length, 0);
+    console.log('ok - Intervals 429 -> 429 rate_limited with Retry-After and retry_after_ms');
+
+    reset();
+    for (const status of [400, 409, 422]) {
+      eventPutStatus = status;
+      r = await request(baseUrl, '/gw/icu/events/5001?dry_run=false', { json: { name: 'x' } });
+      assert.equal(r.status, status, `Intervals ${status} must not turn into 502`);
+      assert.deepEqual(r.body, { ok: false, error: 'rejected', status });
+    }
+    for (const status of [500, 502, 503]) {
+      eventPutStatus = status;
+      r = await request(baseUrl, '/gw/icu/events/5001?dry_run=false', { json: { name: 'x' } });
+      assert.equal(r.status, 502, `Intervals ${status} stays 502`);
+      assert.deepEqual(r.body, { ok: false, error: 'upstream_error', status });
+    }
+    console.log('ok - Intervals 400/409/422 -> same status rejected; 5xx -> 502');
 
     // --- Активности ---
     reset();
@@ -296,6 +397,157 @@ async function main() {
     assert.equal(isServer({ headers: { 'x-api-key': 'undefined' } }), false);
     process.env.STAS_KEY = savedKey;
     console.log('ok - empty or unset STAS_KEY never matches');
+
+    // --- Лимит тела отметки старта: 16kb, а не общие 256kb ---
+    const bigRace = { race: true, pad: 'x'.repeat(20000) };
+    reset();
+    r = await request(baseUrl, '/gw/icu/activities/i100/race?dry_run=false', { json: bigRace });
+    assert.equal(r.status, 413, 'route-level parser alone rejects >16kb');
+    assert.equal(upstreamHits.filter(h => h.path.includes('/activity/')).length, 0, 'oversized body never reaches the handler');
+
+    const full = createApp().listen(0, '127.0.0.1');
+    await new Promise(resolve => full.once('listening', resolve));
+    const fullUrl = `http://127.0.0.1:${full.address().port}`;
+    localOrigins.add(fullUrl);
+    try {
+      reset();
+      r = await request(fullUrl, '/gw/icu/activities/i100/race?dry_run=false', { json: bigRace });
+      assert.equal(r.status, 413, 'full app: global 256kb parser must not swallow the race body');
+      assert.equal(upstreamHits.filter(h => h.path.includes('/activity/')).length, 0, 'oversized body never reaches the handler');
+      r = await request(fullUrl, '/gw/icu/activities/i100/race?dry_run=false', { json: { race: true } });
+      assert.equal(r.status, 200, 'small race body still works in the full app');
+      assert.equal(puts().length, 1);
+      // Регистр пути и другие типы тела не обходят лимит 16kb (Express маршрутизирует без учёта регистра).
+      for (const racePath of ['/gw/icu/activities/i100/RACE', '/gw/icu/activities/i100/Race/', '/gw/icu/activities/i100/race/']) {
+        reset();
+        r = await request(fullUrl, `${racePath}?dry_run=false`, { json: { race: true, pad: ' '.repeat(20000) } });
+        assert.equal(r.status, 413, `${racePath}: 16kb limit applies`);
+        assert.equal(upstreamHits.filter(h => h.path.includes('/activity/')).length, 0, `${racePath}: never reaches Intervals`);
+      }
+      reset();
+      let raw = await originalFetch(`${fullUrl}/gw/icu/activities/i100/RACE?dry_run=false`, {
+        method: 'PUT',
+        headers: { Authorization: 'Bearer intervals-access-token', 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `race=true&pad=${'x'.repeat(20000)}`,
+      });
+      assert.equal(raw.status, 413, 'urlencoded > 16kb is rejected before the handler');
+      raw = await originalFetch(`${fullUrl}/gw/icu/activities/i100/race?dry_run=false`, {
+        method: 'PUT',
+        headers: { Authorization: 'Bearer intervals-access-token', 'Content-Type': 'application/json' },
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"race":true,"pad":"'));
+            controller.enqueue(new TextEncoder().encode('x'.repeat(20000)));
+            controller.enqueue(new TextEncoder().encode('"}'));
+            controller.close();
+          },
+        }),
+        duplex: 'half',
+      });
+      assert.equal(raw.status, 413, 'chunked body > 16kb is rejected');
+      assert.equal(upstreamHits.filter(h => h.path.includes('/activity/')).length, 0);
+      // Остальные маршруты сохраняют лимит 256kb: тело ~20kb проходит.
+      r = await request(fullUrl, '/gw/icu/events/5001?dry_run=false', { json: { description: 'd'.repeat(20000) } });
+      assert.equal(r.status, 200, 'other routes keep the 256kb limit');
+      console.log('ok - race body > 16kb -> 413 before the handler (route alone and full app); other routes keep 256kb');
+
+      // --- Журнал попыток: поля контракта, источник site только с ключом STAS ---
+      requestAuthTesting.clearDirectTokenCache();
+      reset();
+      const requestId = '11111111-2222-4333-8444-555555555555';
+      r = await request(fullUrl, '/gw/icu/events/5001?dry_run=false&secret=1', {
+        json: { name: 'Ledger move' },
+        headers: { 'X-API-Key': process.env.STAS_KEY, 'x-stas-source': 'site', 'x-stas-attempt': '2', 'x-stas-request-id': requestId },
+      });
+      assert.equal(r.status, 200);
+      await settle();
+      let records = ledgerRecords();
+      assert.equal(records.length, 3, 'athlete lookup + GET + PUT');
+      const byKind = records.reduce((acc, rec) => ({ ...acc, [`${rec.attempt_kind}:${rec.method}`]: rec }), {});
+      assert.deepEqual(Object.keys(byKind).sort(), ['athlete_lookup:GET', 'bearer:GET', 'bearer:PUT']);
+      for (const rec of records) {
+        assert.equal(rec.provider_athlete_id, '15487', 'digits without i, from /athlete/0 / request user');
+        assert.equal(rec.initiator, 'site');
+        assert.equal(rec.http_status, 200);
+        assert.equal(rec.outcome, 'ok');
+        assert.equal(rec.retry_after_ms, null);
+        assert.equal(typeof rec.latency_ms, 'number');
+        assert.ok(!Number.isNaN(Date.parse(rec.started_at)));
+        assert.equal(rec.attempt_number, 2);
+        assert.equal(rec._headers['X-API-Key'], process.env.STAS_KEY);
+        assert.equal(rec._headers['Content-Type'], 'application/json');
+        assert.equal(rec._headers['x-stas-request-id'], requestId);
+      }
+      assert.equal(byKind['athlete_lookup:GET'].path, '/api/v1/athlete/0');
+      assert.equal(byKind['bearer:PUT'].path, '/api/v1/athlete/0/events/5001');
+      assert.ok(records.every(rec => !rec.path.includes('?')));
+      assert.deepEqual(Object.keys(records[0]).filter(k => k !== '_headers').sort(), [
+        'attempt_kind', 'attempt_number', 'http_status', 'initiator', 'latency_ms', 'method', 'outcome',
+        'path', 'provider_athlete_id', 'retry_after_ms', 'started_at',
+      ]);
+      console.log('ok - ledger: lookup + bearer attempts reported with contract fields, initiator site with STAS key');
+
+      // 429 в журнале: http_error + retry_after_ms; без ключа STAS 'site' не принимается.
+      requestAuthTesting.clearDirectTokenCache();
+      reset();
+      eventPutStatus = 429;
+      retryAfterHeader = '4';
+      r = await request(fullUrl, '/gw/icu/events/5001?dry_run=false', {
+        json: { name: 'x' },
+        headers: { 'x-stas-source': 'site', 'x-stas-attempt': '101' },
+      });
+      assert.equal(r.status, 429);
+      await settle();
+      records = ledgerRecords();
+      assert.ok(records.length >= 3);
+      assert.ok(records.every(rec => rec.initiator === 'gpt'), 'site without the STAS key falls back to gpt');
+      assert.ok(records.every(rec => rec.attempt_number === null), 'x-stas-attempt > 100 is ignored');
+      const put429 = records.find(rec => rec.method === 'PUT');
+      assert.equal(put429.http_status, 429);
+      assert.equal(put429.outcome, 'http_error');
+      assert.equal(put429.retry_after_ms, 4000);
+      console.log("ok - ledger: 429 reported with retry_after_ms; 'site' ignored without STAS key");
+
+      // Лимит Intervals на проверке токена (/athlete/0): 429 с Retry-After, а не 401; прочие отказы - 401 как раньше.
+      requestAuthTesting.clearDirectTokenCache();
+      reset();
+      athleteStatus = 429;
+      athleteRetryAfter = '5';
+      r = await originalFetch(`${fullUrl}/gw/icu/events/5001`, {
+        method: 'PUT',
+        headers: { Authorization: 'Bearer intervals-access-token', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'x' }),
+      });
+      assert.equal(r.status, 429);
+      assert.equal(r.headers.get('retry-after'), '5');
+      assert.deepEqual(await r.json(), { status: 429, error: 'rate_limited', retry_after_ms: 5000 });
+      athleteRetryAfter = 'abc';
+      r = await request(fullUrl, '/gw/icu/events/5001', { json: { name: 'x' } });
+      assert.equal(r.status, 429);
+      assert.equal(r.body.retry_after_ms, undefined);
+      athleteStatus = 500;
+      r = await request(fullUrl, '/gw/icu/events/5001', { json: { name: 'x' } });
+      assert.equal(r.status, 401, 'other statuses of the athlete lookup are unchanged');
+      assert.equal(r.body.error, 'missing_or_invalid_token');
+      athleteStatus = null;
+      athleteRetryAfter = null;
+      console.log('ok - athlete lookup 429 -> 429 with Retry-After; other failures still 401');
+
+      // Сбой журнала не меняет ответ.
+      for (const mode of ['throw', 'hang']) {
+        requestAuthTesting.clearDirectTokenCache();
+        reset();
+        ledgerMode = mode;
+        r = await request(fullUrl, '/gw/icu/events/5001?dry_run=false', { json: { name: 'x' } });
+        assert.equal(r.status, 200, `ledger ${mode} must not affect the response`);
+        assert.equal(r.body.updated, 1);
+      }
+      ledgerMode = 'ok';
+      console.log('ok - ledger failure or hang does not change the response');
+    } finally {
+      full.close();
+      ledgerMode = 'ok';
+    }
   } finally {
     live.close();
     global.fetch = originalFetch;
