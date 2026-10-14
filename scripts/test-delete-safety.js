@@ -91,6 +91,11 @@ global.fetch = async (url, options = {}) => {
   if (eventReadMatch) {
     return eventReadResponder(eventReadMatch[1]);
   }
+  // Чтение события по нецифровому id (например 200001.0): мок-Intervals отвечает 404.
+  if (parsed.origin === 'https://intervals.icu' && options.method !== 'PUT'
+    && /^\/api\/v1\/athlete\/0\/events\/(?!bulk-delete$)[^/]+$/.test(parsed.pathname)) {
+    return jsonResponse({ error: 'not found' }, 404);
+  }
 
   if (parsed.origin === 'https://intervals.icu' && parsed.pathname === '/api/v1/athlete/0/events/bulk-delete') {
     return bulkDeleteResponder(JSON.parse(options.body || '[]'));
@@ -353,6 +358,7 @@ async function main() {
     );
     const protectedIds = ['200001', '200003', '200004', '200005'];
     const rangeReason = 'calendar_range_event_delete_by_id_only';
+    const idReason = 'calendar_range_event_site_only'; // явный id не от сайта
     const noteWindow = 'external_id_prefix=note%3A&oldest=2026-06-20&newest=2026-06-23';
     const upstreamBulkCalls = () => upstreamHits.filter(hit => new URL(hit.url).pathname === '/api/v1/athlete/0/events/bulk-delete');
 
@@ -433,7 +439,7 @@ async function main() {
     assert.equal(response.body.deleted_count, 0);
     assert.deepEqual(response.body.deleted_ids, []);
     assert.deepEqual(response.body.failed, []);
-    assert.deepEqual(response.body.protected, { count: 1, ids: ['200001'], reason: rangeReason });
+    assert.deepEqual(response.body.protected, { count: 1, ids: ['200001'], reason: idReason });
     assert.equal(upstreamBulkCalls().length, 0, 'bulk-delete must not run for a protected id');
     assert.equal(eventReads().length, 1, 'the event was read once');
     console.log('ok - delete by id from GPT keeps a SICK event');
@@ -454,7 +460,7 @@ async function main() {
     upstreamHits.length = 0;
     bulkDeleteResponder = bulkMustNotRun;
     response = await deleteById(200001, { 'x-stas-source': 'site' });
-    assert.deepEqual(response.body.protected, { count: 1, ids: ['200001'], reason: rangeReason });
+    assert.deepEqual(response.body.protected, { count: 1, ids: ['200001'], reason: idReason });
     assert.equal(upstreamBulkCalls().length, 0);
     console.log('ok - delete by id from the site (header + key) still deletes a SICK event without extra reads');
 
@@ -478,7 +484,7 @@ async function main() {
     response = await deleteById(200004);
     assert.equal(response.body.ok, true);
     assert.equal(response.body.deleted_count, 0);
-    assert.deepEqual(response.body.protected, { count: 1, ids: ['200004'], reason: rangeReason });
+    assert.deepEqual(response.body.protected, { count: 1, ids: ['200004'], reason: idReason });
     assert.equal(upstreamBulkCalls().length, 0);
     console.log('ok - delete by id from GPT keeps a range- key event');
 
@@ -491,7 +497,7 @@ async function main() {
     response = await request(baseUrl, '/gw/icu/events?id=200003,200010&dry_run=false', { method: 'DELETE' });
     assert.equal(response.body.ok, true);
     assert.deepEqual(response.body.deleted_ids, ['200010']);
-    assert.deepEqual(response.body.protected, { count: 1, ids: ['200003'], reason: rangeReason });
+    assert.deepEqual(response.body.protected, { count: 1, ids: ['200003'], reason: idReason });
     assert.equal(eventReads().length, 2);
 
     // (д) Чтение события вернуло 500: id не удаляется, failed с protection_check_failed.
@@ -558,7 +564,7 @@ async function main() {
     assert.equal(response.status, 200);
     assert.equal(response.body.dry_run, true);
     assert.deepEqual(response.body.to_delete, { count: 1, ids: ['200010'] });
-    assert.deepEqual(response.body.protected, { count: 1, ids: ['200001'], reason: rangeReason });
+    assert.deepEqual(response.body.protected, { count: 1, ids: ['200001'], reason: idReason });
     assert.equal(upstreamBulkCalls().length, 0);
     upstreamHits.length = 0;
     response = await request(baseUrl, '/gw/icu/events?id=200001&dry_run=true', { method: 'DELETE', headers: siteHeaders });
@@ -566,6 +572,100 @@ async function main() {
     assert.equal(response.body.protected, undefined);
     assert.equal(eventReads().length, 0);
     console.log('ok - dry_run by id separates protected events for GPT and is unchanged for the site');
+
+    // (з) Нецифровой id не от сайта: не читается и не удаляется, failed с invalid_id.
+    const anyEventGets = () => upstreamHits.filter(hit => {
+      const { pathname } = new URL(hit.url);
+      return hit.method === 'GET' && /^\/api\/v1\/athlete\/0\/events\/[^/]+$/.test(pathname);
+    });
+    bulkDeleteResponder = bulkMustNotRun;
+    for (const raw of ['200001.0', '0x7B', '1e2', '%2B123', '-5']) {
+      upstreamHits.length = 0;
+      response = await deleteById(raw);
+      assert.equal(response.status, 200, raw);
+      assert.equal(response.body.ok, false, raw);
+      assert.equal(response.body.error, 'delete_incomplete', raw);
+      assert.equal(response.body.deleted_count, 0, raw);
+      assert.deepEqual(response.body.deleted_ids, [], raw);
+      assert.deepEqual(response.body.failed, [{ id: decodeURIComponent(raw), status: 400, reason: 'invalid_id' }], raw);
+      assert.equal(upstreamBulkCalls().length, 0, `${raw}: bulk-delete must not run`);
+      assert.equal(anyEventGets().length, 0, `${raw}: the event must not be read`);
+    }
+    // dry_run: тот же отказ, без чтения.
+    upstreamHits.length = 0;
+    response = await request(baseUrl, '/gw/icu/events?id=200001.0&dry_run=true', { method: 'DELETE' });
+    assert.deepEqual(response.body.to_delete, { count: 0, ids: [] });
+    assert.deepEqual(response.body.failed, [{ id: '200001.0', status: 400, reason: 'invalid_id' }]);
+    assert.equal(anyEventGets().length, 0);
+    // Для сайта поведение прежнее: id уходит в bulk-delete как есть (Number).
+    upstreamHits.length = 0;
+    bulkDeleteResponder = (body) => {
+      assert.deepEqual(body, [{ id: 200001 }]);
+      return jsonResponse({ deleted_ids: [200001] });
+    };
+    response = await deleteById('200001.0', siteHeaders);
+    assert.equal(upstreamBulkCalls().length, 1, 'site delete is unchanged: the id still goes to bulk-delete');
+    assert.equal(anyEventGets().length, 0, 'site delete reads no event');
+    console.log('ok - non-digit ids from GPT are rejected with invalid_id without a read or a delete');
+
+    // (и) '0200001' читается и удаляется как 200001; защита SICK по канонической форме.
+    upstreamHits.length = 0;
+    bulkDeleteResponder = bulkMustNotRun;
+    response = await deleteById('0200001');
+    assert.equal(response.body.ok, true);
+    assert.equal(response.body.deleted_count, 0);
+    assert.deepEqual(response.body.protected, { count: 1, ids: ['0200001'], reason: idReason });
+    assert.deepEqual(eventReads().map(hit => new URL(hit.url).pathname), ['/api/v1/athlete/0/events/200001']);
+    assert.equal(upstreamBulkCalls().length, 0);
+    upstreamHits.length = 0;
+    bulkDeleteResponder = (body) => {
+      assert.deepEqual(body, [{ id: 200010 }]);
+      return jsonResponse({ deleted_ids: [200010] });
+    };
+    response = await deleteById('0200010');
+    assert.equal(response.body.ok, true, JSON.stringify(response.body));
+    assert.deepEqual(response.body.deleted_ids, ['200010']);
+    assert.deepEqual(response.body.failed, []);
+    assert.deepEqual(response.body.selector, { id: ['0200010'] });
+    assert.deepEqual(eventReads().map(hit => new URL(hit.url).pathname), ['/api/v1/athlete/0/events/200010']);
+    assert.equal(upstreamBulkCalls().length, 1);
+    // '200010' и '0200010' - одно событие: читается и удаляется один раз.
+    upstreamHits.length = 0;
+    response = await request(baseUrl, '/gw/icu/events?id=200010,0200010&dry_run=false', { method: 'DELETE' });
+    assert.equal(response.body.ok, true);
+    assert.equal(eventReads().length, 1);
+    assert.equal(upstreamBulkCalls().length, 1);
+    console.log('ok - id 0200001 is read and deleted in canonical form');
+
+    // (к) 429 на чтении события: ничего не удаляем, HTTP 429 и Retry-After, непроверенные id в failed.
+    upstreamHits.length = 0;
+    bulkDeleteResponder = bulkMustNotRun;
+    eventReadResponder = (id) => {
+      if (String(id) === '200010') return jsonResponse({ id: 200010, category: 'WORKOUT' });
+      const limited = jsonResponse({ error: 'slow down' }, 429);
+      limited.headers.get = (name) => (String(name).toLowerCase() === 'retry-after' ? '7' : null);
+      return limited;
+    };
+    response = await request(baseUrl, '/gw/icu/events?id=200010,200011,200012,abc&dry_run=false', { method: 'DELETE' });
+    assert.equal(response.status, 429);
+    assert.equal(response.retryAfter, '7');
+    assert.equal(response.body.ok, false);
+    assert.equal(response.body.error, 'rate_limited');
+    assert.equal(response.body.retry_after_ms, 7000);
+    assert.equal(response.body.deleted_count, 0);
+    assert.deepEqual(response.body.deleted_ids, []);
+    assert.deepEqual(response.body.failed, [
+      { id: 'abc', status: 400, reason: 'invalid_id' },
+      { id: '200011', status: 429, reason: 'protection_check_failed' },
+      { id: '200012', status: 429, reason: 'protection_check_failed' },
+    ]);
+    assert.equal(upstreamBulkCalls().length, 0, 'bulk-delete must not run after a 429 on the read');
+    assert.equal(eventReads().length, 2, 'reading stops at the first 429');
+    // dry_run тоже 429.
+    response = await request(baseUrl, '/gw/icu/events?id=200011&dry_run=true', { method: 'DELETE' });
+    assert.equal(response.status, 429);
+    assert.equal(response.retryAfter, '7');
+    console.log('ok - 429 on the event read returns HTTP 429 with Retry-After and deletes nothing');
   } finally {
     server.close();
     global.fetch = originalFetch;
