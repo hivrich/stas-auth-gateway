@@ -22,6 +22,7 @@ const {
 } = require('./middleware/security');
 const { buildOAuthAuthorizationServerMetadata } = require('./lib/oauth-metadata');
 const { buildStasSourceHeaders } = require('./lib/request-source');
+const getStasKey = require('./lib/get_stas_key');
 const { getStasRequestId, requestIdIngress } = require('./lib/request-id');
 const { getRequestUserId, getResolvedAuth } = require('./lib/request-auth');
 const { tokenIngress, tokenParserError } = require('./lib/oauth-token-diagnostics');
@@ -102,7 +103,7 @@ function createApp() {
       const uid = getRequestUserId(req);
       if (!uid) return res.status(401).json({ status: 401, error: 'missing_or_invalid_token' });
       const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
-      const STAS_KEY = process.env.STAS_KEY || '';
+      const STAS_KEY = getStasKey();
       const url = `${STAS_BASE}/api/db/strategy?user_id=${encodeURIComponent(uid)}`;
       const r = await fetch(url, {
         method: 'POST',
