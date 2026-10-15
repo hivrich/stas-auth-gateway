@@ -136,7 +136,7 @@ function reset() {
   nextId = 900;
   events = {
     '5001': { id: 5001, athlete_id: 'i15487', category: 'WORKOUT', start_date_local: '2026-10-20T00:00:00' },
-    '5002': { id: 5002, athlete_id: 'i15487', category: 'WORKOUT', paired_activity_id: 'i777' },
+    '5002': { id: 5002, athlete_id: 'i15487', category: 'WORKOUT', start_date_local: '2026-10-20T00:00:00', paired_activity_id: 'i777' },
     '5003': { id: 5003, athlete_id: 'i99999', category: 'WORKOUT' },
   };
   activitiesById.i777 = { id: 'i777', icu_athlete_id: 'i15487', type: 'Run', name: 'Already paired', paired_event_id: 5002, external_id: null };
@@ -400,13 +400,41 @@ async function main() {
     assert.equal(puts().length, 0);
     console.log('ok - plan done is detected by an activity paired to it in the day list, no POST');
 
-    // 7c. Окно поиска ограничено датой записи ±1 день и не растёт по запросу: один список, плановая активность вне окна не ищется.
+    // 7c. План: окно фиксировано вокруг даты планового события (день плана -2 ... +15), не зависит от даты запроса;
+    // дата записи 25.10 при плане на 20.10 допустима, список один.
     reset();
     r = await request(baseUrl, { ...baseBody(), start_date_local: '2026-10-25T07:30:00', plan_event_id: '5001' });
     assert.equal(r.status, 200);
     assert.equal(lists().length, 1, 'one list, no extra request for the plan day');
-    assert.equal(lists()[0].search, '?oldest=2026-10-24&newest=2026-10-26');
-    console.log('ok - the duplicate search window is bounded to the record date +-1 day');
+    assert.equal(lists()[0].search, '?oldest=2026-10-18&newest=2026-11-04');
+    console.log('ok - plan search window is fixed around the plan day');
+
+    // 7c1. Повтор с другой датой записи находит созданную активность: привязка ищется в окне плана, не от даты запроса.
+    reset();
+    activitiesById.i812 = {
+      id: 'i812', external_id: 'stas-done:plan:5001', type: 'Run', start_date_local: '2026-10-22T07:30:00',
+      moving_time: 3000, icu_athlete_id: 'i15487', paired_event_id: 5001,
+    };
+    dayListByDay = { '2026-10-18': [activitiesById.i812] };
+    r = await request(baseUrl, { ...baseBody(), start_date_local: '2026-10-25T09:00:00', plan_event_id: '5001' });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.reason, 'plan_already_done');
+    assert.equal(r.body.activity.id, 'i812');
+    assert.equal(posts().length, 0);
+    dayListByDay = null;
+    console.log('ok - retry with another record date finds the paired activity (no second POST)');
+
+    // 7c1b. Дата записи вне окна плана (день плана -1 ... +14): отказ 400 до списка и POST.
+    reset();
+    r = await request(baseUrl, { ...baseBody(), start_date_local: '2026-11-10T07:30:00', plan_event_id: '5001' });
+    assert.equal(r.status, 400);
+    assert.equal(r.body.error, 'date_out_of_window');
+    assert.equal(lists().length, 0);
+    assert.equal(posts().length, 0);
+    r = await request(baseUrl, { ...baseBody(), start_date_local: '2026-10-18T07:30:00', plan_event_id: '5001' });
+    assert.equal(r.status, 400);
+    assert.equal(posts().length, 0);
+    console.log('ok - record date outside the plan window is refused before any search or POST');
 
     // 7c2. План: ключ строит сервер (stas-done:plan:<id>), клиентский external_id для плана игнорируется.
     reset();
@@ -524,8 +552,9 @@ async function main() {
     createPairs = false;
     putPairs = false;
     r = await request(baseUrl, { ...baseBody(), plan_event_id: '5001' });
-    assert.equal(r.status, 200);
-    assert.equal(r.body.paired, false);
+    // PUT 2xx без привязки: незавершённый шаг, 502 (не ok:true), повтор допишет связь.
+    assert.equal(r.status, 502);
+    assert.notEqual(r.body.ok, true);
     assert.equal(posts().length, 1);
     assert.equal(puts().length, 1);
     console.log('ok - missing pairing -> one PUT; PUT failure is an honest 502/429; repeat pairs without a second POST');
