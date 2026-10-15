@@ -535,6 +535,18 @@ async function main() {
     dayListByDay = null;
     console.log('ok - an activity paired to another plan is not re-paired (409)');
 
+    // 7c8. Название до 200 символов (как на сайте): 200 проходит, 201 — 400 invalid_body.
+    reset();
+    r = await request(baseUrl, { ...baseBody(), name: 'н'.repeat(200) });
+    assert.equal(r.status, 200);
+    assert.equal(JSON.parse(posts()[0].body).name.length, 200);
+    reset();
+    r = await request(baseUrl, { ...baseBody(), name: 'н'.repeat(201) });
+    assert.equal(r.status, 400);
+    assert.equal(r.body.field, 'name');
+    assert.equal(posts().length, 0);
+    console.log('ok - name limit is 200 characters like on the site');
+
     // 8. Чужой и несуществующий план -> 404 plan_not_found, без POST.
     reset();
     for (const planId of ['5003', '9999']) {
