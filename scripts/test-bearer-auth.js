@@ -234,6 +234,15 @@ async function main() {
     assert.equal(lookups() - base4, 2);
     assert.equal((await serverCall('other-athlete-token')).userId, '777');
     assert.equal(lookups() - base4, 2);
+    // Одновременные поиски по одному токену: один запрос /athlete/0 на всех.
+    const baseConcurrent = lookups();
+    const [c1, c2, c3] = await Promise.all([
+      serverCall('concurrent-token'),
+      serverCall('concurrent-token'),
+      serverCall('concurrent-token'),
+    ]);
+    assert.equal(lookups() - baseConcurrent, 1, 'three simultaneous lookups share one /athlete/0 request');
+    assert.deepEqual([c1.userId, c2.userId, c3.userId], [c1.userId, c1.userId, c1.userId]);
     console.log('ok - athlete lookup cache is used and filled only by trusted server calls');
   } finally {
     server.close();

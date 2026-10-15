@@ -520,6 +520,21 @@ async function main() {
     postDelayMs = 0;
     console.log('ok - concurrent requests with another date are not merged (own window check)');
 
+    // 7c7. Похожая активность уже привязана к другому плану: 409, ни PUT, ни POST (привязка не переключается).
+    reset();
+    activitiesById.i830 = {
+      id: 'i830', external_id: 'garmin:30', type: 'Run', start_date_local: '2026-10-20T07:31:00',
+      moving_time: 3000, icu_athlete_id: 'i15487', paired_event_id: 9999,
+    };
+    dayListByDay = { '2026-10-18': [activitiesById.i830] };
+    r = await request(baseUrl, { ...baseBody(), plan_event_id: '5001' });
+    assert.equal(r.status, 409);
+    assert.equal(r.body.error, 'activity_paired_to_other_plan');
+    assert.equal(posts().length, 0);
+    assert.equal(puts().length, 0);
+    dayListByDay = null;
+    console.log('ok - an activity paired to another plan is not re-paired (409)');
+
     // 8. Чужой и несуществующий план -> 404 plan_not_found, без POST.
     reset();
     for (const planId of ['5003', '9999']) {
