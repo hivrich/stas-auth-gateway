@@ -506,6 +506,20 @@ async function main() {
     assert.equal(posts().length, 0);
     console.log('ok - date window is checked before the already-paired shortcut');
 
+    // 7c6. Одновременные запросы одного плана с разной датой не объединяются: запрос вне окна получает свой 400.
+    reset();
+    postDelayMs = 40;
+    const [okRes, badRes] = await Promise.all([
+      request(baseUrl, { ...baseBody(), plan_event_id: '5001' }),
+      request(baseUrl, { ...baseBody(), start_date_local: '2026-11-10T07:30:00', plan_event_id: '5001' }),
+    ]);
+    assert.equal(okRes.status, 200);
+    assert.equal(badRes.status, 400);
+    assert.equal(badRes.body.error, 'date_out_of_window');
+    assert.equal(posts().length, 1);
+    postDelayMs = 0;
+    console.log('ok - concurrent requests with another date are not merged (own window check)');
+
     // 8. Чужой и несуществующий план -> 404 plan_not_found, без POST.
     reset();
     for (const planId of ['5003', '9999']) {
