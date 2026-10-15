@@ -490,6 +490,22 @@ async function main() {
     postDelayMs = 0;
     console.log('ok - simultaneous requests with different keys are serialized per athlete (one POST)');
 
+    // 7c4. Нормализация номера плана: '05001' и '5001' — один и тот же план и один ключ.
+    reset();
+    r = await request(baseUrl, { ...baseBody(), plan_event_id: '05001' });
+    assert.equal(r.status, 200);
+    assert.equal(JSON.parse(posts()[0].body).external_id, 'stas-done:plan:5001');
+    assert.equal(JSON.parse(posts()[0].body).paired_event_id, 5001);
+    console.log('ok - plan_event_id is normalized (no leading zeros)');
+
+    // 7c5. Уже выполненный план при дате записи вне окна: 400 date_out_of_window, не 200 plan_already_done.
+    reset();
+    r = await request(baseUrl, { ...baseBody(), start_date_local: '2026-11-10T07:30:00', plan_event_id: '5002' });
+    assert.equal(r.status, 400);
+    assert.equal(r.body.error, 'date_out_of_window');
+    assert.equal(posts().length, 0);
+    console.log('ok - date window is checked before the already-paired shortcut');
+
     // 8. Чужой и несуществующий план -> 404 plan_not_found, без POST.
     reset();
     for (const planId of ['5003', '9999']) {
