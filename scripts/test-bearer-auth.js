@@ -7,7 +7,7 @@ const express = require('express');
 process.env.STAS_KEY = process.env.STAS_KEY || 'test-stas-key';
 process.env.STAS_BASE = process.env.STAS_BASE || 'http://stas.local.test';
 
-const { __testing: requestAuthTesting, getRequestUserId } = require('../lib/request-auth');
+const { __testing: requestAuthTesting, getRequestUserId, resolveDirectIntervalsAuth } = require('../lib/request-auth');
 const bearerUid = require('../routes/_bearer_uid');
 const uidInjectDb = require('../routes/_uid_inject_db');
 const dbProxy = require('../routes/db_proxy');
@@ -40,6 +40,9 @@ global.fetch = async (url, options = {}) => {
   });
 
   if (parsed.origin === 'https://intervals.icu' && parsed.pathname === '/api/v1/athlete/0') {
+    const bearer = String(options.headers?.Authorization || '');
+    if (bearer === 'Bearer limited-token') return jsonResponse({ error: 'slow down' }, 429);
+    if (bearer === 'Bearer other-athlete-token') return jsonResponse({ id: '777', name: 'Other Athlete' });
     return jsonResponse({ id: '15487', name: 'Patrik Lindegardh' });
   }
 
@@ -177,6 +180,70 @@ async function main() {
     assert.equal(legacyCredentialHits.length, 0);
 
     console.log('ok - bearer auth rejects unsigned legacy t_ tokens even when compat flags are enabled');
+
+    // Кэш поиска атлета только для серверных вызовов STAS (stasServerCall)
+    requestAuthTesting.clearDirectTokenCache();
+    const hitsOf = (name) => upstreamHits.filter((hit) => new URL(hit.url).pathname === name).length;
+    const lookups = () => hitsOf('/api/v1/athlete/0');
+    const ensures = () => hitsOf('/api/db/ensure-intervals-user');
+    const serverCall = (token, extra = {}) => resolveDirectIntervalsAuth(token, { source: 'site', stasServerCall: true, ...extra });
+    const userCall = (token, extra = {}) => resolveDirectIntervalsAuth(token, { source: 'gpt', ...extra });
+    const lookups0 = lookups();
+    const ensures0 = ensures();
+
+    // два серверных вызова с одним токеном: один поиск, одинаковая форма ответа, ensure не вызывается
+    let first = await serverCall('server-token');
+    let second = await serverCall('server-token');
+    assert.equal(lookups() - lookups0, 1, 'second server call is served from the cache');
+    assert.equal(ensures() - ensures0, 0, 'server calls never ensure the user');
+    assert.deepEqual(second, first);
+    assert.deepEqual(first, { userId: '15487', athleteId: undefined, authMode: 'intervals', intervalsToken: 'server-token', source: 'site' });
+    assert.deepEqual(requestAuthTesting.getDirectTokenCacheKeys(), [], 'server path never writes directTokenCache');
+
+    // не-серверный вызов с тем же токеном: свой поиск и ensure-intervals-user
+    const userAuth = await userCall('server-token');
+    assert.equal(lookups() - lookups0, 2, 'non-server call does its own lookup');
+    assert.equal(ensures() - ensures0, 1, 'non-server call ensures the user');
+    assert.equal(userAuth.userId, '15487');
+    assert.equal(requestAuthTesting.getDirectTokenCacheKeys().length, 1);
+
+    // не-серверный вызов первым, затем серверный: серверный кэш не заполнялся, свой поиск
+    requestAuthTesting.clearDirectTokenCache();
+    const base1 = lookups();
+    await userCall('user-first-token');
+    assert.equal(lookups() - base1, 1);
+    assert.equal(requestAuthTesting.getDirectTokenCacheKeys().length, 1, 'the non-server call filled directTokenCache');
+    const base2 = lookups();
+    await serverCall('user-first-token');
+    assert.equal(lookups() - base2, 0, 'server call after a non-server one reuses the directTokenCache entry (read only)');
+    assert.equal(requestAuthTesting.getDirectTokenCacheKeys().length, 1, 'the server call did not add directTokenCache entries');
+
+    // 429 на поиске не кэшируется (и без rateLimitError тоже)
+    const base3 = lookups();
+    await assert.rejects(serverCall('limited-token', { rateLimitError: true }), (error) => error.status === 429);
+    assert.equal(await serverCall('limited-token'), null);
+    await assert.rejects(serverCall('limited-token', { rateLimitError: true }), (error) => error.status === 429);
+    assert.equal(lookups() - base3, 3, 'failed lookups are never cached');
+
+    // разные токены не делят записи
+    const base4 = lookups();
+    const mine = await serverCall('server-token-a');
+    const theirs = await serverCall('other-athlete-token');
+    assert.equal(mine.userId, '15487');
+    assert.equal(theirs.userId, '777');
+    assert.equal(lookups() - base4, 2);
+    assert.equal((await serverCall('other-athlete-token')).userId, '777');
+    assert.equal(lookups() - base4, 2);
+    // Одновременные поиски по одному токену: один запрос /athlete/0 на всех.
+    const baseConcurrent = lookups();
+    const [c1, c2, c3] = await Promise.all([
+      serverCall('concurrent-token'),
+      serverCall('concurrent-token'),
+      serverCall('concurrent-token'),
+    ]);
+    assert.equal(lookups() - baseConcurrent, 1, 'three simultaneous lookups share one /athlete/0 request');
+    assert.deepEqual([c1.userId, c2.userId, c3.userId], [c1.userId, c1.userId, c1.userId]);
+    console.log('ok - athlete lookup cache is used and filled only by trusted server calls');
   } finally {
     server.close();
     global.fetch = originalFetch;
