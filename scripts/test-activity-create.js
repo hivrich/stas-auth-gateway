@@ -208,7 +208,7 @@ async function main() {
       ['icu_rpe', { icu_rpe: 0 }],
       ['distance', { distance: -1 }],
       ['distance', { distance: 1000001 }],
-      ['name', { name: 'x'.repeat(121) }],
+      ['name', { name: 'x'.repeat(201) }],
       ['description', { description: 'x'.repeat(2001) }],
       ['plan_event_id', { plan_event_id: 'abc' }],
       ['plan_event_id', { plan_event_id: 5001 }],
@@ -534,6 +534,18 @@ async function main() {
     assert.equal(puts().length, 0);
     dayListByDay = null;
     console.log('ok - an activity paired to another plan is not re-paired (409)');
+
+    // 7c8. Название до 200 символов (как на сайте): 200 проходит, 201 — 400 invalid_body.
+    reset();
+    r = await request(baseUrl, { ...baseBody(), name: 'н'.repeat(200) });
+    assert.equal(r.status, 200);
+    assert.equal(JSON.parse(posts()[0].body).name.length, 200);
+    reset();
+    r = await request(baseUrl, { ...baseBody(), name: 'н'.repeat(201) });
+    assert.equal(r.status, 400);
+    assert.equal(r.body.field, 'name');
+    assert.equal(posts().length, 0);
+    console.log('ok - name limit is 200 characters like on the site');
 
     // 8. Чужой и несуществующий план -> 404 plan_not_found, без POST.
     reset();
