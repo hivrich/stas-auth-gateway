@@ -208,7 +208,7 @@ async function main() {
       ['icu_rpe', { icu_rpe: 0 }],
       ['distance', { distance: -1 }],
       ['distance', { distance: 1000001 }],
-      ['name', { name: 'x'.repeat(121) }],
+      ['name', { name: 'x'.repeat(201) }],
       ['description', { description: 'x'.repeat(2001) }],
       ['plan_event_id', { plan_event_id: 'abc' }],
       ['plan_event_id', { plan_event_id: 5001 }],
