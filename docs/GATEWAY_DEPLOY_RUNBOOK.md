@@ -227,7 +227,7 @@ Why: in 2.7 the gateway went out 33 minutes before the site, called `/api/db/pla
 Keep the window between the two deploys as short as possible.
 Rollback is the reverse of the deploy order: the side that calls the new address is rolled back first, then the side that gained it (gateway calls a new site address: gateway first, then site; site calls a new gateway route: site first, then gateway).
 
-Logs: `scripts/deploy-prod-gateway.sh` saves the logs of `app`, `worker` and `bridge-api` to `${STAS_DEPLOY_BACKUP_DIR:-/home/deploy/stas-deploy-backups}/logs-<UTC time>-gateway` right before the gateway is replaced, and keeps the 10 newest `logs-*` directories.
+Logs: `scripts/deploy-prod-gateway.sh` saves the logs of `app`, `worker` and `bridge-api` to `${STAS_DEPLOY_BACKUP_DIR:-/home/deploy/stas-deploy-backups}/logs-<UTC time>-gateway` right before the gateway is replaced, and keeps the 10 newest directories named exactly `logs-<YYYYMMDDTHHMMSSZ>-gateway`; site dumps (`logs-<UTC time>-<other suffix>`) and any other `logs-*` entries are never pruned by this script.
 A failed dump only prints `warning_log_dump_failed`; the deploy continues.
 The first release with this script cannot rely on it yet: dump the logs by hand before it
 (`docker compose logs --no-color --timestamps app worker bridge-api`).
@@ -245,7 +245,7 @@ Local checks before deploy:
 npm run test:route-order
 npm run test:oauth-release-safety
 npm run test:oauth-token-diagnostics
-npm run test:openapi-contract
+STAS_PRODUCT_ACTIONS_SCHEMA=<path to product/gpt-actions-current.json from the exact site commit being deployed> npm run test:openapi-contract
 npm run test:oauth
 npm run test:icu-post
 npm run test:bearer-auth
@@ -260,6 +260,10 @@ node --check scripts/test-oauth-flow.js
 git diff --check
 docker build -t stas-auth-gateway-clean:codex-local .
 ```
+
+`test:openapi-contract` compares `openapi.actions.json` with the site's `product/gpt-actions-current.json`.
+The path MUST be given explicitly through `STAS_PRODUCT_ACTIONS_SCHEMA`, taken from the exact site commit being deployed.
+The default sibling path `../stas.run/product/gpt-actions-current.json` depends on whatever branch the neighbouring checkout happens to be on and gives false red results.
 
 Production checks after deploy:
 
