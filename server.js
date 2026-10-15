@@ -51,7 +51,10 @@ function createApp() {
   const jsonBody = bodyParser.json({ limit: '256kb' });
   const urlencodedBody = express.urlencoded({ extended: false });
   const RACE_PATH_RE = /^\/gw\/icu\/activities\/[^/]+\/race\/?$/i;
-  const isRaceWrite = (req) => req.method === 'PUT' && RACE_PATH_RE.test(req.path);
+  // Ручная запись выполненной тренировки (только сайт) тоже читает тело сама: лимит 16kb в маршруте.
+  const MANUAL_ACTIVITY_PATH_RE = /^\/gw\/icu\/activities\/manual\/?$/i;
+  const isRaceWrite = (req) => (req.method === 'PUT' && RACE_PATH_RE.test(req.path)) ||
+    (req.method === 'POST' && MANUAL_ACTIVITY_PATH_RE.test(req.path));
   app.use(function jsonParser(req, res, next) {
     return isRaceWrite(req) ? next() : jsonBody(req, res, next);
   });
@@ -69,6 +72,8 @@ function createApp() {
 
   app.use('/gw', openapi);
   app.use('/gw', agent);
+  // Ручная запись активности: только сайт; проверка источника и ключа раньше любой авторизации по токену (без запросов в Intervals).
+  app.post('/gw/icu/activities/manual', require('./lib/attach_activity_create').siteOnlyGate);
   app.use('/gw', bearerUid());
   app.use('/gw', mcpScopeGuard());
   app.use('/gw', agentReadOnlyGuard());
@@ -124,6 +129,8 @@ function createApp() {
   catch(e){ console.error("[icu][DELETE] attach failed:", e && e.message); }
   try { const attachEventUpdate = require("./lib/attach_event_update"); if (typeof attachEventUpdate === "function") attachEventUpdate(app); }
   catch(e){ console.error("[icu][PUT] attach failed:", e && e.message); }
+  try { const attachActivityCreate = require("./lib/attach_activity_create"); if (typeof attachActivityCreate === "function") attachActivityCreate(app); }
+  catch(e){ console.error("[icu][POST][activity_manual] attach failed:", e && e.message); }
   app.use('/gw/icu', icu);
 
   app.use((req, res) => {
