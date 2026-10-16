@@ -3,10 +3,10 @@
 const express = require('express');
 const { getRequestUserId } = require('../lib/request-auth');
 const { buildStasSourceHeaders } = require('../lib/request-source');
+const getStasKey = require('../lib/get_stas_key');
 
 const router = express.Router();
 const STAS_BASE = process.env.STAS_BASE || 'http://127.0.0.1:3336';
-const STAS_KEY = process.env.STAS_KEY || '';
 const UPSTREAM_TIMEOUT_MS = 45_000;
 
 function isPlainObject(value) {
@@ -18,7 +18,7 @@ async function callStas(req, userId, path, options = {}) {
   url.searchParams.set('user_id', String(userId));
   const method = String(options.method || 'GET').toUpperCase();
   const headers = buildStasSourceHeaders(req, {
-    'X-API-Key': STAS_KEY,
+    'X-API-Key': getStasKey(),
     Accept: 'application/json',
   });
   const init = {

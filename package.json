@@ -27,6 +27,8 @@
     "test:route-order": "node scripts/test-server-route-order.js",
     "test:request-id": "node scripts/test-request-id.js",
     "test:openapi-contract": "node scripts/test-openapi-contract.js",
+    "test:stas-key-source": "node scripts/test-stas-key-source.js",
+    "test:log-prune": "node scripts/test-gateway-log-prune.js",
     "test:oauth-metadata-parity": "node scripts/test-oauth-metadata-parity.js"
   },
   "keywords": [
