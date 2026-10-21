@@ -57,9 +57,9 @@ function getDbProxyTimeoutMs(method, path) {
 }
 
 // STAS endpoints that are internal: written only by the gateway itself
-// (lib/plan-change-callback.js, lib/icu-attempt-ledger.js), never via this proxy.
+// (lib/plan-change-callback.js, lib/icu-attempt-ledger.js, lib/request-auth.js), never via this proxy.
 // Compared in normalised form (lowercase, "-" and "_" equal).
-const INTERNAL_FIRST_SEGMENTS = Object.freeze(['plan_changes', 'intervals-attempts']);
+const INTERNAL_FIRST_SEGMENTS = Object.freeze(['plan_changes', 'intervals-attempts', 'ensure-intervals-user']);
 
 function comparable(segment) {
   return String(segment || '').toLowerCase().replace(/-/g, '_');
