@@ -133,6 +133,33 @@ global.fetch = async (url, options = {}) => {
     return textResponse(JSON.stringify({ ok: true, activity: 'detail' }), 200, 'application/json; charset=utf-8');
   }
 
+  if (parsed.origin === 'http://stas.local.test' && parsed.pathname === '/api/db/strength/sessions') {
+    assert.equal(parsed.searchParams.get('user_id'), '15487');
+    assert.equal(parsed.searchParams.get('from'), '2026-10-01');
+    return textResponse(JSON.stringify({
+      ok: true,
+      sessions: [{ id: 'strength-session-1' }],
+    }), 200, 'application/json; charset=utf-8');
+  }
+
+  if (parsed.origin === 'http://stas.local.test' && parsed.pathname === '/api/db/strength/exercises') {
+    assert.equal(parsed.searchParams.get('user_id'), '15487');
+    return textResponse(JSON.stringify({
+      ok: true,
+      exercises: [{ id: 'back-squat' }],
+    }), 200, 'application/json; charset=utf-8');
+  }
+
+  if (parsed.origin === 'http://stas.local.test' && parsed.pathname === '/api/db/strength/plan') {
+    assert.equal(parsed.searchParams.get('user_id'), '15487');
+    assert.equal(parsed.searchParams.get('date'), '2026-10-21');
+    return textResponse(JSON.stringify({
+      ok: true,
+      date: '2026-10-21',
+      exercises: [{ id: 'bench-press' }],
+    }), 200, 'application/json; charset=utf-8');
+  }
+
   if (parsed.origin === 'http://stas.local.test' && parsed.pathname === '/api/db/wellness') {
     assert.equal(parsed.searchParams.get('user_id'), '15487');
     assert.equal(parsed.searchParams.get('oldest'), '2026-08-01');
@@ -416,6 +443,18 @@ async function main() {
     assert.equal(response.status, 200);
     assert.equal(response.body.activity, 'detail');
 
+    response = await request(baseUrl, '/gw/api/db/strength/sessions?from=2026-10-01', { token: agentToken });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.sessions[0].id, 'strength-session-1');
+
+    response = await request(baseUrl, '/gw/api/db/strength/exercises', { token: agentToken });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.exercises[0].id, 'back-squat');
+
+    response = await request(baseUrl, '/gw/api/db/strength/plan?date=2026-10-21', { token: agentToken });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.date, '2026-10-21');
+
     response = await request(baseUrl, '/gw/api/db/wellness?oldest=2026-08-01&newest=2026-10-01', { token: agentToken });
     assert.equal(response.status, 200);
     assert.equal(response.body.format, 'wellness_series_v1');
@@ -439,6 +478,22 @@ async function main() {
       token: agentToken,
     });
     assert.equal(response.status, 403);
+
+    response = await request(baseUrl, '/gw/api/db/strength/plan/preview', {
+      method: 'POST',
+      json: { date: '2026-10-21' },
+      token: agentToken,
+    });
+    assert.equal(response.status, 403);
+    assert.equal(response.body.reason, 'agent_auth_read_only');
+
+    response = await request(baseUrl, '/gw/api/db/strength/plan/commit', {
+      method: 'POST',
+      json: { date: '2026-10-21' },
+      token: agentToken,
+    });
+    assert.equal(response.status, 403);
+    assert.equal(response.body.reason, 'agent_auth_read_only');
 
     response = await request(baseUrl, '/gw/icu/events/test-event', {
       method: 'DELETE',
