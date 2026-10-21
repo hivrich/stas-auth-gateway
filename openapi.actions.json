@@ -4528,7 +4528,8 @@
                     "enum": [
                       "run",
                       "ride",
-                      "swim"
+                      "swim",
+                      "strength"
                     ]
                   },
                   {
@@ -4610,7 +4611,8 @@
                     "enum": [
                       "run",
                       "ride",
-                      "swim"
+                      "swim",
+                      "strength"
                     ]
                   },
                   {
@@ -4674,6 +4676,43 @@
               "type",
               "operationId",
               "goalPublicId"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Canonical sport_role_update command. Send this exact command.type and no alias.",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "sport_role_update"
+                ],
+                "description": "Use exactly \"sport_role_update\" as command.type."
+              },
+              "operationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "sport": {
+                "type": "string",
+                "enum": [
+                  "strength"
+                ]
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "discipline",
+                  "support"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "operationId",
+              "sport",
+              "role"
             ]
           },
           {
