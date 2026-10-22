@@ -363,6 +363,7 @@ async function main() {
     const deniedPaths = [
       '/plan_changes', '/Plan_Changes', '//plan_changes/', '/plan%5Fchanges', '/plan-changes',
       '/intervals-attempts', '/intervals_attempts', '/plan_changes/extra', '/%2Fplan_changes',
+      '/ensure-intervals-user', '/ensure_intervals_user',
     ];
     for (const method of ['GET', 'POST']) {
       for (const path of deniedPaths) {
@@ -378,7 +379,10 @@ async function main() {
       assert.strictEqual(bad.statusCode, 400, `${path} -> 400`);
     }
     assert.strictEqual(upstreamHits.length, 0, 'bad paths never reach STAS');
-    assert.deepStrictEqual([...dbProxy.__testing.INTERNAL_FIRST_SEGMENTS], ['plan_changes', 'intervals-attempts']);
+    assert.deepStrictEqual(
+      [...dbProxy.__testing.INTERNAL_FIRST_SEGMENTS],
+      ['plan_changes', 'intervals-attempts', 'ensure-intervals-user'],
+    );
     // A normal path is still proxied as before.
     response = await runRequest({ days: '7' }, 'user-42', { path: '/trainings' });
     assert.strictEqual(response.statusCode, 200);
