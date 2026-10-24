@@ -6,6 +6,9 @@ const AGENT_READ_ROUTES = new Set([
   'GET /gw/api/db/wellness',
   'GET /gw/api/db/user_summary',
   'GET /gw/api/db/activity_detail',
+  'GET /gw/api/db/strength/exercises',
+  'GET /gw/api/db/strength/sessions',
+  'GET /gw/api/db/strength/plan',
   'GET /gw/icu/events',
 ]);
 
