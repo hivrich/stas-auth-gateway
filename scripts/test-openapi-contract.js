@@ -291,7 +291,7 @@ async function main() {
     ['string', 'null'],
     'one-call goal response must allow the real no-best-result null state',
   );
-  assert.equal(gatewaySchema.components.schemas.GoalResultEditCommand.oneOf.length, 16);
+  assert.equal(gatewaySchema.components.schemas.GoalResultEditCommand.oneOf.length, 17);
   assert.equal(gatewaySchema.paths['/gw/api/db/goals/current'], undefined, 'retired current-goals path must stay absent');
   assert.equal(gatewaySchema.components.schemas.AnalysisProjectionResponse, undefined);
 
@@ -310,6 +310,7 @@ async function main() {
     'result_detach_activity',
     'result_link_activity',
     'result_set',
+    'sport_role_update',
     'start_cancel',
     'start_create',
     'start_delete',
