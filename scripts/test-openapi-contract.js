@@ -27,6 +27,11 @@ const expectedActionsPaths = [
   '/gw/api/db/profile_changes',
   '/gw/api/db/profile_changes/{changeId}',
   '/gw/api/db/profile_changes/{changeId}/restore',
+  '/gw/api/db/strength/sessions',
+  '/gw/api/db/strength/exercises',
+  '/gw/api/db/strength/plan',
+  '/gw/api/db/strength/plan/preview',
+  '/gw/api/db/strength/plan/commit',
   '/gw/icu/events',
   '/gw/trainings',
   '/gw/api/db/user_summary/v3',
@@ -198,16 +203,21 @@ async function main() {
     'getEditableGoalsResults',
     'getGoalActivityCandidates',
     'readProfileChangeDetail',
+    'getStrengthSessions',
+    'getStrengthExercises',
+    'getStrengthPlan',
   ];
   const nonConsequentialWriteOperations = [
     'restoreProfileChange',
     'deletePlannedWorkouts',
     'createPlannedWorkoutsGw',
     'writeStrategy',
+    'previewStrengthPlan',
   ];
   const consequentialWriteOperations = [
     'saveProfileSection',
     'applyGoalResultChange',
+    'commitStrengthPlan',
   ];
   assert.equal(
     operationsById.size,
@@ -233,7 +243,63 @@ async function main() {
     assert.equal(
       operationsById.get(operationId)?.['x-openai-isConsequential'],
       true,
-      operationId + ' must request platform confirmation for a final profile or goal write',
+      operationId + ' must request platform confirmation for a final write',
+    );
+  }
+
+  const strengthReadOperations = [
+    'getStrengthSessions',
+    'getStrengthExercises',
+    'getStrengthPlan',
+  ];
+  const strengthWriteOperations = ['previewStrengthPlan', 'commitStrengthPlan'];
+  for (const operationId of strengthReadOperations.concat(strengthWriteOperations)) {
+    const operation = operationsById.get(operationId);
+    assert.ok(
+      operation?.responses?.['200'],
+      `${operationId} must declare a 200 response`,
+    );
+  }
+  for (const operationId of strengthWriteOperations) {
+    const operation = operationsById.get(operationId);
+    assert.ok(
+      operation?.responses?.['403'],
+      `${operationId} must declare a 403 response for a disabled strength journal`,
+    );
+    assert.ok(
+      operation?.responses?.['409'],
+      `${operationId} must declare a 409 response for stale or conflicting writes`,
+    );
+  }
+  const getStrengthSessionsOperation = operationsById.get('getStrengthSessions');
+  const strengthLimitParameter = (getStrengthSessionsOperation?.parameters || []).find(
+    (param) => param.name === 'limit' && param.in === 'query',
+  );
+  assert.ok(strengthLimitParameter, 'getStrengthSessions must expose a limit query parameter');
+  assert.equal(
+    strengthLimitParameter.schema.maximum,
+    20,
+    'getStrengthSessions limit must be capped at 20',
+  );
+  assert.deepEqual(
+    gatewaySchema.components.schemas.StrengthPlanRequest.required,
+    ['eventId', 'entries', 'dataVersion'],
+    'StrengthPlanRequest must require eventId, entries, and dataVersion',
+  );
+  const commitStrengthBody = operationsById.get('commitStrengthPlan')?.requestBody?.content?.['application/json']?.schema;
+  assert.equal(
+    commitStrengthBody?.$ref,
+    '#/components/schemas/StrengthPlanCommitRequest',
+    'commitStrengthPlan body must use StrengthPlanCommitRequest',
+  );
+  assert.ok(
+    gatewaySchema.components.schemas.StrengthPlanCommitRequest.required.includes('previewHash'),
+    'commitStrengthPlan body must require previewHash',
+  );
+  for (const operationId of strengthReadOperations) {
+    assert.ok(
+      operationsById.get(operationId)?.description?.includes('{"enabled":false}'),
+      `${operationId} description must explain that {"enabled":false} means the strength journal is disabled`,
     );
   }
 
@@ -509,6 +575,11 @@ async function main() {
   const gatewaySha = sha256(gatewayBytes);
   const productSha = sha256(productBytes);
   const byteEquivalent = gatewayBytes.equals(productBytes);
+  assert.equal(
+    productSha === gatewaySha,
+    true,
+    'site schema must be byte-identical to gateway openapi.actions.json',
+  );
   assert.equal(byteEquivalent, true, 'stas.run product Actions schema must be byte-identical to gateway openapi.actions.json');
   assert.equal(gatewaySha, productSha, 'byte-identical schemas must have matching SHA-256');
 

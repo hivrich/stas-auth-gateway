@@ -1199,6 +1199,351 @@
         }
       }
     },
+    "/gw/api/db/strength/sessions": {
+      "get": {
+        "operationId": "getStrengthSessions",
+        "x-openai-isConsequential": false,
+        "summary": "Read saved strength-log sessions",
+        "description": "Read saved strength-log sessions for the athlete. A 200 with {\"enabled\":false} means the strength journal is not yet enabled for this athlete; do not invent sessions in that case. Session fields appear only when enabled is true.",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Optional start date (inclusive)."
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Optional end date (inclusive)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20
+            },
+            "description": "Maximum number of sessions to return."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Strength sessions; {\"enabled\":false} means the strength journal is not yet enabled for this athlete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrengthSessionsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Strength log is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gw/api/db/strength/exercises": {
+      "get": {
+        "operationId": "getStrengthExercises",
+        "x-openai-isConsequential": false,
+        "summary": "Read the strength exercise catalog",
+        "description": "Read available strength exercises with their log type and optional last logged date and sets. A 200 with {\"enabled\":false} means the strength journal is not yet enabled for this athlete; do not invent exercise ids.",
+        "responses": {
+          "200": {
+            "description": "Strength exercise catalog; {\"enabled\":false} means the strength journal is not yet enabled for this athlete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrengthExercisesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Strength log is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gw/api/db/strength/plan": {
+      "get": {
+        "operationId": "getStrengthPlan",
+        "x-openai-isConsequential": false,
+        "summary": "Read planned strength sessions for a date",
+        "description": "Read planned strength sessions attached to calendar events for one date. A 200 with {\"enabled\":false} means the strength journal is not yet enabled for this athlete. Use eventId and dataVersion from this response in a preview request.",
+        "parameters": [
+          {
+            "name": "date",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Calendar date of the planned strength sessions."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Planned strength sessions; {\"enabled\":false} means the strength journal is not yet enabled for this athlete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrengthPlanResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Strength log is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gw/api/db/strength/plan/preview": {
+      "post": {
+        "operationId": "previewStrengthPlan",
+        "x-openai-isConsequential": false,
+        "summary": "Preview a planned strength session without saving",
+        "description": "Preview how the planned strength session would be saved. Never saves anything: it returns the resulting plan and the current version so the user can compare before and after. Call getStrengthPlan first to obtain a fresh dataVersion.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StrengthPlanRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Effective strength plan preview with the previous session state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrengthPlanPreviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input or unknown exercise ids; unknown lists unrecognized exerciseId values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrengthWriteError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Strength journal is disabled for this athlete (error strength_disabled)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrengthWriteError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event not found (error event_not_found)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrengthWriteError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request conflicts with the current plan: stale_data_version, preview_mismatch, session_started, or write_conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrengthWriteError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Strength log is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gw/api/db/strength/plan/commit": {
+      "post": {
+        "operationId": "commitStrengthPlan",
+        "x-openai-isConsequential": true,
+        "summary": "Save the strength plan confirmed in the preview",
+        "description": "Save the strength plan exactly as shown in the preview the user approved. Call only after the user explicitly agrees to that preview, with the same arguments and previewHash. On 409 stale_data_version or preview_mismatch, re-read the plan and make a new preview.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StrengthPlanCommitRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Strength plan saved; returns the enabled plan sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrengthPlanCommitResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input or unknown exercise ids; unknown lists unrecognized exerciseId values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrengthWriteError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Strength journal is disabled for this athlete (error strength_disabled)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrengthWriteError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event not found (error event_not_found)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrengthWriteError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request conflicts with the current plan: stale_data_version, preview_mismatch, session_started, or write_conflict; re-read the plan and make a new preview for stale_data_version or preview_mismatch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrengthWriteError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Strength log is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/gw/api/db/goals/changes/apply": {
       "post": {
         "operationId": "applyGoalResultChange",
@@ -5927,6 +6272,607 @@
         "required": [
           "change"
         ]
+      },
+      "StrengthDisabledResponse": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "enum": [false]
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "additionalProperties": false
+      },
+      "AiSessionExercise": {
+        "type": "object",
+        "properties": {
+          "exerciseId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "planned": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Planned set note; null when the exercise was not part of the plan."
+          },
+          "done": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Completed sets as logged by the athlete."
+          },
+          "skippedSets": {
+            "type": "integer",
+            "description": "Number of planned sets the athlete skipped."
+          }
+        },
+        "required": [
+          "exerciseId",
+          "name",
+          "planned",
+          "done",
+          "skippedSets"
+        ],
+        "additionalProperties": false
+      },
+      "StrengthSession": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "title": {
+            "type": "string"
+          },
+          "eventId": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Linked calendar event id; null when the session is standalone."
+          },
+          "durationMin": {
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Session duration in minutes; null when unknown."
+          },
+          "rpe": {
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Athlete-reported RPE; null when not logged."
+          },
+          "note": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Session note; null when absent."
+          },
+          "exercises": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AiSessionExercise"
+            },
+            "description": "Planned exercises as performed."
+          },
+          "unplannedExercises": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AiSessionExercise"
+            },
+            "description": "Exercises performed outside the plan."
+          }
+        },
+        "required": [
+          "sessionId",
+          "date",
+          "title",
+          "eventId",
+          "durationMin",
+          "rpe",
+          "note",
+          "exercises",
+          "unplannedExercises"
+        ],
+        "additionalProperties": false
+      },
+      "StrengthSessionsResponse": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/StrengthDisabledResponse"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "enum": [true]
+              },
+              "sessions": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/StrengthSession"
+                }
+              }
+            },
+            "required": [
+              "enabled",
+              "sessions"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "AiStrengthExercise": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "logType": {
+            "type": "string",
+            "enum": [
+              "weight_reps",
+              "reps",
+              "time"
+            ]
+          },
+          "equipment": {
+            "type": "string"
+          },
+          "custom": {
+            "type": "boolean",
+            "description": "True when the athlete defined this exercise."
+          },
+          "lastDate": {
+            "type": "string",
+            "format": "date",
+            "description": "Date of the last logged use; absent when never logged."
+          },
+          "lastSets": {
+            "type": "string",
+            "description": "Sets from the last logged use as one line such as \"60 kg × 8, 60 kg × 8\"; absent when never logged."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "logType",
+          "equipment",
+          "custom"
+        ],
+        "additionalProperties": false
+      },
+      "StrengthExercisesResponse": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/StrengthDisabledResponse"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "enum": [true]
+              },
+              "exercises": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AiStrengthExercise"
+                }
+              }
+            },
+            "required": [
+              "enabled",
+              "exercises"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "StrengthSetValues": {
+        "type": "object",
+        "properties": {
+          "weightKg": {
+            "type": "number"
+          },
+          "reps": {
+            "type": "integer"
+          },
+          "seconds": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "StrengthPlanEntry": {
+        "type": "object",
+        "properties": {
+          "exerciseId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "sets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StrengthSetValues"
+            }
+          }
+        },
+        "required": [
+          "exerciseId",
+          "name",
+          "sets"
+        ],
+        "additionalProperties": false
+      },
+      "AiPlanSession": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "eventId": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Linked calendar event id; null when the session is standalone."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "planned",
+              "in_progress",
+              "completed",
+              "discarded"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "description": "Data version to pass back in StrengthPlanRequest."
+          },
+          "plan": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StrengthPlanEntry"
+            }
+          }
+        },
+        "required": [
+          "sessionId",
+          "eventId",
+          "status",
+          "title",
+          "version",
+          "plan"
+        ],
+        "additionalProperties": false
+      },
+      "StrengthPlanResponse": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/StrengthDisabledResponse"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "enum": [true]
+              },
+              "sessions": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AiPlanSession"
+                }
+              }
+            },
+            "required": [
+              "enabled",
+              "sessions"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "StrengthPlanRequest": {
+        "type": "object",
+        "properties": {
+          "eventId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+            "description": "Calendar event id of the strength session from getStrengthPlan."
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Optional session title override."
+          },
+          "entries": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 40,
+            "items": {
+              "type": "object",
+              "properties": {
+                "exerciseId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                  "description": "Exercise id from getStrengthExercises."
+                },
+                "sets": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 30,
+                  "items": {
+                    "$ref": "#/components/schemas/StrengthSetValues"
+                  }
+                }
+              },
+              "required": [
+                "exerciseId",
+                "sets"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "dataVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Version of the event session from getStrengthPlan, or 0 when the session does not exist yet."
+          }
+        },
+        "required": [
+          "eventId",
+          "entries",
+          "dataVersion"
+        ],
+        "additionalProperties": false
+      },
+      "StrengthPlanCommitRequest": {
+        "type": "object",
+        "properties": {
+          "eventId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+            "description": "Calendar event id of the strength session from getStrengthPlan."
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Optional session title override."
+          },
+          "entries": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 40,
+            "items": {
+              "type": "object",
+              "properties": {
+                "exerciseId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                  "description": "Exercise id from getStrengthExercises."
+                },
+                "sets": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 30,
+                  "items": {
+                    "$ref": "#/components/schemas/StrengthSetValues"
+                  }
+                }
+              },
+              "required": [
+                "exerciseId",
+                "sets"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "dataVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Version of the event session from getStrengthPlan, or 0 when the session does not exist yet."
+          },
+          "previewHash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "previewHash returned by the preview the user approved."
+          }
+        },
+        "required": [
+          "eventId",
+          "entries",
+          "dataVersion",
+          "previewHash"
+        ],
+        "additionalProperties": false
+      },
+      "StrengthPlanPreviewResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [true]
+          },
+          "preview": {
+            "type": "object",
+            "properties": {
+              "eventId": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string",
+                "description": "Effective session title; absent when not set."
+              },
+              "entries": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/StrengthPlanEntry"
+                },
+                "description": "Plan as it would be saved."
+              },
+              "before": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/AiPlanSession"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Current session state; null when the session does not exist yet."
+              },
+              "previewHash": {
+                "type": "string",
+                "description": "Hash to pass unchanged to commitStrengthPlan."
+              },
+              "dataVersion": {
+                "type": "integer",
+                "description": "Data version of the resulting session."
+              }
+            },
+            "required": [
+              "eventId",
+              "entries",
+              "before",
+              "previewHash",
+              "dataVersion"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "ok",
+          "preview"
+        ],
+        "additionalProperties": false
+      },
+      "StrengthPlanCommitResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [true]
+          },
+          "plan": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "enum": [true]
+              },
+              "sessions": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AiPlanSession"
+                }
+              }
+            },
+            "required": [
+              "enabled",
+              "sessions"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "ok",
+          "plan"
+        ],
+        "additionalProperties": false
+      },
+      "StrengthWriteError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": [
+              "strength_disabled",
+              "invalid_input",
+              "unknown_exercise",
+              "event_not_found",
+              "stale_data_version",
+              "preview_mismatch",
+              "session_started",
+              "write_conflict"
+            ]
+          },
+          "unknown": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Unrecognized exerciseId values when error is unknown_exercise."
+          },
+          "current": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AiPlanSession"
+            },
+            "description": "Current sessions when error is stale_data_version; re-read the plan and make a new preview."
+          },
+          "message": {
+            "type": "string",
+            "description": "Optional human-readable explanation."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": false
       },
       "ProfileSectionSaveRequest": {
         "type": "object",
