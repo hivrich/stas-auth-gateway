@@ -1249,6 +1249,16 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid query parameters: invalid_input with issues",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrengthInvalidQueryResponse"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or invalid token",
             "content": {
@@ -1317,7 +1327,7 @@
         "operationId": "getStrengthPlan",
         "x-openai-isConsequential": false,
         "summary": "Read planned strength sessions for a date",
-        "description": "Read planned strength sessions attached to calendar events for one date. A 200 with {\"enabled\":false} means the strength journal is not yet enabled for this athlete. Use eventId and dataVersion from this response in a preview request.",
+        "description": "Read planned strength sessions attached to calendar events for one date. A 200 with {\"enabled\":false} means the strength journal is not yet enabled for this athlete. Use eventId and sessions[i].version as dataVersion in a preview request (0 when the event has no session yet).",
         "parameters": [
           {
             "name": "date",
@@ -1337,6 +1347,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/StrengthPlanResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query parameters: invalid_input with issues",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrengthInvalidQueryResponse"
                 }
               }
             }
@@ -1369,7 +1389,7 @@
         "operationId": "previewStrengthPlan",
         "x-openai-isConsequential": false,
         "summary": "Preview a planned strength session without saving",
-        "description": "Preview how the planned strength session would be saved. Never saves anything: it returns the resulting plan and the current version so the user can compare before and after. Call getStrengthPlan first to obtain a fresh dataVersion.",
+        "description": "Preview how the planned strength session would be saved. Never saves anything: it returns the plan as it would be saved next to the current one. Call getStrengthPlan first; pass sessions[i].version as dataVersion (0 if no session).",
         "requestBody": {
           "required": true,
           "content": {
@@ -1432,7 +1452,7 @@
             }
           },
           "409": {
-            "description": "Request conflicts with the current plan: stale_data_version, preview_mismatch, session_started, or write_conflict",
+            "description": "The event session was already started or completed: session_started",
             "content": {
               "application/json": {
                 "schema": {
@@ -6509,17 +6529,50 @@
           }
         ]
       },
+      "StrengthInvalidQueryResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": ["invalid_input"]
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": ["path", "message"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["error", "issues"],
+        "additionalProperties": false
+      },
       "StrengthSetValues": {
         "type": "object",
         "properties": {
           "weightKg": {
-            "type": "number"
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1000
           },
           "reps": {
-            "type": "integer"
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
           },
           "seconds": {
-            "type": "integer"
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 36000
           }
         },
         "additionalProperties": false
@@ -6781,7 +6834,7 @@
               },
               "dataVersion": {
                 "type": "integer",
-                "description": "Data version of the resulting session."
+                "description": "The dataVersion from the request, echoed back; pass it unchanged to commitStrengthPlan."
               }
             },
             "required": [
