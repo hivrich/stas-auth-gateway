@@ -29,6 +29,33 @@ const { tokenIngress, tokenParserError } = require('./lib/oauth-token-diagnostic
 
 const PORT = process.env.PORT || 3337;
 
+const BODY_PARSER_ERROR_TYPES = new Set([
+  'entity.parse.failed',
+  'entity.too.large',
+  'encoding.unsupported',
+  'charset.unsupported',
+  'request.aborted',
+  'request.size.invalid',
+  'parameters.too.many',
+]);
+const REGISTER_BODY_PATH_RE = /^\/gw\/oauth\/register\/?$/i;
+
+function bodyParserError(error) {
+  const type = BODY_PARSER_ERROR_TYPES.has(error?.type) ? error.type : null;
+  const statusValue = error?.status ?? error?.statusCode;
+  const status = Number(statusValue);
+  const clientError = Number.isInteger(status) && status >= 400 && status <= 499;
+  return {
+    type,
+    status: type === 'entity.too.large' ? 413 : (clientError ? status : 400),
+    rejected: Boolean(type || clientError),
+  };
+}
+
+function isRegisterBodyRequest(req) {
+  return req.method === 'POST' && REGISTER_BODY_PATH_RE.test(String(req.path || '').split('?')[0]);
+}
+
 function createApp() {
   const app = express();
   app.set('trust proxy', 1);
@@ -148,15 +175,25 @@ function createApp() {
     // Token diagnostics still observe parser failures and keep their HTTP
     // result; the log record itself only ever carries server-owned fields.
     const parserError = tokenParserError(req, err);
+    const bodyError = bodyParserError(err);
+    const registerBodyError = isRegisterBodyRequest(req) && bodyError.rejected;
+    const status = registerBodyError ? bodyError.status : 500;
     try {
       console.error('[http][unhandled_error]', JSON.stringify({
         stas_request_id: getStasRequestId(req),
         method: req.method,
         path: String(req.path || '').split('?')[0] || null,
-        status: 500,
-        category: parserError ? 'body_rejected' : 'internal_error',
+        status,
+        body_error_type: bodyError.type,
+        category: (parserError || registerBodyError) ? 'body_rejected' : 'internal_error',
       }));
     } catch {}
+    if (registerBodyError) {
+      return res.status(status).json({
+        error: 'invalid_client_metadata',
+        error_description: bodyError.type,
+      });
+    }
     return res.status(500).json({ error: 'internal_error' });
   });
 
