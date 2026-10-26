@@ -47,7 +47,7 @@ function bodyParserError(error) {
   const clientError = Number.isInteger(status) && status >= 400 && status <= 499;
   return {
     type,
-    status: type === 'entity.too.large' ? 413 : (clientError ? status : 400),
+    status: type === 'entity.too.large' ? 413 : 400,
     rejected: Boolean(type || clientError),
   };
 }

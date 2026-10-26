@@ -67,6 +67,7 @@ async function main() {
         body: Buffer.from('{"redirect_uris":', 'utf16le'),
         contentType: 'application/json; charset=utf-16',
         expectedType: 'entity.parse.failed',
+        expectedStatus: 400,
       },
       {
         name: 'too large',
