@@ -32,7 +32,7 @@ const {
   revokeMcpToken,
 } = require('../lib/mcp-oauth-tokens');
 const { verifyPrivateKeyJwt } = require('../lib/mcp-private-key-jwt');
-const { markToken, tokenContext, tokenIngress } = require('../lib/oauth-token-diagnostics');
+const { markToken, markUpstreamRejection, tokenContext, tokenIngress } = require('../lib/oauth-token-diagnostics');
 const { normalizeMcpScopes } = require('../lib/mcp-oauth-scopes');
 
 const INTERVALS_AUTH_URL = 'https://intervals.icu/oauth/authorize';
@@ -1310,7 +1310,7 @@ router.post('/oauth/token', tokenIngress, async (req, res) => {
       }
 
       if (!upstream.ok) {
-        markToken(req, 'upstream_rejected');
+        markUpstreamRejection(req, payload);
         if (payload && typeof payload === 'object') {
           return res.status(upstream.status).json(payload);
         }

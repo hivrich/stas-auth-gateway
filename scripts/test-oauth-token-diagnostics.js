@@ -28,6 +28,7 @@ const resource = 'https://stas.run/api/mcp';
 const rawToken = 'diagnostic-secret-upstream-token';
 const captured = [];
 let upstreamMode = 'success';
+let rejectionPayload = { error: 'invalid_grant', error_description: 'diagnostic-secret-upstream-error' };
 let upstreamExchanges = 0;
 let base;
 
@@ -37,7 +38,7 @@ global.fetch = async (url, options) => {
     upstreamExchanges++;
     if (upstreamMode === 'network') throw new Error('diagnostic-secret-network-message');
     return upstreamMode === 'reject'
-      ? new Response(JSON.stringify({ error: 'invalid_grant', error_description: 'diagnostic-secret-upstream-error' }), { status: 400 })
+      ? new Response(JSON.stringify(rejectionPayload), { status: 400 })
       : new Response(JSON.stringify({ access_token: rawToken }));
   }
   if (parsed.hostname === 'intervals.icu' && parsed.pathname === '/api/v1/athlete/0') {
@@ -81,7 +82,8 @@ function assertEvents(entries, count = 1) {
     assert.ok(['lt_100ms', 'lt_1s', 'lt_10s', 'gte_10s'].includes(item.duration));
     assert.ok(item.stas_request_id === null || /^[a-f0-9-]{36}$/.test(item.stas_request_id),
       'token diagnostics carry the ingress-accepted caller id, null without ingress');
-    assert.deepEqual(Object.keys(item).sort(), ['request_id','stas_request_id','method','path','content_type','stage','reason','grant','client_method','status','completion','duration'].sort());
+    assert.deepEqual(Object.keys(item).sort(), ['request_id','stas_request_id','method','path','content_type','stage','reason','grant','client_method','status','completion','duration',
+      ...(item.reason === 'upstream_rejected' ? ['upstream_error'] : [])].sort());
   }
   return outcomes;
 }
@@ -101,6 +103,13 @@ async function expect(body, reason, status = 400, options) {
   assert.equal(outcome.reason, reason);
   assert.equal(outcome.status, status);
   assert.equal(result.status, status);
+  if (reason === 'upstream_rejected') {
+    assert.equal(outcome.upstream_error, rejectionPayload?.error === 'Code not found (expired?) or code_verifier does not match'
+      ? 'code_or_pkce_rejected' : ['invalid_grant', 'invalid_client', 'invalid_request'].includes(rejectionPayload?.error)
+        ? rejectionPayload.error : 'unrecognized');
+    assert.deepEqual(result.body, rejectionPayload && typeof rejectionPayload === 'object'
+      ? rejectionPayload : { error: 'invalid_grant' }, 'existing error response behavior is unchanged');
+  }
   if (status === 401) assert.deepEqual(result.body, { error: 'invalid_client' });
   return result;
 }
@@ -188,6 +197,14 @@ async function main() {
     for (const [mode, reason, status] of [['reject', 'upstream_rejected', 400], ['network', 'upstream_unavailable', 500]]) {
       upstreamMode = mode;
       await expect(await grant(), reason, status);
+    }
+    upstreamMode = 'reject';
+    for (const payload of [{ error: 'invalid_client' }, { error: 'invalid_request' },
+      { error: 'Code not found (expired?) or code_verifier does not match' },
+      { error: 'diagnostic-secret-unknown-error', error_description: 'diagnostic-secret-description' },
+      { error: { secret: 'diagnostic-secret-object' } }, null]) {
+      rejectionPayload = payload;
+      await expect(await grant(), 'upstream_rejected', 400);
     }
     upstreamMode = 'success';
     const expiredReservation = await grant();
