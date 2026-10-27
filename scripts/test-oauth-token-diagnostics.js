@@ -104,8 +104,9 @@ async function expect(body, reason, status = 400, options) {
   assert.equal(outcome.status, status);
   assert.equal(result.status, status);
   if (reason === 'upstream_rejected') {
-    assert.equal(outcome.upstream_error, ['invalid_grant', 'invalid_client', 'invalid_request'].includes(rejectionPayload?.error)
-      ? rejectionPayload.error : 'unrecognized');
+    assert.equal(outcome.upstream_error, rejectionPayload?.error === 'Code not found (expired?) or code_verifier does not match'
+      ? 'code_or_pkce_rejected' : ['invalid_grant', 'invalid_client', 'invalid_request'].includes(rejectionPayload?.error)
+        ? rejectionPayload.error : 'unrecognized');
     assert.deepEqual(result.body, rejectionPayload && typeof rejectionPayload === 'object'
       ? rejectionPayload : { error: 'invalid_grant' }, 'existing error response behavior is unchanged');
   }
@@ -199,6 +200,7 @@ async function main() {
     }
     upstreamMode = 'reject';
     for (const payload of [{ error: 'invalid_client' }, { error: 'invalid_request' },
+      { error: 'Code not found (expired?) or code_verifier does not match' },
       { error: 'diagnostic-secret-unknown-error', error_description: 'diagnostic-secret-description' },
       { error: { secret: 'diagnostic-secret-object' } }, null]) {
       rejectionPayload = payload;
