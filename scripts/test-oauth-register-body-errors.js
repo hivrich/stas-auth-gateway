@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const util = require('node:util');
 
 const OLD_ENV = {
   NODE_ENV: process.env.NODE_ENV,
@@ -56,22 +57,36 @@ async function main() {
   });
   const base = `http://127.0.0.1:${server.address().port}`;
   const validMetadata = { redirect_uris: ['https://client.example/callback'] };
+  const LEAK_MARKER = 'LEAKMARK7Q3Z';
 
   try {
     const cases = [
-      { name: 'broken json', body: '{"redirect_uris":', expectedType: 'entity.parse.failed' },
-      { name: 'json string', body: JSON.stringify('x'), expectedType: 'entity.parse.failed' },
-      { name: 'json null', body: 'null', expectedType: 'entity.parse.failed' },
+      {
+        name: 'broken json',
+        body: `{"redirect_uris":"${LEAK_MARKER}`,
+        marker: LEAK_MARKER,
+        expectedType: 'entity.parse.failed',
+      },
+      {
+        name: 'json string',
+        body: JSON.stringify(LEAK_MARKER),
+        marker: LEAK_MARKER,
+        expectedType: 'entity.parse.failed',
+      },
+      // A bare `null` body cannot carry a marker without becoming another case.
+      { name: 'json null', body: 'null', marker: null, expectedType: 'entity.parse.failed' },
       {
         name: 'utf-16 malformed json',
-        body: Buffer.from('{"redirect_uris":', 'utf16le'),
+        body: Buffer.from(`{"redirect_uris":"${LEAK_MARKER}`, 'utf16le'),
+        marker: LEAK_MARKER,
         contentType: 'application/json; charset=utf-16',
         expectedType: 'entity.parse.failed',
         expectedStatus: 400,
       },
       {
         name: 'too large',
-        body: Buffer.alloc(300000, 0x20),
+        body: Buffer.concat([Buffer.from(LEAK_MARKER), Buffer.alloc(300000, 0x20)]),
+        marker: LEAK_MARKER,
         expectedType: 'entity.too.large',
         expectedStatus: 413,
       },
@@ -100,7 +115,12 @@ async function main() {
       assert.equal(log.category, 'body_rejected', item.name);
       assert.equal(log.body_error_type, item.expectedType, item.name);
       assert.equal(log.path, '/gw/oauth/register', item.name);
-      assert.equal(JSON.stringify(lines).includes(item.body.toString()), false, `${item.name}: body is not logged`);
+      // Search the raw log text: JSON.stringify would escape what the server
+      // printed, and NUL bytes are dropped so a UTF-16LE body still matches.
+      const rawLog = lines.map((args) => util.format(...args)).join('\n').replace(/\u0000/g, '');
+      if (item.marker) {
+        assert.equal(rawLog.includes(item.marker), false, `${item.name}: body is not logged`);
+      }
     }
 
     const registered = await post(base, '/gw/oauth/register', JSON.stringify(validMetadata));
