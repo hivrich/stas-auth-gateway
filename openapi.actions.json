@@ -606,6 +606,16 @@
               ]
             },
             "description": "Required false for this single confirmed deletion."
+          },
+          {
+            "name": "change_basis",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 16000
+            },
+            "description": "Optional JSON array (up to 100 items) mapping external_id to frame_id, frame_version, and decision_id from get_decision_basis in this turn."
           }
         ],
         "responses": {
@@ -681,6 +691,16 @@
               ]
             },
             "description": "Required false for this single confirmed write."
+          },
+          {
+            "name": "change_basis",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 16000
+            },
+            "description": "Optional JSON array (up to 100 items) mapping external_id to frame_id, frame_version, and decision_id from get_decision_basis in this turn."
           }
         ]
       }
@@ -1297,6 +1317,158 @@
           },
           "504": {
             "description": "Upstream timeout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gw/api/db/knowledge": {
+      "get": {
+        "operationId": "getKnowledgeGw",
+        "x-openai-isConsequential": false,
+        "summary": "Read STAS decision basis or one evidence entry",
+        "description": "Before physiology, load/recovery claims or plan changes for illness, missed sessions, or strength near key sessions, call get_decision_basis. On match:none, open evidenceRefs via get_evidence and assess applicability; lexical matches do not prove fit. Cite only returned IDs; no unrelated frames.",
+        "parameters": [
+          {
+            "name": "tool",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "get_decision_basis",
+                "get_evidence"
+              ]
+            },
+            "description": "The approved read-only STAS knowledge tool."
+          },
+          {
+            "name": "situation",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 500
+            },
+            "description": "Short English description of the athlete situation; required for get_decision_basis."
+          },
+          {
+            "name": "sport",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 40
+            },
+            "description": "Sport from the athlete profile and plan; required for get_decision_basis."
+          },
+          {
+            "name": "strengthRole",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "support",
+                "discipline",
+                "none"
+              ]
+            },
+            "description": "Strength work role from profile; use none when there is no strength work in the plan or log for eight weeks."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3
+            },
+            "description": "Maximum number of matching decision frames to return."
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^E-\\d{4}-[a-z0-9]+(?:-[a-z0-9]+)*(?:#C\\d+)?$"
+            },
+            "description": "Evidence id or #C claim reference returned by get_decision_basis in this turn."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Structured result from the selected knowledge tool",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Structured content returned by get_decision_basis or get_evidence.",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown tool or invalid tool arguments",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token or user identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Knowledge access is closed for this account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Knowledge request quota exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before another request may be tried",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Knowledge index or quota service is temporarily unavailable",
             "content": {
               "application/json": {
                 "schema": {

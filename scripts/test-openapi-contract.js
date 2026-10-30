@@ -18,6 +18,7 @@ const expectedActionsPaths = [
   '/gw/api/me',
   '/gw/api/db/user_summary',
   '/gw/api/db/activity_detail',
+  '/gw/api/db/knowledge',
   '/gw/api/db/wellness',
   '/gw/api/db/goals/editable',
   '/gw/api/db/goals/activity-candidates',
@@ -189,6 +190,7 @@ async function main() {
     'getMe',
     'getChatFooter',
     'getActivityDetailFromDB',
+    'getKnowledgeGw',
     'getWellness',
     'readProfileSections',
     'readProfileChangeHistory',
@@ -221,6 +223,17 @@ async function main() {
       `${operationId} must not request platform confirmation`,
     );
   }
+  const knowledgeAction = gatewaySchema.paths['/gw/api/db/knowledge'].get;
+  assert.deepEqual(
+    knowledgeAction.parameters.find((parameter) => parameter.name === 'tool')?.schema.enum,
+    ['get_decision_basis', 'get_evidence'],
+    'knowledge Actions must expose only the two approved read tools',
+  );
+  assert.equal(
+    knowledgeAction.parameters.some((parameter) => parameter.name === 'user_id'),
+    false,
+    'knowledge Actions must not accept caller-selected user identity',
+  );
   for (const operationId of nonConsequentialWriteOperations) {
     assert.equal(
       operationsById.get(operationId)?.['x-openai-isConsequential'],
@@ -481,6 +494,15 @@ async function main() {
   assert.ok(dryRunParam, 'POST /gw/icu/events must expose dry_run as a query parameter');
   assert.equal(dryRunParam.required, true, 'POST /gw/icu/events dry_run query parameter must be required');
   assert.deepEqual(dryRunParam.schema.enum, [false], 'POST /gw/icu/events must only expose confirmed writes');
+  for (const [operation, method] of [[createEventsPost, 'POST'], [deleteEvents, 'DELETE']]) {
+    const basisParam = (operation.parameters || []).find((param) => (
+      param.name === 'change_basis' && param.in === 'query'
+    ));
+    assert.ok(basisParam, `${method} /gw/icu/events must expose change_basis`);
+    assert.equal(basisParam.required, false);
+    assert.equal(basisParam.schema.type, 'string');
+    assert.equal(basisParam.schema.maxLength, 16000);
+  }
   const deleteDryRunParam = deleteEvents.parameters.find((param) => (
     param.name === 'dry_run' && param.in === 'query'
   ));

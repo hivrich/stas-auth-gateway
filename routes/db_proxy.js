@@ -135,7 +135,12 @@ router.use(async (req, res) => {
       duration_ms: Date.now() - started,
       bytes: body.length,
     })}`); } catch {}
-    res.status(r.status).set('content-type', ct).send(body);
+    res.status(r.status).set('content-type', ct);
+    if (req.path === '/knowledge' && r.status === 429) {
+      const retryAfter = r.headers.get('retry-after');
+      if (retryAfter) res.set('retry-after', retryAfter);
+    }
+    res.send(body);
   } catch (e) {
     const status = e?.name === 'AbortError' || String(e.message||'').includes('aborted') ? 504 : 502;
     try { console.error(`[db_proxy][ERR] ${proxyLogFields(req, {

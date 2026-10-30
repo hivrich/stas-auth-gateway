@@ -9,14 +9,16 @@ process.env.STAS_BASE = process.env.STAS_BASE || 'http://stas.local.test';
 const originalFetch = global.fetch;
 const upstreamHits = [];
 let trainingsFetchMode = 'array';
+let knowledgeQuotaMode = false;
 
-function jsonResponse(body, status = 200) {
+function jsonResponse(body, status = 200, extraHeaders = {}) {
   return {
     ok: status >= 200 && status < 300,
     status,
     headers: {
       get(name) {
-        return String(name).toLowerCase() === 'content-type' ? 'application/json; charset=utf-8' : null;
+        const key = String(name).toLowerCase();
+        return key === 'content-type' ? 'application/json; charset=utf-8' : extraHeaders[key] || null;
       },
     },
     json: async () => body,
@@ -63,6 +65,9 @@ global.fetch = async (url, options = {}) => {
     }
     if (trainingsFetchMode === 'exception') throw new Error('socket hang up');
     return jsonResponse([{ id: 'train-1' }]);
+  }
+  if (parsed.pathname === '/api/db/knowledge' && knowledgeQuotaMode) {
+    return jsonResponse({ error: 'knowledge_quota' }, 429, { 'retry-after': '60' });
   }
 
   return jsonResponse({ ok: true, url: parsed.toString() });
@@ -388,6 +393,18 @@ async function main() {
     assert.strictEqual(response.statusCode, 200);
     assert.strictEqual(upstreamHits.length, 1);
     assert.strictEqual(new URL(upstreamHits[0].url).pathname, '/api/db/trainings');
+    upstreamHits.length = 0;
+
+    knowledgeQuotaMode = true;
+    response = await runRequest({ tool: 'get_evidence', id: 'E-2022-example', user_id: 'forged-user', uid: 'forged-uid' }, 'user-42', { path: '/knowledge' });
+    assert.strictEqual(response.statusCode, 429);
+    assert.strictEqual(response.headers['retry-after'], '60');
+    forwarded = new URL(upstreamHits[0].url);
+    assert.strictEqual(forwarded.pathname, '/api/db/knowledge');
+    assert.strictEqual(forwarded.searchParams.get('user_id'), 'user-42');
+    assert.strictEqual(forwarded.searchParams.has('uid'), false);
+    assert.strictEqual(forwarded.searchParams.get('tool'), 'get_evidence');
+    knowledgeQuotaMode = false;
     upstreamHits.length = 0;
 
     trainingsFetchMode = 'array';

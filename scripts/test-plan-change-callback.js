@@ -26,6 +26,8 @@ let store = [];
 let nextId = 3000;
 let icuHits = [];
 let stasCalls = []; // запросы к /api/db/plan_changes
+let basisCalls = [];
+let basisMode = 'ok';
 let stasMode = 'ok'; // 'ok' | 'throw' | 'hang' | 'status500'
 let icuFail = null; // статус ошибки Intervals на запись
 let deleteResponse = null; // переопределение ответа bulk-delete
@@ -36,11 +38,14 @@ let stasDelayMs = 0; // задержка ответа STAS (для провер�
 let stasInFlight = 0;
 let stasMaxInFlight = 0;
 
-function jsonResponse(body, status = 200) {
+function jsonResponse(body, status = 200, extraHeaders = {}) {
   return {
     ok: status >= 200 && status < 300,
     status,
-    headers: { get: (n) => (String(n).toLowerCase() === 'content-type' ? 'application/json' : null) },
+    headers: { get: (n) => {
+      const key = String(n).toLowerCase();
+      return key === 'content-type' ? 'application/json' : extraHeaders[key] || null;
+    } },
     json: async () => body,
     text: async () => JSON.stringify(body),
     clone() { return this; },
@@ -53,6 +58,21 @@ global.fetch = async (url, options = {}) => {
   const method = options.method || 'GET';
 
   if (parsed.origin === 'http://stas.local.test') {
+    if (parsed.pathname === '/api/db/knowledge/basis') {
+      const body = JSON.parse(options.body);
+      basisCalls.push({ headers: options.headers || {}, query: parsed.searchParams, body });
+      if (basisMode === 'throw') throw new Error('knowledge unavailable');
+      if (basisMode === 'hang') {
+        return new Promise((resolve, reject) => {
+          options.signal?.addEventListener('abort', () => reject(options.signal.reason));
+        });
+      }
+      if (basisMode !== 'ok') {
+        const [status, error] = basisMode.split(':');
+        return jsonResponse({ error }, Number(status), { 'retry-after': Number(status) === 429 ? '60' : undefined });
+      }
+      return jsonResponse({ ok: true, change_basis: JSON.stringify(body.items) });
+    }
     if (parsed.pathname === '/api/db/plan_changes') {
       stasCalls.push({ headers: options.headers || {}, body: JSON.parse(options.body), method });
       if (stasDelayMs > 0) {
@@ -137,6 +157,8 @@ function reset(initial = []) {
   store = initial.map((e) => ({ id: nextId++, athlete_id: 'i15487', ...e }));
   icuHits = [];
   stasCalls = [];
+  basisCalls = [];
+  basisMode = 'ok';
   stasMode = 'ok';
   icuFail = null;
   deleteResponse = null;
@@ -163,7 +185,7 @@ async function call(baseUrl, method, path, { body, headers = {} } = {}) {
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
-  return { status: response.status, body: await response.json() };
+  return { status: response.status, body: await response.json(), headers: response.headers };
 }
 
 function plan(date, extra = {}) {
@@ -247,6 +269,7 @@ async function main() {
     assert.equal(sent.body.actor, 'chatgpt');
     assert.equal(sent.body.request_id, REQUEST_ID);
     assert.equal(sent.body.change_reason, 'Moved for travel');
+    assert.equal(basisCalls.length, 0, 'basis is absent, so the bridge is not called');
     assert.equal(sent.body.deleted, undefined);
     assert.equal(sent.body.events.length, 3);
     const [e1, e2, e3] = sent.body.events;
@@ -267,6 +290,63 @@ async function main() {
     }
     console.log('ok - POST upsert: no session_type to Intervals, callback changed / no action for unseen ids + session_type + change_reason');
 
+    // Basis is validated through the private STAS bridge before Intervals and reaches only the callback.
+    reset();
+    const basisItem = { external_id: plan(day(4)).external_id, frame_id: 'F-build-base', frame_version: 2, decision_id: 'D12' };
+    const basisQuery = encodeURIComponent(JSON.stringify([basisItem]));
+    r = await call(baseUrl, 'POST', `/gw/icu/events?dry_run=false&change_basis=${basisQuery}`, {
+      body: { events: [plan(day(4))] },
+    });
+    assert.equal(r.status, 200, JSON.stringify({ body: r.body, basisCalls }));
+    assert.equal(basisCalls.length, 1);
+    assert.equal(basisCalls[0].headers['X-API-Key'], 'test-stas-key');
+    assert.equal(basisCalls[0].query.get('user_id'), '15487');
+    assert.deepEqual(basisCalls[0].body.items, [basisItem]);
+    assert.equal(icuHits.length, 2, 'upsert retains its normal lookup and write');
+    assert.ok(icuHits.every((hit) => !JSON.stringify(hit.body || {}).includes('frame_id')));
+    assert.deepEqual(stasCalls[0].body.events[0].basis, {
+      frame_id: basisItem.frame_id, frame_version: basisItem.frame_version, decision_id: basisItem.decision_id,
+    });
+    console.log('ok - POST basis is app-validated before Intervals, absent from Intervals body, and attached to callback');
+
+    for (const [query, expected] of [
+      ['{bad', 400],
+      ['x'.repeat(16001), 400],
+      [JSON.stringify(Array.from({ length: 101 }, (_, i) => ({ ...basisItem, external_id: `plan:${i}` }))), 400],
+      [JSON.stringify([{ ...basisItem, extra: true }]), 400],
+    ]) {
+      reset();
+      const encoded = encodeURIComponent(query);
+      r = await call(baseUrl, 'POST', `/gw/icu/events?dry_run=false&change_basis=${encoded}`, { body: { events: [plan(day(4))] } });
+      assert.equal(r.status, expected);
+      assert.equal(icuHits.length, 0, 'invalid basis must stop before Intervals');
+      assert.equal(basisCalls.length, 0, 'invalid basis must stop before STAS');
+    }
+    for (const [mode, expected, retryAfter] of [
+      ['400:invalid_basis', 400, null],
+      ['403:knowledge_access_denied', 403, null],
+      ['429:knowledge_quota', 429, '60'],
+      ['503:knowledge_unavailable', 503, null],
+      ['throw', 503, null],
+      ['hang', 503, null],
+    ]) {
+      reset();
+      basisMode = mode;
+      r = await call(baseUrl, 'POST', `/gw/icu/events?dry_run=false&change_basis=${basisQuery}`, { body: { events: [plan(day(4))] } });
+      assert.equal(r.status, expected, mode);
+      if (retryAfter) assert.equal(r.headers.get('retry-after'), retryAfter);
+      assert.equal(icuHits.length, 0, `${mode} must stop before Intervals`);
+      assert.equal(stasCalls.length, 0, `${mode} must not report a change`);
+    }
+    reset();
+    r = await call(baseUrl, 'POST', `/gw/icu/events?dry_run=false&change_basis=${basisQuery}`, {
+      body: { events: [plan(day(4))] }, headers: { Authorization: '' },
+    });
+    assert.equal(r.status, 401, 'unauthenticated request is rejected before basis lookup');
+    assert.equal(basisCalls.length, 0);
+    assert.equal(icuHits.length, 0);
+    console.log('ok - malformed, stale/closed, quota, unavailable, timeout and unauthenticated basis writes stop before Intervals');
+
     // dedupe=false: created, без session_type в Intervals
     reset();
     r = await call(baseUrl, 'POST', '/gw/icu/events?dry_run=false&dedupe=false', {
@@ -279,6 +359,19 @@ async function main() {
     assert.equal(stasCalls[0].body.events[0].session_type, 'tempo');
     assert.equal(stasCalls[0].body.change_reason, undefined);
     console.log('ok - POST dedupe=false: created callback');
+
+    reset();
+    store = [{ id: 3210, athlete_id: 'i15487', ...plan(day(4)) }];
+    const deleteBasis = { external_id: store[0].external_id, frame_id: 'F-build-base', frame_version: 2, decision_id: 'D12' };
+    r = await call(baseUrl, 'DELETE', `/gw/icu/events?dry_run=false&id=${store[0].id}&change_basis=${encodeURIComponent(JSON.stringify([deleteBasis]))}`);
+    assert.equal(r.status, 200);
+    assert.equal(basisCalls.length, 1);
+    assert.ok(icuHits.length > 0, 'delete performs its normal protection and write requests');
+    assert.ok(icuHits.every((hit) => !JSON.stringify(hit.body || {}).includes('frame_id')));
+    assert.deepEqual(stasCalls[0].body.deleted[0].basis, {
+      frame_id: deleteBasis.frame_id, frame_version: deleteBasis.frame_version, decision_id: deleteBasis.decision_id,
+    });
+    console.log('ok - DELETE basis is app-validated before Intervals and attached only to confirmed deletion callback');
 
     // dry run (по умолчанию и явный) и preview: нет вызова, session_type убран из ответа
     reset();
@@ -461,6 +554,17 @@ async function main() {
     assert.equal(r.status, 422);
     assert.equal(stasCalls.length, 0);
     console.log('ok - PUT: changed callback; none on dry run/error');
+
+    // PUT does not support app-validated basis. A raw query must never become a trusted callback basis.
+    reset([{ ...plan(day(4)), id: 9139 }]);
+    basisMode = '403:knowledge_access_denied';
+    const unvalidatedBasis = { external_id: store[0].external_id, frame_id: 'F-build-base', frame_version: 2, decision_id: 'D12' };
+    r = await call(baseUrl, 'PUT', `/gw/icu/events/${store[0].id}?dry_run=false&change_basis=${encodeURIComponent(JSON.stringify([unvalidatedBasis]))}`, { body: { name: 'Ordinary edit' } });
+    assert.equal(r.status, 200);
+    assert.equal(basisCalls.length, 0);
+    assert.equal(stasCalls.length, 1);
+    assert.equal(Object.hasOwn(stasCalls[0].body.events[0], 'basis'), false);
+    console.log('ok - PUT cannot attach an unvalidated raw-query basis');
 
     // PUT: updated берётся только из ответа записи, не из чтения до записи
     reset([{ ...plan(day(4)), updated: '2026-10-01T00:00:00.000+00:00' }]);

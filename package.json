@@ -15,6 +15,7 @@
     "test:icu-event-upsert": "node scripts/test-icu-event-upsert.js",
     "test:legacy-aliases": "node scripts/test-legacy-aliases.js",
     "test:plan-change-callback": "node scripts/test-plan-change-callback.js",
+    "test:plan-change-basis": "node scripts/test-plan-change-basis.js",
     "test:oauth": "node scripts/test-oauth-flow.js",
     "test:mcp-oauth": "node scripts/test-mcp-oauth-core.js",
     "test:private-key-jwt": "node --test scripts/test-private-key-jwt.js",
