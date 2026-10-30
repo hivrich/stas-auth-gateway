@@ -17,6 +17,7 @@
     "test:plan-change-callback": "node scripts/test-plan-change-callback.js",
     "test:plan-change-basis": "node scripts/test-plan-change-basis.js",
     "test:oauth": "node scripts/test-oauth-flow.js",
+    "test:oauth-register-body": "node scripts/test-oauth-register-body-errors.js",
     "test:mcp-oauth": "node scripts/test-mcp-oauth-core.js",
     "test:private-key-jwt": "node --test scripts/test-private-key-jwt.js",
     "test:oauth-token-diagnostics": "node scripts/test-oauth-token-diagnostics.js",
