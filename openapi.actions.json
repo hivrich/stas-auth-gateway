@@ -1333,7 +1333,7 @@
         "operationId": "getKnowledgeGw",
         "x-openai-isConsequential": false,
         "summary": "Read STAS decision basis or one evidence entry",
-        "description": "Before physiology, load/recovery claims or plan changes for illness, missed sessions, or strength near key sessions, call get_decision_basis. On match:none, open evidenceRefs via get_evidence and assess applicability; lexical matches do not prove fit. Cite only returned IDs; no unrelated frames.",
+        "description": "Before physiology, load/recovery claims or plan changes for illness, missed sessions, or strength near key sessions, call get_decision_basis. Optionally choose decisionTopic from the meaning of the original request; use research only for questions about research. Do not infer health state, sport, or strength role. On match:none, open evidenceRefs via get_evidence and assess applicability; lexical matches do not prove fit. Cite only returned IDs; no unrelated frames.",
         "parameters": [
           {
             "name": "tool",
@@ -1357,7 +1357,7 @@
               "minLength": 3,
               "maxLength": 500
             },
-            "description": "Short English description of the athlete situation; required for get_decision_basis. On match:none, if no returned study addresses the question, call get_decision_basis at most once more with a shorter English scientific-topic query, preserving the original population, intervention/comparison, outcome and conditions. Do not invent missing details or add evidence IDs or article titles absent from the original question to the search query. If support remains absent, say so."
+            "description": "Short English description of the athlete situation; required for get_decision_basis. On match:none, if no returned study addresses the question, make at most one additional get_decision_basis call, either with retrievalMode semantic or with a shorter English scientific-topic query, preserving the original population, intervention/comparison, outcome and conditions. Do not invent missing details or add evidence IDs or article titles absent from the original question to the search query. If support remains absent, say so."
           },
           {
             "name": "sport",
@@ -1383,6 +1383,31 @@
               ]
             },
             "description": "Strength work role from profile; use none when there is no strength work in the plan or log for eight weeks."
+          },
+          {
+            "name": "decisionTopic",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "missed-session",
+                "return-after-illness",
+                "strength-placement",
+                "research"
+              ]
+            },
+            "description": "Optional category chosen from the original request's meaning. Use research for questions only about research. Do not infer health state, sport, or strength role."
+          },
+          {
+            "name": "retrievalMode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["lexical", "semantic"]
+            },
+            "description": "Default lexical; use semantic only for the single additional search after assessing an unsuitable first result, preserving original conditions."
           },
           {
             "name": "limit",
