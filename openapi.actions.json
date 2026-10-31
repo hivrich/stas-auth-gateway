@@ -1357,7 +1357,7 @@
               "minLength": 3,
               "maxLength": 500
             },
-            "description": "Short English description of the athlete situation; required for get_decision_basis."
+            "description": "Short English description of the athlete situation; required for get_decision_basis. On match:none, if no returned study addresses the question, call get_decision_basis at most once more with a shorter English scientific-topic query, preserving the original population, intervention/comparison, outcome and conditions. Do not invent missing details or add evidence IDs or article titles absent from the original question to the search query. If support remains absent, say so."
           },
           {
             "name": "sport",
